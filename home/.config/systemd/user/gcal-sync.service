@@ -1,0 +1,12 @@
+[Unit]
+Description=Google Calendar (iCal) + Obsidian sync for the desktop agenda
+Documentation=file://%h/.local/share/gcal-sync/gcal_sync.py
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/gcal-sync run --quiet
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=90
+# no secrets in the journal: gcal-sync masks calendar links in its messages

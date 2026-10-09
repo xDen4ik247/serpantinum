@@ -1,0 +1,784 @@
+"""Natural-language capture parser for gcal-sync (EN / RU / basic JA).
+
+parse(text) -> item dict:
+  kind        "task" | "event"
+  title       cleaned title
+  date        YYYY-MM-DD (event day / task due) or None
+  time        HH:MM start (or None)
+  duration    minutes (events) or None
+  allDay      bool (events without a time)
+  location    str or None
+  recurrence  {"freq": daily|weekly|monthly|yearly, "interval": n, "byday": ["MO",..], "text": "..."} or None
+  priority    highest|high|medium|low|lowest or None
+  tags        ["#tag", ...]
+  scheduled   YYYY-MM-DD or None (Tasks ⏳)
+  reminder    {"date": YYYY-MM-DD, "time": HH:MM} or None
+  parser      "rules" | "llm"
+
+Two engines: a fast rule-based parser (always available) and the local LLM
+(llama.cpp server, OpenAI-compatible, JSON-schema constrained output).
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import re
+import time
+import urllib.request
+import os
+
+
+def _system_tz() -> str:
+    """IANA name of the machine's timezone (from /etc/localtime), e.g. 'Europe/Berlin'."""
+    try:
+        return os.path.realpath("/etc/localtime").split("/zoneinfo/", 1)[1]
+    except Exception:
+        return "UTC"
+
+
+SYSTEM_TZ = _system_tz()
+
+LLM_URL = "http://127.0.0.1:8765"
+WD_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+WD_EN = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+WD_EN_SHORT = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+# Russian weekday stems (понедельник/понедельника/понедельникам, вторник, среду/среда/среды, …)
+WD_RU = [r"понедельник\w*|пн", r"вторник\w*|вт", r"сред[аеуыой]\w*|ср", r"четверг\w*|чт",
+         r"пятниц[аеуыой]\w*|пт", r"суббот[аеуыой]\w*|сб", r"воскресень[еяюи]\w*|вс"]
+WD_JA = ["月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"]
+MONTHS_EN = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+MONTHS_RU = ["январ", "феврал", "март", "апрел", "ма[йяе]", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"]
+NUM_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "half": 0.5,
+             "один": 1, "одну": 1, "одна": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5, "полтора": 1.5, "полторы": 1.5}
+PRIO_EMOJI = {"highest": "🔺", "high": "⏫", "medium": "🔼", "low": "🔽", "lowest": "⏬"}
+
+
+def _num(s: str) -> float:
+    s = s.strip().lower().replace(",", ".")
+    if s in NUM_WORDS:
+        return NUM_WORDS[s]
+    try:
+        return float(s)
+    except ValueError:
+        return 1
+
+
+class _Text:
+    """Text with consumed spans; what is left becomes the title."""
+
+    def __init__(self, s: str):
+        self.s = s
+        self.mask = [False] * len(s)
+
+    def find(self, pattern, flags=re.I):
+        # match against the not-yet-consumed text (consumed chars become spaces),
+        # so a greedy pattern can't swallow a word another rule already took
+        for m in re.finditer(pattern, self.rest(), flags):
+            if m.group(0).strip() and not any(self.mask[m.start():m.end()]):
+                yield m
+
+    def first(self, pattern, flags=re.I):
+        return next(self.find(pattern, flags), None)
+
+    def eat(self, m, group=0):
+        a, b = m.span(group)
+        for i in range(a, b):
+            self.mask[i] = True
+
+    def rest(self) -> str:
+        return "".join(" " if self.mask[i] else c for i, c in enumerate(self.s))
+
+
+def _hhmm(h: int, m: int = 0) -> str | None:
+    if 0 <= h <= 24 and 0 <= m < 60:
+        return f"{h % 24:02d}:{m:02d}"
+    return None
+
+
+def _next_weekday(today: dt.date, wd: int, force_next=False) -> dt.date:
+    delta = (wd - today.weekday()) % 7
+    if delta == 0 and force_next:
+        delta = 7
+    return today + dt.timedelta(days=delta)
+
+
+def _wd_index(word: str) -> int | None:
+    w = word.lower()
+    for i, en in enumerate(WD_EN):
+        if w == en or w == WD_EN_SHORT[i] or (len(w) >= 3 and en.startswith(w)):
+            return i
+    for i, ru in enumerate(WD_RU):
+        if re.fullmatch(ru, w):
+            return i
+    for i, ja in enumerate(WD_JA):
+        if w.startswith(ja):
+            return i
+    return None
+
+
+WD_ANY = "(?:" + "|".join(WD_EN + WD_EN_SHORT) + "|" + "|".join(WD_RU) + r")\b|" + "|".join(j + "日?" for j in WD_JA)
+
+
+def parse_rules(text: str, now: dt.datetime) -> dict:
+    today = now.date()
+    T = _Text(text)
+    item = {"kind": None, "title": "", "date": None, "time": None, "duration": None, "allDay": False,
+            "location": None, "recurrence": None, "priority": None, "tags": [], "scheduled": None,
+            "reminder": None, "parser": "rules"}
+    deadline = False
+
+    # ── tags ──
+    for m in T.find(r"(?<![\w&])#([\w/-]+)"):
+        item["tags"].append("#" + m.group(1))
+        T.eat(m)
+
+    # ── priority ──
+    prio_pats = [
+        (r"\b(?:highest|top)\s+prio(?:rity)?\b|\bp0\b|!!!+|🔺", "highest"),
+        (r"\b(?:high|hi)\s+prio(?:rity)?\b|\bprio(?:rity)?\s+high\b|\burgent\b|\basap\b|\bimportant\b|\bp1\b|(?<!!)!!(?!!)|⏫|\bсрочно\b|\bважно\b|\bвысокий\s+приоритет\b|急ぎ|至急|重要", "high"),
+        (r"\b(?:medium|normal|mid)\s+prio(?:rity)?\b|\bp2\b|🔼|\bсредний\s+приоритет\b", "medium"),
+        (r"\blow\s+prio(?:rity)?\b|\bp3\b|🔽|\bнизкий\s+приоритет\b|\bне\s+срочно\b", "low"),
+    ]
+    for pat, p in prio_pats:
+        m = T.first(pat)
+        if m:
+            item["priority"] = p
+            T.eat(m)
+            break
+
+    # ── reminders ("remind me day before", "напомни за час", "remind me at 9") ──
+    rem_offset = None
+    rem_time = None
+    m = T.first(r"(?:,?\s*)\b(?:remind(?:\s+me)?|reminder|напомни(?:ть)?(?:\s+мне)?|リマインド)\s*"
+                r"(?:(?:a|the|1|one)?\s*(day|hour|week)\s+before|(\d+)\s*(min(?:ute)?s?|h(?:ours?)?|days?)\s+before"
+                r"|за\s+(день|час|неделю|сутки|(\d+)\s*(минут\w*|час\w*|дн\w*))"
+                r"|(?:at|в)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?")
+    if m:
+        unit = (m.group(1) or m.group(4) or "").lower()
+        if unit in ("day", "день", "сутки"):
+            rem_offset = dt.timedelta(days=1)
+        elif unit in ("hour", "час"):
+            rem_offset = dt.timedelta(hours=1)
+        elif unit in ("week", "неделю"):
+            rem_offset = dt.timedelta(weeks=1)
+        elif m.group(2):
+            n, u = int(m.group(2)), m.group(3).lower()
+            rem_offset = dt.timedelta(minutes=n) if u.startswith("min") else (dt.timedelta(hours=n) if u.startswith("h") else dt.timedelta(days=n))
+        elif m.group(5):
+            n, u = int(m.group(5)), m.group(6).lower()
+            rem_offset = dt.timedelta(minutes=n) if u.startswith("мин") else (dt.timedelta(hours=n) if u.startswith("час") else dt.timedelta(days=n))
+        elif m.group(7):
+            h = int(m.group(7)) + (12 if (m.group(9) or "").lower() == "pm" and int(m.group(7)) < 12 else 0)
+            rem_time = _hhmm(h, int(m.group(8) or 0))
+        else:
+            rem_offset = dt.timedelta(minutes=0)
+        T.eat(m)
+
+    # ── recurrence ──
+    rec = None
+    m = T.first(r"\b(?:every\s*day|daily|each\s+day|ежедневно|каждый\s+день)\b|毎日|\b(every\s+(morning|evening|night)|каждое\s+утро|каждый\s+вечер)\b")
+    if m:
+        rec = {"freq": "daily", "interval": 1, "byday": [], "text": "every day"}
+        if m.group(1):   # "every morning" also hints a time of day
+            T.eat(m)
+            word = (m.group(2) or m.group(1)).lower()
+            item["_daypart"] = "09:00" if ("morning" in word or "утро" in word) else ("22:00" if "night" in word else "19:00")
+        else:
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\b(?:every\s+weekday|weekdays|по\s+будням|в\s+будни|каждый\s+будний\s+день)\b|平日")
+        if m:
+            rec = {"freq": "weekly", "interval": 1, "byday": WD_CODES[:5], "text": "every weekday"}
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\b(?:every|each|каждый|каждую|каждое|каждые|по)\s+((?:(?:" + WD_ANY + r")(?:\s*(?:,|and|и|&)\s*)?)+)|毎週\s*(" + "|".join(WD_JA) + r")日?")
+        if m:
+            words = re.findall(WD_ANY, m.group(1) or m.group(2) or "", re.I)
+            days = sorted({_wd_index(w) for w in words if _wd_index(w) is not None})
+            if days:
+                rec = {"freq": "weekly", "interval": 1, "byday": [WD_CODES[d] for d in days],
+                       "text": "every " + ", ".join(WD_EN[d].capitalize() for d in days)}
+                T.eat(m)
+                if not item["date"]:
+                    item["date"] = min((_next_weekday(today, d) for d in days)).isoformat()
+    if not rec:
+        m = T.first(r"\b(?:every\s+(\d+)\s+(day|week|month|year)s?|каждые\s+(\d+)\s+(дн|недел|месяц|год|лет)\w*)\b")
+        if m:
+            n = int(m.group(1) or m.group(3))
+            u = (m.group(2) or m.group(4)).lower()
+            freq = {"day": "daily", "дн": "daily", "week": "weekly", "недел": "weekly", "month": "monthly", "месяц": "monthly"}.get(u, "yearly")
+            rec = {"freq": freq, "interval": n, "byday": [], "text": f"every {n} {freq.replace('ily','ys').replace('ly','s')}"}
+            T.eat(m)
+    if not rec:
+        for pat, freq, txt in ((r"\b(?:every\s+week|weekly|еженедельно|каждую\s+неделю)\b|毎週", "weekly", "every week"),
+                               (r"\b(?:every\s+month|monthly|ежемесячно|каждый\s+месяц)\b|毎月", "monthly", "every month"),
+                               (r"\b(?:every\s+year|yearly|annually|ежегодно|каждый\s+год)\b|毎年", "yearly", "every year")):
+            m = T.first(pat)
+            if m:
+                rec = {"freq": freq, "interval": 1, "byday": [], "text": txt}
+                T.eat(m)
+                break
+    if rec:  # redundant second phrasing ("по средам … каждую неделю")
+        m = T.first(r"\b(?:every\s+week|weekly|еженедельно|каждую\s+неделю)\b")
+        if m and rec["freq"] == "weekly":
+            T.eat(m)
+    item["recurrence"] = rec
+
+    # ── relative "in 2 hours" / "через 2 часа" / "через полчаса" (date + time) ──
+    m = T.first(r"\b(?:in|через)\s+(\d+(?:[.,]\d+)?|an?|one|two|three|half\s+an|полчаса|час|полтора|два|три|пару)?\s*"
+                r"(hours?|hrs?|h|minutes?|mins?|m|час\w*|минут\w*|мин|полчаса)\b|(\d+)\s*(時間|分)後")
+    if m and (m.group(2) or m.group(4)):
+        unit = (m.group(2) or m.group(4)).lower()
+        raw = (m.group(1) or m.group(3) or "1").lower()
+        if raw in ("half an", "полчаса") or unit == "полчаса":
+            mins = 30
+        else:
+            n = {"пару": 2}.get(raw) or _num(raw)
+            mins = n * 60 if unit[0] in "hч" or unit == "時間" else n
+        at = now + dt.timedelta(minutes=mins)
+        item["date"], item["time"] = at.date().isoformat(), at.strftime("%H:%M")
+        T.eat(m)
+
+    # ── time ranges & times ──
+    def eat_time():
+        # 15:00-16:30, 3-4pm, с 15 до 17, 3pm–5pm
+        m = T.first(r"(?:\bс\s+|\bfrom\s+)?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|—|to|до)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b"
+                    r"|(?:\bс\s+|\bfrom\s+)?\b(\d{1,2}):(\d{2})\s*(?:-|–|—|to|до)\s*(\d{1,2}):(\d{2})\b"
+                    r"|\bс\s+(\d{1,2})(?::(\d{2}))?\s+до\s+(\d{1,2})(?::(\d{2}))?\b")
+        if m:
+            g = m.groups()
+            if g[0]:
+                h1, m1, ap1, h2, m2, ap2 = int(g[0]), int(g[1] or 0), (g[2] or g[5]).lower(), int(g[3]), int(g[4] or 0), g[5].lower()
+                if ap2 == "pm" and h2 < 12:
+                    h2 += 12
+                if ap1 == "pm" and h1 < 12:
+                    h1 += 12
+                if h1 > h2:
+                    h1 -= 12 if h1 >= 12 else 0
+            elif g[6]:
+                h1, m1, h2, m2 = int(g[6]), int(g[7]), int(g[8]), int(g[9])
+            else:
+                h1, m1, h2, m2 = int(g[10]), int(g[11] or 0), int(g[12]), int(g[13] or 0)
+            s, e = _hhmm(h1, m1), _hhmm(h2, m2)
+            if s and e:
+                item["time"] = s
+                d = (h2 * 60 + m2) - (h1 * 60 + m1)
+                item["duration"] = d if d > 0 else d + 24 * 60
+                T.eat(m)
+                return True
+        m = T.first(r"(?:\b(?:at|@|в|во|к)\s*)?\b(\d{1,2})(?::|\.)?(\d{2})?\s*(am|pm|a\.m\.|p\.m\.)(?!\w)"
+                    r"|(?:\b(?:at|@|в|во|к)\s+)?\b([01]?\d|2[0-3]):([0-5]\d)\b"
+                    r"|\b(?:at|в|во|к)\s+(\d{1,2})(?:\s*(утра|дня|вечера|ночи|h|ч))?(?=\s|$|,)(?!\s*(?:" + "|".join(MONTHS_RU) + "|" + "|".join(MONTHS_EN) + r"|числ|-?го\b|th\b|st\b|nd\b|rd\b))"
+                    r"|(\d{1,2})時(?:(\d{1,2})分|(半))?"
+                    r"|\b(noon|midday|midnight|полдень|полночь|tonight|this\s+evening|in\s+the\s+morning|in\s+the\s+evening|in\s+the\s+afternoon|morning|afternoon|evening|утром|вечером|днём|днем|ночью)\b")
+        if not m:
+            return False
+        g = m.groups()
+        t = None
+        if g[0]:
+            h = int(g[0]) % 12 + (12 if g[2].lower().startswith("p") else 0)
+            t = _hhmm(h, int(g[1] or 0))
+        elif g[3]:
+            t = _hhmm(int(g[3]), int(g[4]))
+        elif g[5]:
+            h = int(g[5])
+            suf = (g[6] or "").lower()
+            if suf in ("вечера", "дня") and h < 12:
+                h += 12
+            elif not suf and 1 <= h <= 7:
+                h += 12          # "at 3" → 15:00 (nobody books 3 am)
+            t = _hhmm(h)
+        elif g[7]:
+            t = _hhmm(int(g[7]), 30 if g[9] else int(g[8] or 0))
+        elif g[10]:
+            w = g[10].lower()
+            t = {"noon": "12:00", "midday": "12:00", "полдень": "12:00", "midnight": "00:00", "полночь": "00:00",
+                 "tonight": "20:00", "this evening": "19:00", "in the evening": "19:00", "вечером": "19:00",
+                 "in the morning": "09:00", "утром": "09:00", "morning": "09:00", "afternoon": "15:00", "in the afternoon": "15:00", "evening": "19:00", "днём": "14:00", "днем": "14:00", "ночью": "23:00"}.get(re.sub(r"\s+", " ", w))
+        if t:
+            item["time"] = t
+            T.eat(m)
+            return True
+        return False
+
+    if not item["time"]:
+        eat_time()
+
+    # ── durations ──
+    m = T.first(r"\b(?:for\s+)?(\d+(?:[.,]\d+)?|an?|one|two|three|half\s+an)\s*(h|hrs?|hours?|m|mins?|minutes?)\b(?:\s*(\d+)\s*(?:m|min)\b)?"
+                r"|\b(\d+)h(\d+)\b"
+                r"|\bна\s+(\d+(?:[.,]\d+)?|полтора|два|три|пару)?\s*(час\w*|минут\w*|мин)\b"
+                r"|\b(полтора\s+часа|полчаса)\b"
+                r"|(\d+(?:[.,]\d+)?)\s*(час\w*|ч|минут\w*|мин)\b"
+                r"|(\d+)(時間|分)(?!後)")
+    if m and not item["duration"]:
+        g = m.groups()
+        mins = None
+        if g[0]:
+            raw = g[0].lower()
+            n = 0.5 if raw == "half an" else _num(raw)
+            mins = n * 60 if g[1].lower().startswith("h") else n
+            if g[2]:
+                mins += int(g[2])
+        elif g[3]:
+            mins = int(g[3]) * 60 + int(g[4])
+        elif g[6]:
+            n = {"пару": 2}.get((g[5] or "").lower()) or _num(g[5] or "1")
+            mins = n * 60 if g[6].lower().startswith("час") else n
+        elif g[7]:
+            mins = 90 if g[7].lower().startswith("полтора") else 30
+        elif g[9]:
+            n = _num(g[8])
+            mins = n * 60 if g[9].lower().startswith("ч") else n
+        elif g[11]:
+            mins = int(g[10]) * (60 if g[11] == "時間" else 1)
+        if mins and 0 < mins <= 24 * 60:
+            item["duration"] = int(round(mins))
+            T.eat(m)
+
+    # ── dates ──
+    def set_date(d: dt.date, m):
+        if not item["date"] or item["recurrence"]:
+            item["date"] = d.isoformat()
+        T.eat(m)
+
+    dl_prefix = r"(?:\b(by|before|due|until|till|no\s+later\s+than|до|к|ко|не\s+позже)\s+)?"
+    simple = [
+        (r"\b(day\s+after\s+tomorrow|послезавтра)\b|明後日|あさって", 2),
+        (r"\b(tomorrow|tmrw|tmr|tmrow|tomorow|завтра)\b|明日|あした", 1),
+        (r"\b(today|tonight|сегодня|сёдня)\b|今日|今夜", 0),
+        (r"\b(yesterday|вчера)\b", -1),
+    ]
+    for pat, off in simple:
+        m = T.first(dl_prefix + "(?:" + pat + ")")
+        if m:
+            deadline |= bool(m.group(1))
+            set_date(today + dt.timedelta(days=off), m)
+            if "tonight" in m.group(0).lower() and not item["time"]:
+                item["time"] = "20:00"
+            break
+    if not item["date"]:
+        m = T.first(dl_prefix + r"\b(?:end\s+of\s+(?:the\s+)?(month|week|year)|(?:в\s+|к\s+|до\s+)?конц[ауе]\s+(месяца|недели|года))\b|(月末|週末)")
+        if m:
+            deadline = True
+            u = (m.group(2) or m.group(3) or m.group(4) or "").lower()
+            if u in ("month", "месяца", "月末"):
+                nm = (today.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+                d = nm - dt.timedelta(days=1)
+            elif u in ("week", "недели", "週末"):
+                d = _next_weekday(today, 6)
+            else:
+                d = dt.date(today.year, 12, 31)
+            set_date(d, m)
+    if not item["date"]:
+        m = T.first(dl_prefix + r"\b(?:(next|this|coming|следующ\w+|эт\w+|ближайш\w+)\s+)?(?:on\s+|в\s+|во\s+|на\s+)?(" + WD_ANY + r")\b|(" + "|".join(WD_JA) + r")日?")
+        if m:
+            wd = _wd_index(m.group(3) or m.group(4))
+            if wd is not None:
+                deadline |= bool(m.group(1))
+                nxt = (m.group(2) or "").lower()
+                # same weekday as today means next week, unless "this …"/"эт…"
+                d = _next_weekday(today, wd, force_next=not nxt.startswith(("this", "эт")))
+                set_date(d, m)
+    if not item["date"]:
+        m = T.first(dl_prefix + r"\b(next\s+week|на\s+следующей\s+неделе|следующей\s+неделе)\b|来週")
+        if m:
+            deadline |= bool(m.group(1))
+            set_date(_next_weekday(today, 0, force_next=True), m)
+    if not item["date"]:
+        m = T.first(dl_prefix + r"\b(?:in|через)\s+(\d+|a|an|one|two|three|пару|один|два|три|неделю|месяц)?\s*(days?|weeks?|months?|дн\w*|день|недел\w*|месяц\w*)\b|(\d+)(日|週間)後")
+        if m:
+            deadline |= bool(m.group(1))
+            raw = (m.group(2) or m.group(4) or "1").lower()
+            u = (m.group(3) or m.group(5) or "").lower()
+            n = {"пару": 2, "неделю": 1, "месяц": 1}.get(raw) or int(_num(raw))
+            if raw == "неделю":
+                u = "week"
+            if u.startswith(("week", "недел", "週")):
+                d = today + dt.timedelta(weeks=n)
+            elif u.startswith(("month", "месяц")):
+                d = today + dt.timedelta(days=30 * n)
+            else:
+                d = today + dt.timedelta(days=n)
+            set_date(d, m)
+    if not item["date"]:
+        # "Oct 14", "14 Oct", "14 октября", "14.10", "2026-10-14", "on the 14th", "14-го", "14日"
+        mon_en = "(?:" + "|".join(MONTHS_EN) + r")[a-z]*\.?"
+        mon_ru = "(?:" + "|".join(MONTHS_RU) + r")\w*"
+        m = T.first(dl_prefix + r"(?:\bon\s+)?(?:the\s+)?\b(?:(\d{4})-(\d{2})-(\d{2})"
+                    r"|(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + mon_en + r")|(" + mon_en + r")\s+(\d{1,2})(?:st|nd|rd|th)?"
+                    r"|(\d{1,2})\s+(" + mon_ru + r")"
+                    r"|(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?"
+                    r"|(\d{1,2})(?:st|nd|rd|th|-?го|-?е)\b)|(\d{1,2})月(\d{1,2})日|\b(\d{1,2})日")
+        if m:
+            g = m.groups()
+            y, mo, d = today.year, None, None
+            try:
+                if g[1]:
+                    y, mo, d = int(g[1]), int(g[2]), int(g[3])
+                elif g[4]:
+                    d, mo = int(g[4]), MONTHS_EN.index(g[5][:3].lower()) + 1
+                elif g[6]:
+                    mo, d = MONTHS_EN.index(g[6][:3].lower()) + 1, int(g[7])
+                elif g[8]:
+                    d = int(g[8])
+                    mo = next(i + 1 for i, p in enumerate(MONTHS_RU) if re.match(p, g[9].lower()))
+                elif g[10]:
+                    d, mo = int(g[10]), int(g[11])
+                    if g[12]:
+                        y = int(g[12]) + (2000 if len(g[12]) == 2 else 0)
+                elif g[13]:
+                    d = int(g[13])
+                elif g[14]:
+                    mo, d = int(g[14]), int(g[15])
+                elif g[16]:
+                    d = int(g[16])
+                if mo is None:
+                    mo = today.month
+                    cand = dt.date(y, mo, d)
+                    if cand < today:
+                        cand = (cand.replace(day=1) + dt.timedelta(days=32)).replace(day=d)
+                else:
+                    cand = dt.date(y, mo, d)
+                    if cand < today - dt.timedelta(days=1) and not g[1] and not g[12]:
+                        cand = cand.replace(year=y + 1)
+                deadline |= bool(g[0])
+                set_date(cand, m)
+            except (ValueError, StopIteration):
+                pass
+    # a second time expression may follow the date ("tomorrow at 15")
+    if not item["time"]:
+        eat_time()
+
+    # ── location ──
+    m = T.first(r"\b(?:near|at|in\s+room|room|@)\s+([A-ZА-ЯЁ0-9][\w\-.]*(?:\s+[A-ZА-ЯЁ0-9][\w\-.]*)*|the\s+\w+(?:\s+\w+)?|\w+\s+(?:station|office|cafe|café|library|park|gym|metro))"
+                r"|\b(near\s+(?:the\s+)?\w+(?:\s+\w+)?)\b"
+                r"|\b((?:у|возле|около|рядом\s+с)\s+\w+(?:\s+\w+)?)\b"
+                r"|\b(?:в|во)\s+((?:аудитори\w+|кабинет\w*|ауд\.?)\s*[\w\-]+|[А-ЯЁ][\w\-]+(?:\s+[А-ЯЁ][\w\-]+)*)", 0)
+    if m:
+        loc = next(g for g in m.groups() if g)
+        if not re.fullmatch(r"\d{1,2}(:\d{2})?", loc) and loc.lower() not in ("the morning", "the evening"):
+            item["location"] = loc.strip()
+            T.eat(m)
+
+    daypart = item.pop("_daypart", None)
+    if daypart and not item["time"]:
+        item["time"] = daypart
+
+    # ── kind ──
+    event_words = r"\b(meeting|meet|call with|lunch|dinner|breakfast|appointment|dentist|doctor|lecture|class|seminar|exam|party|concert|flight|gym|workout|interview|conference|wedding|birthday|trip|festival|game|match|встреч\w*|созвон\w*|обед|ужин|лекци\w*|семинар\w*|экзамен\w*|врач\w*|стоматолог\w*|спортзал\w*|тренировк\w*|концерт\w*|вечеринк\w*|собеседовани\w*|конференци\w*|свадьб\w*|день\s+рождения|поездк\w*|матч\w*)\b|会議|歯医者|ジム"
+    task_words = r"\b(submit|finish|read|buy|call|write|send|pay|fix|prepare|review|learn|study|clean|do|сдать|сделать|купить|позвонить|написать|отправить|прочитать|прочесть|оплатить|подготовить|выучить|доделать|починить)\b"
+    has_event_word = bool(re.search(event_words, text, re.I))
+    has_task_word = bool(re.search(task_words, text, re.I))
+    if deadline:
+        kind = "task"
+    elif item["time"] and (item["duration"] or item["location"] or has_event_word or item["recurrence"]):
+        kind = "event"
+    elif item["time"] and not has_task_word:
+        kind = "event"
+    elif has_event_word and item["date"] and not has_task_word:
+        kind = "event"
+    else:
+        kind = "task"
+    item["kind"] = kind
+    item["found"] = [k for k in ("date", "time", "duration", "recurrence", "priority", "location", "reminder") if item[k]]
+    if rem_offset is not None or rem_time:
+        item["found"].append("reminder")
+    if deadline or has_event_word or has_task_word or (item["time"] and item["duration"]):
+        item["found"].append("kind")
+
+    if kind == "task" and not item["date"] and not item["recurrence"]:
+        item["date"] = today.isoformat()
+    if kind == "event":
+        if not item["date"]:
+            item["date"] = today.isoformat() if not item["time"] or item["time"] > now.strftime("%H:%M") else (today + dt.timedelta(days=1)).isoformat()
+        item["allDay"] = not item["time"]
+        if item["time"] and not item["duration"]:
+            item["duration"] = 60
+    # task with a clock time → reminder at that time
+    if kind == "task" and item["time"] and not rem_offset and not rem_time:
+        rem_time = item["time"]
+    if rem_offset is not None or rem_time:
+        base_d = dt.date.fromisoformat(item["date"]) if item["date"] else today
+        if rem_time and rem_offset is None:
+            item["reminder"] = {"date": base_d.isoformat(), "time": rem_time}
+        else:
+            base_t = item["time"] or "09:00"
+            at = dt.datetime.combine(base_d, dt.time.fromisoformat(base_t)) - rem_offset
+            if not item["time"] and rem_offset >= dt.timedelta(days=1):
+                at = at.replace(hour=9, minute=0)
+            item["reminder"] = {"date": at.date().isoformat(), "time": at.strftime("%H:%M")}
+            if kind == "task" and rem_offset >= dt.timedelta(days=1):
+                item["scheduled"] = at.date().isoformat()
+
+    # ── title ──
+    rest = T.rest()
+    rest = re.sub(r"\b(on|at|by|for|the|in|before|due|until|и|в|во|к|до|на|с|по)\s*(?=[,.;]|$)", " ", rest, flags=re.I)
+    rest = re.sub(r"(^|\s)(on|at|by|for|before|due|until|в|во|к|до|на|с|по)(\s+(on|at|by|в|на|к))*\s*$", " ", rest, flags=re.I)
+    rest = re.sub(r"^\s*(on|at|by|в|во|к|на|до)\s+", "", rest, flags=re.I)
+    rest = re.sub(r"\s*[,;]\s*(?=[,;]|$)", "", rest)
+    rest = re.sub(r"\s{2,}", " ", rest).strip(" ,.;:-—–")
+    item["title"] = (rest[:1].upper() + rest[1:]) if rest else text.strip()
+    return item
+
+
+# ───────────────────────────── LLM ─────────────────────────────
+
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": ["task", "event"]},
+        "title": {"type": "string"},
+        "date": {"type": ["string", "null"]},
+        "time": {"type": ["string", "null"]},
+        "duration": {"type": ["integer", "null"]},
+        "location": {"type": ["string", "null"]},
+        "recurrence": {"type": ["string", "null"], "enum": [None, "daily", "weekdays", "weekly", "biweekly", "monthly", "yearly"]},
+        "byday": {"type": "array", "items": {"type": "string", "enum": WD_CODES}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["kind", "title", "date", "time", "duration", "location", "recurrence", "byday", "tags"],
+    "additionalProperties": False,
+}
+
+
+def _prompt(text: str, now: dt.datetime, ctx: dict) -> list:
+    today = now.date()
+    days = []
+    for i in range(0, 15):
+        d = today + dt.timedelta(days=i)
+        label = " (today)" if i == 0 else (" (tomorrow)" if i == 1 else "")
+        days.append(f"{d.strftime('%a')} {d.isoformat()}{label}")
+    eom = ((today.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)).isoformat()
+    sys_msg = (
+        "You turn a quick scratch note (English, Russian or Japanese) into a calendar event or a to-do task. "
+        "Reply with JSON only.\n"
+        f"Now: {now.strftime('%A %Y-%m-%d %H:%M')} (timezone {SYSTEM_TZ}). End of this month: {eom}.\n"
+        "Next days: " + "; ".join(days) + ".\n"
+        "Rules:\n"
+        "- event = something that happens at a time/place (meeting, appointment, class, gym, call with someone at a time). "
+        "task = something to do, possibly with a deadline ('by friday', 'до пятницы', 'submit', 'read', 'buy', 'call mom').\n"
+        "- date: YYYY-MM-DD (event day or task due date). Tasks without any date are due today. "
+        "Weekday names mean the next such day (today if it is that weekday and still upcoming).\n"
+        "- time: HH:MM 24h start time or null. '3pm'→15:00, 'в 7 вечера'→19:00, 'через 2 часа' = now+2h.\n"
+        "- duration: minutes for events (default 60 when a time is given), null for tasks.\n"
+        "- recurrence: daily|weekdays|weekly|biweekly|monthly|yearly or null; byday: weekday codes for weekly (MO..SU).\n"
+        "- tags: '#tag' words the user wrote, plus at most one fitting tag from the known list.\n"
+        "- title: short; ALWAYS in the same language and script as the note (never translate); "
+        "drop the date/time/priority words; capitalize the first letter.\n"
+    )
+    if ctx.get("calendars"):
+        sys_msg += "Known calendars: " + ", ".join(ctx["calendars"]) + ".\n"
+    if ctx.get("tags"):
+        sys_msg += "Known tags: " + " ".join(ctx["tags"][:25]) + ".\n"
+    if ctx.get("projects"):
+        sys_msg += "Known notes/projects: " + ", ".join(ctx["projects"][:20]) + ".\n"
+    t1 = (today + dt.timedelta(days=1)).isoformat()
+    fri = (today + dt.timedelta(days=(4 - today.weekday()) % 7 or 7)).isoformat()
+    shots = [
+        ("dentist tmrw 3pm 1h near metro",
+         {"kind": "event", "title": "Dentist", "date": t1, "time": "15:00", "duration": 60, "location": "near metro",
+          "recurrence": None, "byday": [], "tags": []}),
+        ("купить подарок брату до пятницы",
+         {"kind": "task", "title": "Купить подарок брату", "date": fri, "time": None, "duration": None, "location": None,
+          "recurrence": None, "byday": [], "tags": []}),
+    ]
+    msgs = [{"role": "system", "content": sys_msg}]
+    for u, a in shots:
+        msgs += [{"role": "user", "content": u}, {"role": "assistant", "content": json.dumps(a, ensure_ascii=False, separators=(",", ":"))}]
+    msgs.append({"role": "user", "content": text})
+    return msgs
+
+
+def llm_health(base=LLM_URL, timeout=0.6) -> bool:
+    try:
+        with urllib.request.urlopen(base + "/health", timeout=timeout) as r:
+            body = r.read(200).decode("utf-8", "replace")
+            return r.status == 200 and "loading" not in body.lower()
+    except Exception:
+        return False
+
+
+def parse_llm(text: str, now: dt.datetime, ctx: dict, base=LLM_URL, timeout=20.0) -> dict:
+    payload = {
+        "model": "local",
+        "messages": _prompt(text, now, ctx),
+        "temperature": 0,
+        "max_tokens": 160,
+        "response_format": {"type": "json_schema", "json_schema": {"name": "capture", "strict": True, "schema": SCHEMA}},
+    }
+    req = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    t0 = time.monotonic()
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read())
+    content = data["choices"][0]["message"]["content"]
+    raw = json.loads(content[content.find("{"): content.rfind("}") + 1])
+    return normalize_llm(raw, text, now, int((time.monotonic() - t0) * 1000))
+
+
+def normalize_llm(raw: dict, text: str, now: dt.datetime, ms: int) -> dict:
+    def date_ok(v):
+        try:
+            return dt.date.fromisoformat(v).isoformat() if v else None
+        except Exception:
+            return None
+
+    def time_ok(v):
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", (v or "").strip())
+        return _hhmm(int(m.group(1)), int(m.group(2))) if m else None
+
+    kind = raw.get("kind") if raw.get("kind") in ("task", "event") else "task"
+    item = {"kind": kind, "title": (raw.get("title") or text).strip()[:200], "date": date_ok(raw.get("date")),
+            "time": time_ok(raw.get("time")), "duration": None, "allDay": False,
+            "location": (raw.get("location") or "").strip() or None, "recurrence": None,
+            "priority": None,
+            "tags": [], "scheduled": None, "reminder": None, "parser": "llm", "ms": ms}
+    try:
+        dur = int(raw.get("duration") or 0)
+        item["duration"] = dur if 0 < dur <= 24 * 60 else None
+    except Exception:
+        pass
+    for t in raw.get("tags") or []:
+        t = "#" + re.sub(r"[^\w/-]", "", str(t).lstrip("#"))
+        if len(t) > 1 and t not in item["tags"]:
+            item["tags"].append(t)
+    rec = raw.get("recurrence")
+    byday = [d for d in (raw.get("byday") or []) if d in WD_CODES]
+    if rec == "weekdays":
+        item["recurrence"] = {"freq": "weekly", "interval": 1, "byday": WD_CODES[:5], "text": "every weekday"}
+    elif rec in ("daily", "weekly", "biweekly", "monthly", "yearly"):
+        freq = "weekly" if rec == "biweekly" else rec
+        interval = 2 if rec == "biweekly" else 1
+        if freq == "weekly" and not byday and item["date"]:
+            byday = [WD_CODES[dt.date.fromisoformat(item["date"]).weekday()]]
+        txt = {"daily": "every day", "monthly": "every month", "yearly": "every year"}.get(freq)
+        if freq == "weekly":
+            names = ", ".join(WD_EN[WD_CODES.index(d)].capitalize() for d in byday) if byday else "week"
+            txt = ("every 2 weeks on " if interval == 2 else "every ") + names
+        item["recurrence"] = {"freq": freq, "interval": interval, "byday": byday if freq == "weekly" else [], "text": txt}
+    today = now.date()
+    if not item["date"]:
+        item["date"] = today.isoformat()
+    if kind == "event":
+        item["allDay"] = not item["time"]
+        if item["time"] and not item["duration"]:
+            item["duration"] = 60
+    else:
+        item["duration"] = None
+    if kind == "task" and item["time"]:
+        item["reminder"] = {"date": item["date"], "time": item["time"]}
+    return item
+
+
+def _script(t: str) -> str:
+    if re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", t):
+        return "ja"
+    if re.search(r"[А-Яа-яЁё]", t):
+        return "ru"
+    return "en"
+
+
+def merge(rules: dict, llm: dict, text: str) -> dict:
+    """Hybrid: the rule parser owns everything it explicitly found (dates, times, durations,
+    repeats, priority, reminders — it is exact there); the LLM fills the gaps and judges
+    kind, place and title."""
+    found = set(rules.get("found") or [])
+    out = dict(llm)
+    for f in ("date", "time", "duration", "recurrence", "reminder", "scheduled"):
+        if f in found or (f == "scheduled" and rules.get("scheduled")):
+            out[f] = rules[f]
+    out["priority"] = rules.get("priority")
+    if "kind" in found:
+        out["kind"] = rules["kind"]
+    if not out.get("title") or _script(out["title"]) != _script(text) or len(out["title"]) > len(text) + 5:
+        out["title"] = rules["title"]
+    if not out.get("location") and rules.get("location"):
+        out["location"] = rules["location"]
+    tags = list(rules.get("tags") or [])
+    for t in out.get("tags") or []:
+        if t not in tags:
+            tags.append(t)
+    out["tags"] = tags
+    if out["kind"] == "event":
+        out["allDay"] = not out.get("time")
+        if out.get("time") and not out.get("duration"):
+            out["duration"] = 60
+    else:
+        out["duration"] = None
+        out["allDay"] = False
+        if out.get("time") and not out.get("reminder"):
+            out["reminder"] = {"date": out["date"], "time": out["time"]}
+    out["parser"] = "llm"
+    out["hybrid"] = True
+    return out
+
+
+def parse_hybrid(text: str, now: dt.datetime, ctx: dict, base=LLM_URL, timeout=20.0) -> dict:
+    rules = parse_rules(text, now)
+    llm = parse_llm(text, now, ctx, base=base, timeout=timeout)
+    out = merge(rules, llm, text)
+    out["ms"] = llm.get("ms")
+    return out
+
+
+# ───────────────────────────── rendering ─────────────────────────────
+
+def task_line(item: dict, local_uid: str | None = None) -> str:
+    """Obsidian Tasks-plugin line: - [ ] title (@reminder) 🔁 ⏫ ⏳ 📅 #tags"""
+    parts = [f"- [ ] {item['title'].strip()}"]
+    if item.get("kind") == "event" and item.get("time"):
+        end = ""
+        if item.get("duration"):
+            e = dt.datetime.combine(dt.date.today(), dt.time.fromisoformat(item["time"])) + dt.timedelta(minutes=item["duration"])
+            end = "–" + e.strftime("%H:%M")
+        parts.append(f"🕒 {item['time']}{end}")
+    if item.get("location"):
+        parts.append(f"📍 {item['location']}")
+    if item.get("reminder"):
+        parts.append(f"(@{item['reminder']['date']} {item['reminder']['time']})")
+    if item.get("recurrence"):
+        parts.append("🔁 " + item["recurrence"]["text"])
+    if item.get("priority"):
+        parts.append(PRIO_EMOJI[item["priority"]])
+    if item.get("scheduled"):
+        parts.append(f"⏳ {item['scheduled']}")
+    if item.get("date"):
+        parts.append(f"📅 {item['date']}")
+    parts.extend(item.get("tags") or [])
+    if local_uid:
+        parts.append(f"%%gcal:{local_uid}%%")
+    return " ".join(parts)
+
+
+def vevent(item: dict, uid: str, tzname=SYSTEM_TZ) -> str:
+    def esc(s):
+        return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    now = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    d = dt.date.fromisoformat(item["date"])
+    lines = ["BEGIN:VEVENT", f"UID:{uid}", f"DTSTAMP:{now}", f"SUMMARY:{esc(item['title'])}"]
+    if item.get("time"):
+        s = dt.datetime.combine(d, dt.time.fromisoformat(item["time"]))
+        e = s + dt.timedelta(minutes=item.get("duration") or 60)
+        lines += [f"DTSTART;TZID={tzname}:{s.strftime('%Y%m%dT%H%M%S')}", f"DTEND;TZID={tzname}:{e.strftime('%Y%m%dT%H%M%S')}"]
+    else:
+        lines += [f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{(d + dt.timedelta(days=1)).strftime('%Y%m%d')}"]
+    if item.get("location"):
+        lines.append(f"LOCATION:{esc(item['location'])}")
+    rec = item.get("recurrence")
+    if rec:
+        r = f"RRULE:FREQ={rec['freq'].upper()}"
+        if rec.get("interval", 1) > 1:
+            r += f";INTERVAL={rec['interval']}"
+        if rec.get("byday"):
+            r += ";BYDAY=" + ",".join(rec["byday"])
+        lines.append(r)
+    if item.get("tags"):
+        lines.append("CATEGORIES:" + ",".join(esc(t.lstrip("#")) for t in item["tags"]))
+    if item.get("reminder") and item.get("time"):
+        start = dt.datetime.combine(d, dt.time.fromisoformat(item["time"]))
+        at = dt.datetime.combine(dt.date.fromisoformat(item["reminder"]["date"]), dt.time.fromisoformat(item["reminder"]["time"]))
+        mins = max(0, int((start - at).total_seconds() // 60))
+        lines += ["BEGIN:VALARM", "ACTION:DISPLAY", f"DESCRIPTION:{esc(item['title'])}", f"TRIGGER:-PT{mins}M", "END:VALARM"]
+    lines.append("END:VEVENT")
+    return "\r\n".join(lines)

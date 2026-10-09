@@ -1,0 +1,10 @@
+[Unit]
+Description=Run gcal-sync every minute (calendars are refetched every 5 min, reminders 10 min ahead)
+
+[Timer]
+OnStartupSec=20s
+OnCalendar=*:*:05
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

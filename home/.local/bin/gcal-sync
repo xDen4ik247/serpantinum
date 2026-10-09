@@ -1,0 +1,3 @@
+#!/bin/sh
+# Google Calendar (iCal) + Obsidian sync for the desktop. See: gcal-sync --help
+exec "$HOME/.venvs/gcal/bin/python" "$HOME/.local/share/gcal-sync/gcal_sync.py" "$@"
