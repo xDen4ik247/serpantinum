@@ -1,0 +1,5 @@
+// fcitx5 now runs as the systemd user service fcitx5.service (single instance, auto-restart) — see ime-fix
+spawn-at-startup "niri-dwt-toggle"
+spawn-at-startup "niri-autofit"
+// Re-applies your tweaks if Serpantinum was updated from its own Update button.
+spawn-at-startup "serp-tweaks" "sync" "--auto"

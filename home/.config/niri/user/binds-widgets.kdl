@@ -1,0 +1,7 @@
+// Keybinds owned by the widgets feature (see config.kdl include order).
+binds {
+    // Open / close the desktop widget editor (Serpantinum WidgetRedactor).
+    Mod+G hotkey-overlay-title="Widget editor" { spawn "serpantinum" "ipc" "call" "redactor" "toggle"; }
+    // Fade all desktop widgets out / back in (WidgetToggle IPC, all monitors).
+    Mod+Shift+G hotkey-overlay-title="Show/hide desktop widgets" { spawn "serpantinum" "ipc" "call" "widgets" "toggle"; }
+}

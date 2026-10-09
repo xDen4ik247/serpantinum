@@ -1,0 +1,10 @@
+// Window/layer rules owned by the notes feature.
+// ai-notes panel (~/.local/share/ai-notes/ui, layer namespace "ai-notes"): like aipanel/jocr, the full-screen
+// transparent layer asks for blur only behind its glass card (ext-background-effect); this tunes that blur.
+layer-rule {
+    match namespace="^ai-notes$"
+    background-effect {
+        saturation 1.9
+        noise 0.03
+    }
+}

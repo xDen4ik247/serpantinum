@@ -1,0 +1,44 @@
+// Window/layer rules owned by the quiz feature.
+
+// JP Quiz (jp-quiz): a regular tiled app window. The launcher sets QS_APP_ID=jp-quiz so
+// quickshell reports its own app-id; it tiles, auto-fits (niri-autofit) and shows in
+// Alt-Tab / overview like any app. Liquid glass like the kitty windows: the app paints a
+// translucent Matugen tint, niri blurs + boosts what is behind it, draws the bright
+// hairline rim (instead of the focus ring) and a soft shadow.
+window-rule {
+    match app-id=r#"^jp-quiz$"#
+    geometry-corner-radius 20
+    clip-to-geometry true
+    background-effect {
+        blur true
+        saturation 1.9
+        noise 0.03
+    }
+    draw-border-with-background false
+    focus-ring { off; }
+    border {
+        on
+        width 1.5
+        active-gradient from="#ffffffb0" to="#ffffff26" angle=150
+        inactive-gradient from="#ffffff4d" to="#ffffff10" angle=150
+    }
+    shadow {
+        on
+        softness 36
+        spread 2
+        offset x=0 y=6
+        color "#0000006a"
+    }
+}
+
+// Test runs (JPQUIZ_TITLE="JP Quiz (test)") never steal keyboard focus.
+window-rule {
+    match app-id=r#"^jp-quiz$"# title=r#"^JP Quiz \(test\)$"#
+    open-focused false
+}
+
+// Filler window used only by the quiz layout tests (second column for the half-width check).
+window-rule {
+    match app-id=r#"^qa-filler$"#
+    open-focused false
+}

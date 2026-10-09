@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# ime-fix — repair the input method when Mozc (or fcitx5) stops working.
+# Kills a hung mozc_server, restarts the fcitx5 user service, restores the previous input method.
+prev=$(timeout 2 fcitx5-remote -n 2>/dev/null)
+pkill -x mozc_server
+pkill -x mozc_renderer 2>/dev/null
+systemctl --user restart fcitx5.service
+for _ in $(seq 1 30); do timeout 1 fcitx5-remote >/dev/null 2>&1 && break; sleep 0.2; done
+if [ -n "$prev" ]; then
+    for _ in 1 2 3 4 5; do timeout 2 fcitx5-remote -s "$prev" 2>/dev/null; sleep 0.3; [ "$(timeout 1 fcitx5-remote -n)" = "$prev" ] && break; done
+fi
+notify-send -a "Input method" -i input-keyboard "Input method restarted" "fcitx5 + Mozc reset (${prev:-mozc})" 2>/dev/null
+exit 0

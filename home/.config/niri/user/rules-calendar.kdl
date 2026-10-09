@@ -1,0 +1,41 @@
+// Window/layer rules owned by the calendar feature.
+
+// Agenda panel and quick-capture prompt (quickshell layers "qs-agenda" / "qs-capture",
+// calendar/AgendaPanel.qml + CapturePrompt.qml). They request their own rounded blur
+// region via ext-background-effect, so no `blur true` here; this matches the bar's glass.
+layer-rule {
+    match namespace="^qs-(agenda|capture)$"
+    background-effect {
+        saturation 1.8
+        noise 0.03
+    }
+}
+
+// `gcal-setup` opened from the agenda ("Connect Google Calendar…"): a floating glass kitty.
+window-rule {
+    match app-id="^gcal-setup$"
+    open-floating true
+    default-column-width { fixed 900; }
+    default-window-height { fixed 620; }
+
+    background-effect {
+        blur true
+        saturation 1.9
+        noise 0.03
+    }
+    draw-border-with-background false
+    focus-ring { off; }
+    border {
+        on
+        width 1.5
+        active-gradient from="#ffffffb0" to="#ffffff26" angle=150
+        inactive-gradient from="#ffffff4d" to="#ffffff10" angle=150
+    }
+    shadow {
+        on
+        softness 36
+        spread 2
+        offset x=0 y=6
+        color "#0000006a"
+    }
+}

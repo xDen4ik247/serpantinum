@@ -1,0 +1,13 @@
+// Window/layer rules owned by the bar feature.
+//
+// Serpantinum's top bar (layer namespace "qs-bar", set in bar/Bar.qml) asks for blur
+// itself through ext-background-effect, with one rounded region per glass island, so
+// no `blur true` here (that would blur the whole bar surface as one rectangle).
+// This only tunes the look of that client-requested blur to match the glass kitty windows.
+layer-rule {
+    match namespace="^qs-bar$"
+    background-effect {
+        saturation 1.8
+        noise 0.03
+    }
+}

@@ -1,0 +1,113 @@
+// Keymap — Garuda Sway style: Mod+arrows focus, Mod+Shift moves, Mod+Ctrl resizes.
+// Press Mod+Shift+/ for the cheat sheet (bound in binds-cheatsheet.kdl).
+// Upstream's config/keybinds.kdl isn't included; `serp-tweaks sync` shows its changes.
+binds {
+
+    // ── Apps ──
+    Mod+Return hotkey-overlay-title="Terminal" { spawn "kitty"; }
+    Mod+B hotkey-overlay-title="Firefox" { spawn "firefox"; }
+    Mod+Shift+F23 hotkey-overlay-title="Claude Code (Copilot key)" { spawn-sh "mkdir -p ~/claude && cd ~/claude && exec kitty --class claude zsh -ic claude"; }
+    Mod+E hotkey-overlay-title="Files" { spawn "nautilus"; }
+
+    // ── Serpantinum ──
+    Mod+D hotkey-overlay-title="Launcher" { spawn "serpantinum" "msg" "toggle" "launcher"; }
+    Mod+Shift+C hotkey-overlay-title="Clipboard history" { spawn "serpantinum" "msg" "toggle" "clipboard"; }
+    Mod+Shift+B hotkey-overlay-title="System controls" { spawn "serpantinum" "msg" "toggle" "system"; }
+    Mod+H hotkey-overlay-title="Serpantinum settings" { spawn "serpantinum" "msg" "toggle" "guide"; }
+    Mod+W hotkey-overlay-title="Wallpaper picker" { spawn "serpantinum" "msg" "toggle" "wallpaper"; }
+    Mod+L hotkey-overlay-title="Lock screen" { spawn "serpantinum" "lock"; }
+    Mod+Alt+I hotkey-overlay-title="Fix input method (restart fcitx5 + Mozc)" { spawn "/home/user/.local/bin/ime-fix"; }
+    XF86PowerOff hotkey-overlay-title=null { spawn "serpantinum" "lock"; }
+    Mod+Alt+R hotkey-overlay-title="Restart Serpantinum" { spawn "serpantinum" "reload"; }
+
+    // ── Windows ──
+    Mod+Q repeat=false { close-window; }
+    Mod+F { maximize-window-to-edges; }
+    // Real fullscreen puts a black backdrop behind the window, which kills the glass,
+    // so terminals maximize to the screen edges instead; everything else goes fullscreen.
+    Mod+Shift+F hotkey-overlay-title="Fullscreen (terminals: edge-to-edge glass)" { spawn-sh "niri msg --json focused-window | grep -qE '\"app_id\": *\"(kitty|claude)\"' && niri msg action maximize-window-to-edges || niri msg action fullscreen-window"; }
+    Mod+Ctrl+F { expand-column-to-available-width; }
+    Mod+Space { toggle-window-floating; }
+    Mod+Shift+Space { switch-focus-between-floating-and-tiling; }
+    Mod+Backspace repeat=false { toggle-overview; }
+    Mod+Shift+E { quit; }
+
+    // ── Focus ──
+    Mod+Left  { focus-column-left; }
+    Mod+Right { focus-column-right; }
+    Mod+Up    { focus-window-or-workspace-up; }
+    Mod+Down  { focus-window-or-workspace-down; }
+    Mod+Home  { focus-column-first; }
+    Mod+End   { focus-column-last; }
+
+    // ── Move (Shift) ──
+    Mod+Shift+Left  { move-column-left; }
+    Mod+Shift+Right { move-column-right; }
+    Mod+Shift+Up    { move-window-up-or-to-workspace-up; }
+    Mod+Shift+Down  { move-window-down-or-to-workspace-down; }
+
+    // ── Resize (Ctrl) ──
+    Mod+Ctrl+Left  { set-column-width "-5%"; }
+    Mod+Ctrl+Right { set-column-width "+5%"; }
+    Mod+Ctrl+Up    { set-window-height "-5%"; }
+    Mod+Ctrl+Down  { set-window-height "+5%"; }
+    Mod+R       { switch-preset-column-width; }
+    Mod+Shift+R { switch-preset-column-width-back; }
+    Mod+Ctrl+R  { reset-window-height; }
+
+    // ── Layouts (sway-style) ──
+    Mod+T hotkey-overlay-title="Auto-fit / scrolling for this workspace" { spawn "niri-autofit" "toggle"; }
+    Mod+V       { consume-or-expel-window-left; }
+    Mod+Shift+V { consume-or-expel-window-right; }
+    Mod+Shift+W { toggle-column-tabbed-display; }
+
+    // ── Workspaces ──
+    Mod+1 { focus-workspace 1; }
+    Mod+2 { focus-workspace 2; }
+    Mod+3 { focus-workspace 3; }
+    Mod+4 { focus-workspace 4; }
+    Mod+5 { focus-workspace 5; }
+    Mod+6 { focus-workspace 6; }
+    Mod+7 { focus-workspace 7; }
+    Mod+8 { focus-workspace 8; }
+    Mod+9 { focus-workspace 9; }
+    Mod+Shift+1 { move-window-to-workspace 1 focus=false; }
+    Mod+Shift+2 { move-window-to-workspace 2 focus=false; }
+    Mod+Shift+3 { move-window-to-workspace 3 focus=false; }
+    Mod+Shift+4 { move-window-to-workspace 4 focus=false; }
+    Mod+Shift+5 { move-window-to-workspace 5 focus=false; }
+    Mod+Shift+6 { move-window-to-workspace 6 focus=false; }
+    Mod+Shift+7 { move-window-to-workspace 7 focus=false; }
+    Mod+Shift+8 { move-window-to-workspace 8 focus=false; }
+    Mod+Shift+9 { move-window-to-workspace 9 focus=false; }
+
+    // ── Mouse wheel ──
+    Mod+WheelScrollDown cooldown-ms=150 { focus-workspace-down; }
+    Mod+WheelScrollUp   cooldown-ms=150 { focus-workspace-up; }
+    Mod+WheelScrollRight { focus-column-right; }
+    Mod+WheelScrollLeft  { focus-column-left; }
+    Mod+Shift+WheelScrollDown { focus-column-right; }
+    Mod+Shift+WheelScrollUp   { focus-column-left; }
+
+    // ── Screenshots ──
+    Print hotkey-overlay-title="Screenshot: area" { spawn "serpantinum" "screenshot"; }
+    Shift+Print hotkey-overlay-title="Screenshot: area, then edit" { spawn "serpantinum" "screenshot" "--edit"; }
+    Mod+Print hotkey-overlay-title="Screenshot: screen" { spawn "serpantinum" "screenshot" "--full"; }
+    Mod+Shift+Print hotkey-overlay-title="Screenshot: screen, then edit" { spawn "serpantinum" "screenshot" "--full" "--edit"; }
+    Ctrl+Print { screenshot-window; }
+
+    // ── Hardware keys ──
+    // Brightness goes straight to brightnessctl with a 4% floor (--min-value is a raw step, so it's
+    // computed from the max); Serpantinum's popup still shows.
+    XF86MonBrightnessUp   allow-when-locked=true hotkey-overlay-title=null { spawn "brightnessctl" "--class=backlight" "set" "5%+"; }
+    XF86MonBrightnessDown allow-when-locked=true hotkey-overlay-title=null { spawn-sh "brightnessctl --class=backlight set 5%- --min-value=$(( $(brightnessctl --class=backlight max) * 4 / 100 ))"; }
+    Shift+XF86MonBrightnessDown allow-when-locked=true hotkey-overlay-title=null { spawn "serpantinum" "brightness" "set" "3"; }
+    XF86AudioRaiseVolume allow-when-locked=true hotkey-overlay-title=null { spawn "serpantinum" "volume" "raise"; }
+    XF86AudioLowerVolume allow-when-locked=true hotkey-overlay-title=null { spawn "serpantinum" "volume" "lower"; }
+    XF86AudioMute        allow-when-locked=true hotkey-overlay-title=null { spawn "serpantinum" "volume" "mute-toggle"; }
+    XF86AudioMicMute     allow-when-locked=true hotkey-overlay-title=null { spawn "serpantinum" "volume" "mic-toggle"; }
+    XF86AudioPlay        allow-when-locked=true hotkey-overlay-title=null { spawn "playerctl" "play-pause"; }
+    XF86AudioPause       allow-when-locked=true hotkey-overlay-title=null { spawn "playerctl" "play-pause"; }
+    XF86AudioPrev        allow-when-locked=true hotkey-overlay-title=null { spawn "playerctl" "previous"; }
+    XF86AudioNext        allow-when-locked=true hotkey-overlay-title=null { spawn "playerctl" "next"; }
+}

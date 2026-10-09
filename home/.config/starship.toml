@@ -1,0 +1,83 @@
+# Two-line "pill" prompt. Every color is a terminal palette slot, and
+# Serpantinum's Matugen rewrites those from the wallpaper, so the prompt
+# recolors with it:
+#   5/10  primary container / primary fixed     6/12  secondary container / fixed
+#   14/11 tertiary container / tertiary fixed   13    inverse primary
+#   2 primary   1 error   3 tertiary   8 outline
+"$schema" = "https://starship.rs/config-schema.json"
+add_newline = true
+command_timeout = 500
+
+# ( … ) groups only render when something inside them is non-empty.
+format = """
+[](fg:5)[ ](fg:10 bg:5)$username[](fg:5) \
+[](fg:6)$directory[](fg:6)\
+( [](fg:14)$git_branch$git_status$git_state[](fg:14))\
+( [](fg:13)$python[](fg:13))\
+$fill$cmd_duration$time
+$character"""
+
+[username]
+show_always = true
+format = "[$user]($style)"
+style_user = "fg:10 bg:5 bold"
+style_root = "fg:1 bg:5 bold"
+
+[directory]
+format = "[ $path]($style)[$read_only]($read_only_style)"
+style = "fg:12 bg:6"
+read_only = " 󰌾"
+read_only_style = "fg:1 bg:6"
+truncation_length = 4
+truncation_symbol = "…/"
+truncate_to_repo = false
+
+[git_branch]
+symbol = " "
+format = "[$symbol$branch]($style)"
+style = "fg:11 bg:14"
+
+[git_status]
+format = "[( $all_status$ahead_behind)]($style)"
+style = "fg:11 bg:14"
+conflicted = "=${count}"
+ahead = "⇡${count}"
+behind = "⇣${count}"
+diverged = "⇡${ahead_count}⇣${behind_count}"
+untracked = "?${count}"
+stashed = "≡"
+modified = "!${count}"
+staged = "+${count}"
+renamed = "»${count}"
+deleted = "✘${count}"
+
+[git_state]
+format = "[ $state( $progress_current/$progress_total)]($style)"
+style = "fg:11 bg:14 bold"
+
+# Only shown while an env is switched on (workon/mkenv) — never a "(base)".
+[python]
+detect_extensions = []
+detect_files = []
+detect_folders = []
+format = "[ $virtualenv]($style)"
+style = "fg:15 bg:13"
+
+[fill]
+symbol = " "
+
+[cmd_duration]
+min_time = 2000
+format = "[took $duration]($style)[ • ](fg:8)"
+style = "fg:3"
+
+[time]
+disabled = false
+time_format = "%H:%M"
+format = "[$time]($style)"
+style = "fg:8"
+
+[character]
+success_symbol = "[❯](bold fg:2)"
+error_symbol = "[❯](bold fg:1)"
+vimcmd_symbol = "[❮](bold fg:2)"

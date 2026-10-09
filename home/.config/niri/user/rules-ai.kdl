@@ -1,0 +1,55 @@
+// Window/layer rules owned by the ai feature.
+
+// jocr result popup (~/.local/share/npu-ocr/ui/shell.qml, layer namespace "jocr").
+// The popup is a full-screen transparent overlay (click-away closes it) that asks for blur only
+// behind its glass card through ext-background-effect, so there is no `blur true` here (that
+// would blur the whole screen). This only tunes that blur to match the glass terminals;
+// the rim and the soft shadow are drawn by the card itself, like the bar islands.
+layer-rule {
+    match namespace="^jocr$"
+    background-effect {
+        saturation 1.9
+        noise 0.03
+    }
+}
+
+// ── aifeat (Mod+A assistant, Mod+Shift+A actions, Mod+Shift+Z reader, Mod+Z dictation pill) ──
+// Assistant: floating, centred liquid-glass kitty (same rim/shadow as the glass terminals in rules.kdl).
+window-rule {
+    match app-id="^ai-chat$"
+    open-floating true
+    default-column-width { fixed 860; }
+    default-window-height { fixed 640; }
+    background-effect {
+        blur true
+        saturation 1.9
+        noise 0.03
+    }
+    draw-border-with-background false
+    focus-ring { off; }
+    border {
+        on
+        width 1.5
+        active-gradient from="#ffffffb0" to="#ffffff26" angle=150
+        inactive-gradient from="#ffffff4d" to="#ffffff10" angle=150
+    }
+    shadow {
+        on
+        softness 36
+        spread 2
+        offset x=0 y=6
+        color "#0000006a"
+    }
+    geometry-corner-radius 16
+    clip-to-geometry true
+}
+
+// Clipboard actions / reading helper (aipanel) and the dictation pill (aidict): like jocr, the
+// layers request blur only behind their glass card through ext-background-effect.
+layer-rule {
+    match namespace="^(aipanel|aidict)$"
+    background-effect {
+        saturation 1.9
+        noise 0.03
+    }
+}

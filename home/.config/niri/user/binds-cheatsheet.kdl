@@ -1,0 +1,7 @@
+// Keybinds owned by the cheatsheet feature.
+// Mod+Shift+/ opens Serpantinum's glass cheat sheet (generated live by ~/.local/bin/niri-keys).
+// niri's own overlay stays reachable from the "niri overlay" button in the cheat sheet footer,
+// or with `niri msg action show-hotkey-overlay`.
+binds {
+    Mod+Shift+Slash hotkey-overlay-title="Keyboard shortcuts (cheat sheet)" { spawn "serpantinum" "ipc" "call" "cheatsheet" "toggle"; }
+}

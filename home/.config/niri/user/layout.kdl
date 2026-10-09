@@ -1,0 +1,35 @@
+layout {
+    // New windows take half the screen; niri-autofit evens columns out (Mod+T).
+    default-column-width { proportion 0.5; }
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+        proportion 1.0
+    }
+    always-center-single-column
+
+    // Thin ring so you can tell which half is focused.
+    focus-ring {
+        on
+        width 2
+        active-color "#b9c3ff"
+        inactive-color "#45464f"
+    }
+
+    tab-indicator {
+        position "top"
+        gaps-between-tabs 4
+    }
+}
+
+// Ask apps to drop their own title bars, like on sway.
+prefer-no-csd
+
+// Background blur used by the glass terminals: big and smooth.
+blur {
+    passes 4
+    offset 4
+    noise 0.03
+    saturation 1.6
+}

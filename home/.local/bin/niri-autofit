@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+# Sway-like auto-fit for niri: when the number of tiled columns on a workspace
+# changes, a lone column fills the screen and every other count splits into
+# halves (3+ columns scroll two at a time). Manual resizes are left alone until
+# a window opens, closes or gets stacked into another column.
+#
+#   niri-autofit          run the daemon (started from niri's autostart)
+#   niri-autofit toggle   switch the focused workspace between auto-fit and scrolling
+import json, os, select, signal, subprocess, sys
+
+DEBOUNCE = 0.012  # seconds of quiet before acting: long enough to skip half-updated layouts, short enough to move with the close animation
+DEBUG = bool(os.environ.get("NIRI_AUTOFIT_DEBUG"))
+RUN_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "niri-autofit")
+PID_FILE = os.path.join(RUN_DIR, "pid")
+SCROLL_FILE = os.path.join(RUN_DIR, "scroll-ids")
+
+
+def niri_action(*args):
+    subprocess.run(["niri", "msg", "action", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def read_scroll_ids():
+    try:
+        with open(SCROLL_FILE) as f:
+            return {int(x) for x in f.read().split()}
+    except (OSError, ValueError):
+        return set()
+
+
+def toggle():
+    out = subprocess.run(["niri", "msg", "--json", "workspaces"], capture_output=True, text=True).stdout
+    ws = next((w for w in json.loads(out) if w["is_focused"]), None)
+    if ws is None:
+        return
+    ids = read_scroll_ids() ^ {ws["id"]}
+    os.makedirs(RUN_DIR, exist_ok=True)
+    with open(SCROLL_FILE, "w") as f:
+        f.write(" ".join(map(str, sorted(ids))))
+    try:
+        with open(PID_FILE) as f:
+            os.kill(int(f.read()), signal.SIGUSR1)
+    except (OSError, ValueError):
+        pass
+    mode = "scrolling" if ws["id"] in ids else "auto-fit"
+    subprocess.run(["notify-send", "-a", "niri", "-u", "low", "-t", "1500",
+                    "-h", "string:x-canonical-private-synchronous:niri-autofit",
+                    f"Workspace {ws['idx']}: {mode}"], stderr=subprocess.DEVNULL)
+
+
+windows = {}       # window id -> window object from the event stream
+counts = {}        # workspace id -> column count we last acted on
+focused_ws = None
+focused_win = None
+scroll_ids = set()
+
+
+def columns(ws_id):
+    """One window id per tiled column of a workspace (stacked/tabbed columns count once)."""
+    cols = {}
+    for w in windows.values():
+        if w.get("workspace_id") != ws_id or w.get("is_floating"):
+            continue
+        pos = (w.get("layout") or {}).get("pos_in_scrolling_layout")
+        if pos:
+            cols.setdefault(pos[0], w["id"])
+    return cols
+
+
+def log(*args):
+    if DEBUG:
+        print(*args, file=sys.stderr, flush=True)
+
+
+def fit(ws_id):
+    cols = columns(ws_id)
+    log(f"fit ws={ws_id} cols={cols}")
+    if not cols:
+        return
+    width = "100%" if len(cols) == 1 else "50%"
+    for wid in cols.values():
+        niri_action("set-window-width", "--id", str(wid), width)
+    if ws_id == focused_ws and len(cols) >= 2:
+        fill_screen(ws_id, max(cols))
+
+
+def fill_screen(ws_id, last_col):
+    """After a close, niri keeps the old scroll position, which can leave an empty
+    half next to an edge column. Stepping focus away and back makes niri scroll
+    the minimum needed, so two whole columns fill the screen again."""
+    w = windows.get(focused_win)
+    if not w or w.get("workspace_id") != ws_id or w.get("is_floating"):
+        return
+    col = ((w.get("layout") or {}).get("pos_in_scrolling_layout") or [0])[0]
+    if col == last_col:
+        niri_action("focus-column-left")
+        niri_action("focus-column-right")
+    elif col == 1:
+        niri_action("focus-column-right")
+        niri_action("focus-column-left")
+
+
+def refresh(initial=False):
+    ws_ids = {w.get("workspace_id") for w in windows.values()} - {None}
+    for ws_id in ws_ids | set(counts):
+        n = len(columns(ws_id))
+        if n == 0:
+            counts.pop(ws_id, None)
+            continue
+        if counts.get(ws_id) == n:
+            continue
+        log(f"ws={ws_id} columns {counts.get(ws_id)} -> {n}")
+        counts[ws_id] = n
+        if not initial and ws_id not in scroll_ids:
+            fit(ws_id)
+
+
+def handle(event):
+    global focused_ws, focused_win
+    if "WindowsChanged" in event:
+        windows.clear()
+        windows.update({w["id"]: w for w in event["WindowsChanged"]["windows"]})
+        focused_win = next((w["id"] for w in windows.values() if w.get("is_focused")), None)
+    elif "WindowOpenedOrChanged" in event:
+        w = event["WindowOpenedOrChanged"]["window"]
+        windows[w["id"]] = w
+        if w.get("is_focused"):
+            focused_win = w["id"]
+    elif "WindowFocusChanged" in event:
+        focused_win = event["WindowFocusChanged"]["id"]
+    elif "WindowClosed" in event:
+        windows.pop(event["WindowClosed"]["id"], None)
+    elif "WindowLayoutsChanged" in event:
+        for wid, layout in event["WindowLayoutsChanged"]["changes"]:
+            if wid in windows:
+                windows[wid]["layout"] = layout
+    elif "WorkspacesChanged" in event:
+        focused_ws = next((w["id"] for w in event["WorkspacesChanged"]["workspaces"] if w["is_focused"]), focused_ws)
+    elif "WorkspaceActivated" in event:
+        if event["WorkspaceActivated"]["focused"]:
+            focused_ws = event["WorkspaceActivated"]["id"]
+
+
+def single_instance():
+    os.makedirs(RUN_DIR, exist_ok=True)
+    try:
+        with open(PID_FILE) as f:
+            old = int(f.read())
+        with open(f"/proc/{old}/cmdline", "rb") as f:
+            if b"niri-autofit" in f.read() and old != os.getpid():
+                os.kill(old, signal.SIGTERM)
+    except (OSError, ValueError):
+        pass
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def main():
+    global scroll_ids
+    single_instance()
+    scroll_ids = read_scroll_ids()
+
+    # SIGUSR1 (from `toggle`) wakes the loop through a pipe.
+    wake_r, wake_w = os.pipe()
+    os.set_blocking(wake_w, False)
+    signal.set_wakeup_fd(wake_w)
+    signal.signal(signal.SIGUSR1, lambda *_: None)
+
+    proc = subprocess.Popen(["niri", "msg", "--json", "event-stream"], stdout=subprocess.PIPE)
+    fd = proc.stdout.fileno()
+    buf = b""
+    initial = True
+    dirty = False
+    while True:
+        ready, _, _ = select.select([fd, wake_r], [], [], DEBOUNCE if dirty else None)
+        if wake_r in ready:
+            os.read(wake_r, 64)
+            old, scroll_ids = scroll_ids, read_scroll_ids()
+            for ws_id in old - scroll_ids:  # switched back to auto-fit: even out now
+                fit(ws_id)
+        if fd in ready:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break  # niri exited
+            buf += chunk
+            *lines, buf = buf.split(b"\n")
+            for line in lines:
+                if line.strip():
+                    handle(json.loads(line))
+            dirty = True
+        elif not ready and dirty:
+            refresh(initial)
+            initial = False
+            dirty = False
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["toggle"]:
+        toggle()
+    else:
+        main()

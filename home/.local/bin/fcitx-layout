@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Bridge between fcitx5 and Serpantinum's keyboard pill (see ~/.config/serp-tweaks/patches).
+#
+#   fcitx-layout get     print EN / RU / JP for the active input method (fails if fcitx5 isn't running)
+#   fcitx-layout next    switch to the next input method, in fcitx5's profile order
+#   fcitx-layout watch   wait until the input method changes, then print one line
+set -u
+
+case "${1:-}" in
+    get)
+        im=$(fcitx5-remote -n 2>/dev/null) && [ -n "$im" ] || exit 1
+        case "$im" in
+            mozc|anthy|kkc|skk) echo JP ;;
+            keyboard-us*)       echo EN ;;
+            keyboard-*)         im=${im#keyboard-}; echo "${im:0:2}" | tr '[:lower:]' '[:upper:]' ;;
+            *)                  echo "${im:0:2}" | tr '[:lower:]' '[:upper:]' ;;
+        esac
+        ;;
+    next)
+        mapfile -t ims < <(awk '/^\[Groups\/0\/Items\//{f=1; next} /^\[/{f=0} f && /^Name=/{sub(/^Name=/, ""); print}' \
+                               "${XDG_CONFIG_HOME:-$HOME/.config}/fcitx5/profile")
+        [ ${#ims[@]} -gt 0 ] || exit 1
+        cur=$(fcitx5-remote -n 2>/dev/null)
+        for i in "${!ims[@]}"; do
+            if [ "${ims[$i]}" = "$cur" ]; then
+                exec fcitx5-remote -s "${ims[$(( (i + 1) % ${#ims[@]} ))]}"
+            fi
+        done
+        exec fcitx5-remote -s "${ims[0]}"
+        ;;
+    watch)
+        # fcitx5 announces every switch by updating its (hidden) tray icon.
+        coproc MON { exec dbus-monitor --session "type='signal',interface='org.kde.StatusNotifierItem',member='NewIcon'" 2>/dev/null; }
+        trap 'kill "$MON_PID" 2>/dev/null' EXIT
+        trap 'exit 0' TERM INT
+        while IFS= read -r line <&"${MON[0]}"; do
+            [[ $line == *member=NewIcon* ]] && { echo changed; exit 0; }
+        done
+        ;;
+    *)
+        sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
+        exit 1
+        ;;
+esac

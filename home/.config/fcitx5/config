@@ -1,0 +1,16 @@
+[Hotkey]
+EnumerateWithTriggerKeys=True
+EnumerateSkipFirst=False
+
+[Hotkey/TriggerKeys]
+0=Control+space
+
+[Hotkey/EnumerateForwardKeys]
+0=Alt+Shift_L
+1=Shift+Alt_L
+
+[Hotkey/EnumerateBackwardKeys]
+
+[Behavior]
+ShareInputState=All
+ShowInputMethodInformation=True

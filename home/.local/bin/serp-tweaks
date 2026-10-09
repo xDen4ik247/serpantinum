@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Keep personal tweaks across Serpantinum updates.
+#
+#   serp-tweaks update        run the official installer (choose Update), then sync
+#   serp-tweaks sync          reconcile after an update — safe to run any time
+#   serp-tweaks sync --auto   same, but only if Serpantinum changed (runs at login)
+#   serp-tweaks save          turn hand edits in Serpantinum's source into patches
+#
+# Layout it maintains:
+#   ~/.config/niri/config/*.kdl         upstream copies, refreshed here (never edit)
+#   ~/.config/niri/user/*.kdl           your layer (Serpantinum never ships these)
+#   ~/.config/kitty/user.conf           your kitty tweaks, included from kitty.conf
+#   ~/.config/serp-tweaks/patches/      edits to ~/.local/share/serpantinum, re-applied
+#   ~/.config/serp-tweaks/files/        binary files added/changed there, copied back
+set -uo pipefail
+
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/serpantinum-installer"
+TARGET="$HOME/.local/share/serpantinum"
+NIRI="$HOME/.config/niri"
+KITTY="$HOME/.config/kitty"
+PATCHES="$HOME/.config/serp-tweaks/patches"
+FILES="$HOME/.config/serp-tweaks/files"   # binary files (e.g. compiled shaders) kept whole
+STATE="$HOME/.local/state/serp-tweaks"
+VERSION_FILE="$HOME/.local/state/serpantinum/version"
+INSTALL_URL="https://raw.githubusercontent.com/ilyamiro/serpantinum/master/install/install.sh"
+
+say()  { printf '\e[36m::\e[0m %s\n' "$*"; }
+warn() { printf '\e[33m!!\e[0m %s\n' "$*"; }
+
+installed_commit() { sed -n 's/^SERPANTINUM_COMMIT="\(.*\)"$/\1/p' "$VERSION_FILE" 2>/dev/null; }
+have_commit() { git -C "$CACHE" cat-file -e "$1^{commit}" 2>/dev/null; }
+
+# A reinstall overwrites ~/.config/niri (deleting user/) and kitty.conf, after
+# taking a backup in ~/.config/niri_backup — bring our layer back from there.
+restore_after_reinstall() {
+    if [ ! -d "$NIRI/user" ] || ! grep -q '^include "user/' "$NIRI/config.kdl" 2>/dev/null; then
+        local b found=
+        for b in $(ls -1dr "$HOME"/.config/niri_backup/*/ 2>/dev/null); do
+            if [ -d "$b/user" ] && grep -q '^include "user/' "$b/config.kdl" 2>/dev/null; then
+                warn "niri personal layer missing (reinstall?) — restoring it from $b"
+                mkdir -p "$NIRI"
+                cp -a "$b/user" "$NIRI/"
+                cp -a "$b/config.kdl" "$NIRI/config.kdl"
+                found=1
+                break
+            fi
+        done
+        [ -n "$found" ] || warn "niri personal layer missing and no backup has it — check ~/.config/niri_backup"
+    fi
+    if [ -f "$KITTY/user.conf" ] && ! grep -q '^include user.conf' "$KITTY/kitty.conf" 2>/dev/null; then
+        warn "kitty.conf lost 'include user.conf' — adding it back"
+        printf '\n# Personal tweaks, kept across Serpantinum updates\ninclude user.conf\n' >> "$KITTY/kitty.conf"
+    fi
+}
+
+# Make ~/.config/niri/config/ an exact copy of upstream at the installed commit.
+refresh_upstream() {
+    local commit="$1" tmp
+    tmp=$(mktemp -d)
+    if ! git -C "$CACHE" archive "$commit" compositors/niri/config 2>/dev/null | tar -x -C "$tmp" 2>/dev/null; then
+        warn "can't read compositors/niri/config at $commit from $CACHE"
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$NIRI/config"
+    rsync -a --delete --itemize-changes "$tmp/compositors/niri/config/" "$NIRI/config/" | grep -v "^\.d" | sed "s/^/   updated: /"
+    rm -rf "$tmp"
+}
+
+# Show what upstream changed in its niri config; flag the files we don't include.
+report_upstream() {
+    local from="$1" to="$2" not_included
+    not_included=(compositors/niri/config.kdl compositors/niri/config/keybinds.kdl compositors/niri/config/output.kdl)
+    mkdir -p "$STATE"
+    if ! have_commit "$from"; then
+        warn "previous commit $from isn't in the installer cache; skipping the change report"
+        return
+    fi
+    git -C "$CACHE" diff "$from" "$to" -- compositors/niri > "$STATE/last-report.diff"
+    if [ ! -s "$STATE/last-report.diff" ]; then
+        say "upstream niri config unchanged ($from → $to)"
+        return
+    fi
+    say "upstream niri config changed ($from → $to) — full diff: $STATE/last-report.diff"
+    git -C "$CACHE" diff --stat "$from" "$to" -- compositors/niri | sed 's/^/   /'
+    if ! git -C "$CACHE" diff --quiet "$from" "$to" -- "${not_included[@]}"; then
+        warn "these files aren't included — copy anything useful into ~/.config/niri/user/ by hand:"
+        git -C "$CACHE" diff "$from" "$to" -- "${not_included[@]}" | sed 's/^/   /'
+    fi
+}
+
+PATCHED=0
+apply_patches() {
+    local p name
+    shopt -s nullglob
+    for p in "$PATCHES"/*.patch; do
+        name=$(basename "$p")
+        if patch -d "$TARGET" -p1 -R --dry-run -s -f < "$p" >/dev/null 2>&1; then
+            say "patch $name: already applied"
+        elif patch -d "$TARGET" -p1 -N --dry-run -s -f < "$p" >/dev/null 2>&1; then
+            patch -d "$TARGET" -p1 -N -s -f --no-backup-if-mismatch < "$p" && say "patch $name: applied" && PATCHED=1
+        else
+            warn "patch $name: FAILED — upstream rewrote that code. Redo the edit, then run 'serp-tweaks save'."
+        fi
+    done
+    shopt -u nullglob
+}
+
+sync_cmd() {
+    local auto="${1:-}" commit last
+    commit=$(installed_commit)
+    [ -n "$commit" ] || { warn "can't read the installed commit from $VERSION_FILE"; return 1; }
+    last=$(cat "$STATE/synced" 2>/dev/null || true)
+    [ "$auto" = "--auto" ] && [ "$commit" = "$last" ] && return 0
+
+    say "Serpantinum $commit (last synced: ${last:-never})"
+    restore_after_reinstall
+    refresh_upstream "$commit"
+    [ -n "$last" ] && [ "$last" != "$commit" ] && report_upstream "$last" "$commit"
+    apply_patches
+    restore_files
+
+    if niri validate >/dev/null 2>&1; then
+        say "niri config is valid"
+    else
+        warn "niri config is INVALID (niri keeps running the previous one):"
+        niri validate 2>&1 | grep -v DEBUG | sed 's/^/   /'
+    fi
+    if [ "$PATCHED" = 1 ]; then
+        serpantinum reload >/dev/null 2>&1 && say "Serpantinum restarted to pick up the patches"
+    fi
+
+    mkdir -p "$STATE"
+    echo "$commit" > "$STATE/synced"
+    if [ "$auto" = "--auto" ]; then
+        notify-send -a serp-tweaks "Serpantinum updated" "Your tweaks were re-applied ($commit). Details: serp-tweaks sync" 2>/dev/null
+    fi
+}
+
+update_cmd() {
+    say "Running the official Serpantinum installer — pick Update, not Reinstall."
+    bash -c "eval \"\$(curl -fsSL $INSTALL_URL)\"" || warn "the installer exited with an error"
+    sync_cmd
+}
+
+is_binary() { [ "$(file -b --mime-encoding "$1")" = binary ]; }
+
+# Binary files can't be patched: keep a copy and drop any stale patch for them.
+store_binary() {
+    local rel="$1"
+    mkdir -p "$(dirname "$FILES/$rel")"
+    cp -p "$TARGET/$rel" "$FILES/$rel"
+    rm -f "$PATCHES/${rel//\//__}.patch"
+    say "saved file  $rel → files/$rel"
+}
+
+restore_files() {
+    local f rel
+    [ -d "$FILES" ] || return 0
+    while IFS= read -r f; do
+        rel=${f#"$FILES"/}
+        if ! cmp -s "$f" "$TARGET/$rel"; then
+            mkdir -p "$(dirname "$TARGET/$rel")"
+            cp -p "$f" "$TARGET/$rel" && say "file $rel: restored" && PATCHED=1
+        fi
+    done < <(find "$FILES" -type f)
+}
+
+save_cmd() {
+    local commit tmp rel name n=0
+    commit=$(installed_commit)
+    have_commit "$commit" || { warn "commit $commit isn't in $CACHE"; return 1; }
+    tmp=$(mktemp -d)
+    git -C "$CACHE" archive "$commit" src bin | tar -x -C "$tmp"
+    mkdir -p "$PATCHES"
+    # Edited upstream files: a normal diff against upstream.
+    while IFS= read -r rel; do
+        is_binary "$TARGET/$rel" && { store_binary "$rel"; n=$((n + 1)); continue; }
+        name="${rel//\//__}.patch"
+        (cd "$tmp" && diff -u --label "a/$rel" --label "b/$rel" "$rel" "$TARGET/$rel") > "$PATCHES/$name"
+        say "saved edit  $rel → patches/$name"
+        n=$((n + 1))
+    done < <(
+        # `diff -rq` prints "Files <upstream> and <installed> differ" for each edited file.
+        { diff -rq -x __pycache__ -x '*.pyc' "$tmp/src" "$TARGET/src"; diff -rq "$tmp/bin" "$TARGET/bin"; } 2>/dev/null |
+            sed -n "s|^Files $tmp/\(.*\) and .* differ\$|\1|p"
+    )
+    # Files you added: a patch that creates them, so a full redeploy can't lose them.
+    while IFS= read -r rel; do
+        is_binary "$TARGET/$rel" && { store_binary "$rel"; n=$((n + 1)); continue; }
+        name="${rel//\//__}.patch"
+        diff -u --label /dev/null --label "b/$rel" /dev/null "$TARGET/$rel" > "$PATCHES/$name"
+        say "saved new   $rel → patches/$name"
+        n=$((n + 1))
+    done < <(
+        # `diff -rq` prints "Only in <installed dir>: <name>" for added files and directories.
+        { diff -rq -x __pycache__ -x '*.pyc' "$tmp/src" "$TARGET/src"; diff -rq "$tmp/bin" "$TARGET/bin"; } 2>/dev/null |
+            sed -n "s|^Only in $TARGET/\(.*\): \(.*\)\$|\1/\2|p" |
+            while IFS= read -r added; do
+                if [ -d "$TARGET/$added" ]; then
+                    (cd "$TARGET" && find "$added" -type f ! -name '*.pyc' ! -path '*/__pycache__/*')
+                else
+                    echo "$added"
+                fi
+            done
+    )
+    rm -rf "$tmp"
+    [ "$n" -gt 0 ] || say "no edits found in $TARGET (compared with upstream $commit)"
+}
+
+case "${1:-}" in
+    update) update_cmd ;;
+    sync)   sync_cmd "${2:-}" ;;
+    save)   save_cmd ;;
+    *)      sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

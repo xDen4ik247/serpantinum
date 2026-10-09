@@ -1,0 +1,185 @@
+{
+  "general": {
+    "language": "en",
+    "avatarPath": "",
+    "muteSfx": false,
+    "weatherInterval": 15,
+    "weatherUnit": "metric",
+    "sfxVolume": 18,
+    "screenshotCaptureOnRelease": true,
+    "quickactions": true
+  },
+  "syspanel": {
+    "clipExpandProgress": 0,
+    "clipExpanded": false,
+    "clipState": 1
+  },
+  "bar": {
+    "position": "top",
+    "width": 100,
+    "opacity": 100,
+    "style": "modular",
+    "time": {
+      "format": "HH:mm"
+    },
+    "autohide": false,
+    "autohideTimeout": 1000,
+    "modules": {
+      "left": [
+        "left",
+        "workspaces",
+        "media"
+      ],
+      "center": [
+        [
+          "timedate",
+          "info",
+          "weather"
+        ]
+      ],
+      "right": [
+        "tray",
+        "sysmon",
+        "kb",
+        [
+          "wifi",
+          "bt",
+          "vol",
+          "bat"
+        ]
+      ]
+    },
+    "distinctPills": false,
+    "workspaceCount": 8,
+    "groupColors": {
+      "g_timedate": "#95cdf7",
+      "g_kb": "#4c4162",
+      "g_wifi": "#b9c3ff"
+    },
+    "glass": true,
+    "glassTint": 45,
+    "workspacesDynamic": true,
+    "workspacesStyle": "pills"
+  },
+  "theme": {
+    "fontFamily": "Google Sans",
+    "borderRadius": 20,
+    "activePreset": "Matugen",
+    "matugen": true,
+    "colors": {
+      "base": "#0f111a",
+      "blue": "#82aaff",
+      "crust": "#040507",
+      "green": "#c3e88d",
+      "mantle": "#090b11",
+      "maroon": "#ff5370",
+      "mauve": "#c792ea",
+      "overlay0": "#4b526d",
+      "overlay1": "#61698a",
+      "overlay2": "#7983a9",
+      "peach": "#f78c6c",
+      "pink": "#f07178",
+      "red": "#ff5370",
+      "sapphire": "#89ddff",
+      "subtext0": "#464b5d",
+      "subtext1": "#71778e",
+      "surface0": "#181b28",
+      "surface1": "#222638",
+      "surface2": "#2e344a",
+      "teal": "#89ddff",
+      "text": "#8f93a2",
+      "yellow": "#ffcb6b"
+    }
+  },
+  "idle": {
+    "enabled": true,
+    "actions": {
+      "dim": {
+        "id": "dim",
+        "timeout": 120,
+        "enabled": true,
+        "respectInhibitors": true,
+        "mprisInhibit": false,
+        "command": "",
+        "resumeCommand": "",
+        "isCustom": false
+      },
+      "dpms": {
+        "id": "dpms",
+        "timeout": 180,
+        "enabled": true,
+        "respectInhibitors": true,
+        "mprisInhibit": false,
+        "command": "",
+        "resumeCommand": "",
+        "isCustom": false
+      },
+      "lock": {
+        "id": "lock",
+        "timeout": 300,
+        "enabled": false,
+        "respectInhibitors": true,
+        "mprisInhibit": false,
+        "command": "",
+        "resumeCommand": "",
+        "isCustom": false
+      },
+      "suspend": {
+        "id": "suspend",
+        "timeout": 480,
+        "enabled": true,
+        "respectInhibitors": true,
+        "mprisInhibit": false,
+        "command": "",
+        "resumeCommand": "",
+        "isCustom": false
+      }
+    },
+    "manualInhibit": true
+  },
+  "notifications": {
+    "dnd": true,
+    "position": "top right",
+    "sound": true,
+    "soundFile": "/home/user/.local/share/serpantinum/src/assets/sounds/notifications/Sneak.mp3"
+  },
+  "display": {
+    "monitors": {
+      "eDP-1": {
+        "enabled": false,
+        "scale": 1.5
+      }
+    }
+  },
+  "wallpaperDir": "/home/user/Pictures/Wallpapers",
+  "dock": {
+    "enabled": true,
+    "position": "bottom",
+    "onTop": true,
+    "elementSize": 44,
+    "floating": false,
+    "opacity": 100,
+    "exclusive": false,
+    "autohide": false,
+    "autohideTimeout": 1000,
+    "editing": false,
+    "apps": [],
+    "overrideBoundsCorrection": false,
+    "enableScrolling": false,
+    "visibleElements": 7,
+    "hoverScale": 120,
+    "cascadeScale": false
+  },
+  "osd": {
+    "horizontalPosition": 50,
+    "verticalPosition": 10,
+    "orientation": "horizontal",
+    "showCapsLock": true,
+    "showNumLock": true,
+    "showAirplane": true,
+    "attachToBar": true
+  },
+  "inputs": {
+    "passwordReveal": true
+  }
+}

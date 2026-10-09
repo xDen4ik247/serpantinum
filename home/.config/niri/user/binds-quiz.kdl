@@ -1,0 +1,6 @@
+// Keybinds owned by the quiz feature.
+binds {
+    // Endless adaptive Japanese quiz (jp-quiz, a normal app window): launch it, or focus it if it is
+    // already running. Close it with Mod+Q like any window.
+    Mod+J hotkey-overlay-title="Japanese quiz (JP Quiz)" { spawn "/home/user/.local/bin/jp-quiz"; }
+}

@@ -1,0 +1,32 @@
+// Serpantinum's own files (config/) are kept exactly as upstream ships them;
+// `serp-tweaks sync` refreshes them after every update. Never edit them by hand.
+include "config/env.kdl"
+include "config/input.kdl"
+include "config/layout.kdl"
+include "config/autostart.kdl"
+// Not included on purpose: config/output.kdl and config/keybinds.kdl.
+// niri can't unbind keys, so the keymap and the display live fully in user/.
+
+// Personal layer: loaded last, so it overrides the files above.
+include "user/env.kdl"
+include "user/input.kdl"
+include "user/output.kdl"
+include "user/layout.kdl"
+include "user/animations.kdl"
+include "user/autostart.kdl"
+include "user/rules.kdl"
+include "user/rules-bar.kdl"
+include "user/rules-music.kdl"
+include "user/rules-ai.kdl"
+include "user/rules-calendar.kdl"
+include "user/rules-quiz.kdl"
+include "user/rules-notes.kdl"
+include "user/rules-cheatsheet.kdl"
+include "user/binds.kdl"
+include "user/binds-music.kdl"
+include "user/binds-ai.kdl"
+include "user/binds-widgets.kdl"
+include "user/binds-calendar.kdl"
+include "user/binds-quiz.kdl"
+include "user/binds-notes.kdl"
+include "user/binds-cheatsheet.kdl"

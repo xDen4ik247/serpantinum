@@ -1,0 +1,617 @@
+#!/usr/bin/python3
+"""niri-keys: list every niri keybinding that ~/.config/niri/config.kdl actually loads.
+
+Follows `include` lines (recursively, in order), reads every `binds {}` block, gives each
+bind a readable label (hotkey-overlay-title, else one derived from the action) and a group.
+
+  niri-keys              grouped table
+  niri-keys --json       JSON for the Serpantinum cheat sheet (cheatsheet/Cheatsheet.qml)
+  niri-keys --raw        don't fold Mod+1..9 style runs into one row
+  niri-keys --check      report duplicate keys across files (exit 1 if any)
+  niri-keys --config F   read another root config
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+DEFAULT_CONFIG = os.path.join(HOME, ".config/niri/config.kdl")
+
+# ── tiny KDL reader (enough for niri configs) ────────────────────────────────
+
+class Bare(str):
+    """A bare (unquoted) KDL value such as null, true, 150."""
+
+
+def tokenize(src):
+    i, n = 0, len(src)
+    toks = []
+    while i < n:
+        c = src[i]
+        if c == "\n" or c == ";":
+            toks.append(("end", c)); i += 1
+        elif c in " \t\r﻿":
+            i += 1
+        elif c == "\\":                       # line continuation
+            j = src.find("\n", i)
+            i = n if j < 0 else j + 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+        elif src.startswith("/*", i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if src.startswith("/*", i): depth += 1; i += 2
+                elif src.startswith("*/", i): depth -= 1; i += 2
+                else: i += 1
+        elif src.startswith("/-", i):
+            toks.append(("slashdash", None)); i += 2
+        elif c in "{}=":
+            toks.append((c, c)); i += 1
+        elif c == "(":                         # type annotation: skip
+            j = src.find(")", i)
+            i = n if j < 0 else j + 1
+        elif c == '"':
+            j, out = i + 1, []
+            while j < n and src[j] != '"':
+                if src[j] == "\\" and j + 1 < n:
+                    e = src[j + 1]
+                    out.append({"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/"}.get(e, e))
+                    j += 2
+                else:
+                    out.append(src[j]); j += 1
+            toks.append(("str", "".join(out))); i = j + 1
+        else:
+            m = re.match(r'r?(#+)"', src[i:])
+            if m:                              # raw string r#"..."# / #"..."#
+                hashes = m.group(1)
+                start = i + m.end()
+                end = src.find('"' + hashes, start)
+                end = n if end < 0 else end
+                toks.append(("str", src[start:end])); i = end + 1 + len(hashes)
+                continue
+            m = re.match(r'[^\s{}=;"()\\]+', src[i:])
+            word = m.group(0) if m else c
+            toks.append(("word", word)); i += len(word)
+    return toks
+
+
+def parse_nodes(toks, pos=0, line_of=None):
+    """Return (nodes, pos). Node = dict(name, args, props, children)."""
+    nodes = []
+    n = len(toks)
+    while pos < n:
+        kind, val = toks[pos]
+        if kind == "end":
+            pos += 1; continue
+        if kind == "}":
+            return nodes, pos + 1
+        skip = False
+        if kind == "slashdash":
+            skip = True; pos += 1
+            while pos < n and toks[pos][0] == "end": pos += 1
+            if pos >= n: break
+            kind, val = toks[pos]
+        node = {"name": val, "args": [], "props": {}, "children": [], "tok": pos}
+        pos += 1
+        while pos < n:
+            k, v = toks[pos]
+            if k == "end":
+                pos += 1; break
+            if k == "}":
+                break
+            if k == "slashdash":                 # drop the next entry / child block
+                pos += 1
+                if pos < n and toks[pos][0] == "{":
+                    _, pos = parse_nodes(toks, pos + 1)
+                elif pos + 2 < n and toks[pos + 1][0] == "=":
+                    pos += 3
+                else:
+                    pos += 1
+                continue
+            if k == "{":
+                node["children"], pos = parse_nodes(toks, pos + 1)
+                continue
+            if pos + 2 < n and toks[pos + 1][0] == "=":
+                vk, vv = toks[pos + 2]
+                node["props"][v] = vv if vk == "str" else Bare(vv)
+                pos += 3
+                continue
+            node["args"].append(v if k == "str" else Bare(v))
+            pos += 1
+        if not skip:
+            nodes.append(node)
+    return nodes, pos
+
+
+def read_kdl(path):
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    toks = tokenize(src)
+    # line number of each token (for --check output / jump-to-source)
+    lines, line = [], 1
+    # cheap approximation: recount by re-scanning end tokens
+    for k, v in toks:
+        lines.append(line)
+        if k == "end" and v == "\n":
+            line += 1
+    nodes, _ = parse_nodes(toks)
+    return nodes, lines
+
+
+def collect_binds(root, seen=None):
+    """Yield (file, line, bind-node) in load order."""
+    seen = seen if seen is not None else set()
+    root = os.path.realpath(root)
+    if root in seen or not os.path.isfile(root):
+        return
+    seen.add(root)
+    try:
+        nodes, lines = read_kdl(root)
+    except OSError:
+        return
+    base = os.path.dirname(root)
+    for node in nodes:
+        if node["name"] == "include" and node["args"]:
+            p = os.path.expanduser(str(node["args"][0]))
+            yield from collect_binds(p if os.path.isabs(p) else os.path.join(base, p), seen)
+        elif node["name"] == "binds":
+            for b in node["children"]:
+                yield root, lines[b["tok"]] if b["tok"] < len(lines) else 0, b
+
+# ── labels ───────────────────────────────────────────────────────────────────
+
+ACTION_LABELS = {
+    "close-window": "Close window",
+    "maximize-window-to-edges": "Maximize to screen edges",
+    "maximize-column": "Maximize column",
+    "fullscreen-window": "Fullscreen",
+    "expand-column-to-available-width": "Expand column to free space",
+    "toggle-window-floating": "Float / tile window",
+    "switch-focus-between-floating-and-tiling": "Switch focus floating ↔ tiling",
+    "toggle-overview": "Overview",
+    "quit": "Quit niri (log out)",
+    "focus-column-left": "Focus column left",
+    "focus-column-right": "Focus column right",
+    "focus-window-or-workspace-up": "Focus window above / workspace up",
+    "focus-window-or-workspace-down": "Focus window below / workspace down",
+    "focus-column-first": "Focus first column",
+    "focus-column-last": "Focus last column",
+    "move-column-left": "Move column left",
+    "move-column-right": "Move column right",
+    "move-window-up-or-to-workspace-up": "Move window up / to workspace up",
+    "move-window-down-or-to-workspace-down": "Move window down / to workspace down",
+    "switch-preset-column-width": "Cycle column width presets",
+    "switch-preset-column-width-back": "Cycle column width presets back",
+    "reset-window-height": "Reset window height",
+    "consume-or-expel-window-left": "Pull window into / out of column ←",
+    "consume-or-expel-window-right": "Pull window into / out of column →",
+    "toggle-column-tabbed-display": "Tabbed column on / off",
+    "focus-workspace-down": "Next workspace",
+    "focus-workspace-up": "Previous workspace",
+    "screenshot": "Screenshot UI",
+    "screenshot-screen": "Screenshot: screen (niri)",
+    "screenshot-window": "Screenshot: window",
+    "show-hotkey-overlay": "niri hotkey overlay",
+    "power-off-monitors": "Turn monitors off",
+    "toggle-keyboard-shortcuts-inhibit": "Let app grab shortcuts on / off",
+}
+
+KEY_LABELS = {  # used for hardware keys without a title
+    "xf86audioraisevolume": "Volume up", "xf86audiolowervolume": "Volume down",
+    "xf86audiomute": "Mute speakers", "xf86audiomicmute": "Mute microphone",
+    "xf86audioplay": "Play / pause", "xf86audiopause": "Play / pause",
+    "xf86audionext": "Next track", "xf86audioprev": "Previous track",
+    "xf86audiostop": "Stop playback",
+    "xf86monbrightnessup": "Brightness up", "xf86monbrightnessdown": "Brightness down",
+    "xf86poweroff": "Power button: lock", "xf86kbdbrightnessup": "Keyboard light up",
+    "xf86kbdbrightnessdown": "Keyboard light down",
+}
+
+# per-key overrides: label and/or group (key spelled as in the config, case-insensitive)
+OVERRIDES = {
+    "Shift+XF86MonBrightnessDown": {"label": "Brightness to minimum"},
+    "XF86PowerOff": {"label": "Power button: lock"},
+    "Mod+Shift+E": {"group": "System"},
+}
+
+_niri_desc = None
+
+
+def niri_descriptions():
+    """Action → one-line description from `niri msg action --help` (cached per niri binary)."""
+    global _niri_desc
+    if _niri_desc is not None:
+        return _niri_desc
+    _niri_desc = {}
+    try:
+        st = os.stat("/usr/bin/niri")
+        stamp = f"{int(st.st_mtime)}-{st.st_size}"
+    except OSError:
+        stamp = "x"
+    cache = os.path.join(HOME, ".cache/niri-keys/actions.json")
+    try:
+        with open(cache) as f:
+            data = json.load(f)
+        if data.get("stamp") == stamp:
+            _niri_desc = data["actions"]
+            return _niri_desc
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        out = subprocess.run(["niri", "msg", "action", "--help"], capture_output=True, text=True, timeout=3).stdout
+        cur = None
+        for ln in out.splitlines():
+            m = re.match(r"^  (\S+)$", ln)
+            if m:
+                cur = m.group(1); continue
+            if cur and ln.startswith("          ") and ln.strip():
+                _niri_desc.setdefault(cur, ln.strip())
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        with open(cache, "w") as f:
+            json.dump({"stamp": stamp, "actions": _niri_desc}, f)
+    except Exception:
+        pass
+    return _niri_desc
+
+
+def humanize(s):
+    s = s.replace("-", " ").replace("_", " ").strip()
+    return s[:1].upper() + s[1:]
+
+
+def spawn_label(argv):
+    """Readable label for a spawn command (list of strings)."""
+    if not argv:
+        return "Run command"
+    prog = os.path.basename(argv[0])
+    rest = argv[1:]
+    joined = " ".join(argv)
+    if prog == "serpantinum":
+        if rest[:2] == ["msg", "toggle"] and len(rest) > 2:
+            return "Serpantinum: " + rest[2]
+        if rest[:1] == ["volume"]:
+            return {"raise": "Volume up", "lower": "Volume down", "mute-toggle": "Mute speakers",
+                    "mic-toggle": "Mute microphone"}.get(rest[1] if len(rest) > 1 else "", "Volume")
+        if rest[:2] == ["brightness", "set"] and len(rest) > 2:
+            return f"Brightness to {rest[2]}%"
+        if rest[:1] == ["screenshot"]:
+            return "Screenshot"
+        if rest[:1] == ["lock"]:
+            return "Lock screen"
+        if rest[:2] == ["ipc", "call"] and len(rest) > 3:
+            return f"{humanize(rest[2])}: {rest[3]}"
+        return "Serpantinum " + " ".join(rest)
+    if prog == "playerctl" and rest:
+        return {"play-pause": "Play / pause", "next": "Next track", "previous": "Previous track",
+                "stop": "Stop playback"}.get(rest[0], "Media " + rest[0])
+    if prog == "brightnessctl" or "brightnessctl" in joined:
+        if re.search(r"\d+%\+", joined): return "Brightness up"
+        if re.search(r"\d+%-", joined): return "Brightness down"
+        return "Brightness"
+    if prog in ("sh", "bash", "zsh") and "-c" in rest:
+        cmd = rest[rest.index("-c") + 1] if rest.index("-c") + 1 < len(rest) else ""
+        return spawn_sh_label(cmd)
+    return "Open " + prog
+
+
+def spawn_sh_label(cmd):
+    words = re.findall(r"[\w.~/-]+", cmd)
+    for w in words:  # first word that looks like a program, skipping shell builtins
+        b = os.path.basename(w)
+        if b in ("mkdir", "cd", "exec", "env", "sh", "bash", "-p", "&&", "||"):
+            continue
+        if b == "brightnessctl" or "brightnessctl" in cmd:
+            return spawn_label(["brightnessctl", cmd])
+        if b.startswith("-") or b.startswith("~"):
+            continue
+        return "Run " + b
+    return "Run shell command"
+
+
+def fmt_args(args):
+    return " ".join(str(a) for a in args)
+
+
+def action_label(action, args, props):
+    if action == "spawn":
+        return spawn_label([str(a) for a in args])
+    if action == "spawn-sh":
+        return spawn_sh_label(str(args[0]) if args else "")
+    if action == "focus-workspace" and args:
+        return f"Go to workspace {fmt_args(args)}"
+    if action in ("move-window-to-workspace", "move-column-to-workspace") and args:
+        what = "window" if "window" in action else "column"
+        return f"Send {what} to workspace {fmt_args(args)}"
+    if action in ("set-column-width", "set-window-height") and args:
+        what = "Column width" if "column" in action else "Window height"
+        v = str(args[0]).replace("-", "−")
+        return f"{what} {v}"
+    if action in ACTION_LABELS:
+        lab = ACTION_LABELS[action]
+    else:
+        d = niri_descriptions().get(action)
+        lab = d.rstrip(".") if d else humanize(action)
+        lab = re.sub(r"^Toggle (.)", lambda m: m.group(1).upper(), lab) if False else lab
+    if args:
+        lab += " " + fmt_args(args)
+    return lab
+
+# ── groups ───────────────────────────────────────────────────────────────────
+
+GROUP_ORDER = ["Windows", "Focus & move", "Layout", "Workspaces", "Apps & launcher", "Desktop",
+               "Music", "AI", "Japanese", "Calendar & notes", "Screenshots", "System", "Hardware keys",
+               "Other"]
+
+GROUP_ICONS = {  # Symbols Nerd Font (Material Design) code points
+    "Windows": 0xF05AF, "Focus & move": 0xF0041, "Layout": 0xF0570, "Workspaces": 0xF0E14,
+    "Apps & launcher": 0xF003B, "Desktop": 0xF0379, "Music": 0xF075A, "AI": 0xF06A9,
+    "Japanese": 0xF05CA, "Calendar & notes": 0xF00ED, "Screenshots": 0xF0100,
+    "System": 0xF0493, "Hardware keys": 0xF030C, "Other": 0xF0B23,
+}
+
+FILE_GROUPS = {
+    "binds-music": "Music", "binds-ai": "AI", "binds-quiz": "Japanese",
+    "binds-calendar": "Calendar & notes", "binds-notes": "Calendar & notes",
+    "binds-widgets": "Desktop", "binds-cheatsheet": "System",
+}
+
+KEYWORDS = [  # (regex on label + command, group), first match wins
+    (r"japanese|furigana|kanji|kana|jp quiz|\bocr\b", "Japanese"),
+    (r"screenshot", "Screenshots"),
+    (r"\bmusic\b|rmpc|playerctl|\btrack\b", "Music"),
+    (r"calendar|agenda|obsidian|\bnotes?\b", "Calendar & notes"),
+    (r"\bai\b|assistant|dictation|whisper|\bllm\b", "AI"),
+    (r"fullscreen|maximi[sz]e|floating|close window", "Windows"),
+    (r"lock screen|restart|reload|log ?out|quit|power|cheat ?sheet|hotkey|shortcut", "System"),
+    (r"wallpaper|widget|system controls|serpantinum settings|serpantinum: (system|guide|wallpaper)", "Desktop"),
+    (r"launcher|clipboard|terminal|firefox|browser|files|claude|^open ", "Apps & launcher"),
+]
+
+
+def action_group(action, args):
+    a = action
+    if a in ("spawn", "spawn-sh"):
+        return None
+    if a.startswith("screenshot"):
+        return "Screenshots"
+    if ("workspace" in a and "-or-" not in a and "or-to-workspace" not in a) or a.startswith("focus-workspace"):
+        return "Workspaces"
+    if a in ("toggle-overview", "close-window", "fullscreen-window", "toggle-windowed-fullscreen",
+             "toggle-window-floating", "switch-focus-between-floating-and-tiling", "maximize-column",
+             "maximize-window-to-edges") or "floating" in a:
+        return "Windows"
+    if re.match(r"(set|switch|reset|expand|consume|expel|toggle-column|center|swap|preset)", a) or \
+            "width" in a or "height" in a or "tabbed" in a:
+        return "Layout"
+    if re.match(r"(focus|move)-(column|window|monitor)", a):
+        return "Focus & move"
+    if a in ("quit", "power-off-monitors", "show-hotkey-overlay", "toggle-keyboard-shortcuts-inhibit",
+             "do-screen-transition", "load-config-file"):
+        return "System"
+    return None
+
+
+def group_for(key, file_stem, action, args, label, cmd):
+    base = key.split("+")[-1].lower()
+    if base.startswith("xf86"):
+        return "Hardware keys"
+    fg = FILE_GROUPS.get(file_stem)
+    hay = (label + " " + cmd).lower()
+    if fg:
+        if fg in ("AI", "Desktop") and re.search(KEYWORDS[0][0], hay):
+            return "Japanese"
+        return fg
+    g = action_group(action, args)
+    if g:
+        return g
+    if "niri-autofit" in cmd:
+        return "Layout"
+    if base.startswith("wheelscroll"):
+        return "Focus & move"
+    for rx, grp in KEYWORDS:
+        if re.search(rx, hay):
+            return grp
+    if action in ("spawn", "spawn-sh"):
+        return "Apps & launcher"
+    return "Other"
+
+# ── key display ──────────────────────────────────────────────────────────────
+
+MOD_ALIASES = {"mod": "Mod", "super": "Super", "win": "Super", "ctrl": "Ctrl", "control": "Ctrl",
+               "alt": "Alt", "shift": "Shift", "iso_level3_shift": "AltGr", "mod5": "AltGr",
+               "iso_level5_shift": "Level5"}
+MOD_ORDER = ["Mod", "Super", "Ctrl", "Alt", "AltGr", "Level5", "Shift"]
+MOD_CAPS = {"Mod": "⌘", "Super": "⌘", "Ctrl": "Ctrl", "Alt": "Alt", "AltGr": "AltGr", "Level5": "Lvl5",
+            "Shift": "⇧"}
+KEY_CAPS = {
+    "left": "←", "right": "→", "up": "↑", "down": "↓", "return": "↵", "enter": "↵",
+    "kp_enter": "↵", "backspace": "⌫", "delete": "Del", "space": "Space", "tab": "Tab",
+    "escape": "Esc", "print": "PrtSc", "slash": "/", "question": "?", "comma": ",", "period": ".",
+    "minus": "−", "equal": "=", "plus": "+", "semicolon": ";", "apostrophe": "'", "grave": "`",
+    "bracketleft": "[", "bracketright": "]", "backslash": "\\", "home": "Home", "end": "End",
+    "page_up": "PgUp", "page_down": "PgDn", "prior": "PgUp", "next": "PgDn", "insert": "Ins",
+    "f23": "Copilot",
+    "wheelscrolldown": "Wheel ↓", "wheelscrollup": "Wheel ↑", "wheelscrollleft": "Wheel ←",
+    "wheelscrollright": "Wheel →", "mouseleft": "Click", "mouseright": "Right click",
+    "mousemiddle": "Middle click", "touchpadscrolldown": "Swipe ↓", "touchpadscrollup": "Swipe ↑",
+    "xf86audioraisevolume": "Vol +", "xf86audiolowervolume": "Vol −", "xf86audiomute": "Mute",
+    "xf86audiomicmute": "Mic mute", "xf86audioplay": "Play", "xf86audiopause": "Pause",
+    "xf86audionext": "Next", "xf86audioprev": "Prev", "xf86audiostop": "Stop",
+    "xf86monbrightnessup": "☀ +", "xf86monbrightnessdown": "☀ −", "xf86poweroff": "Power",
+}
+
+
+def split_key(key):
+    parts = key.split("+")
+    base = parts[-1]
+    if base == "" and len(parts) > 1:      # "Mod++"
+        base, parts = "+", parts[:-2] + ["+"]
+    mods = []
+    for p in parts[:-1]:
+        m = MOD_ALIASES.get(p.lower(), p)
+        if m not in mods:
+            mods.append(m)
+    mods.sort(key=lambda m: MOD_ORDER.index(m) if m in MOD_ORDER else 99)
+    return mods, base
+
+
+def norm_key(key):
+    mods, base = split_key(key)
+    return "+".join(sorted(m.lower() for m in mods) + [base.lower()])
+
+
+def caps_for(mods, base):
+    out = [{"t": MOD_CAPS.get(m, m), "mod": True} for m in mods]
+    b = KEY_CAPS.get(base.lower())
+    if b is None:
+        b = base[4:] if base.lower().startswith("xf86") else (base.upper() if len(base) == 1 else base)
+    out.append({"t": b, "mod": False})
+    return out
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+
+def load(config, fold=True):
+    binds = []
+    for path, line, node in collect_binds(config):
+        key = node["name"]
+        if not node["children"]:
+            continue
+        act = node["children"][0]
+        action, args, aprops = act["name"], act["args"], act["props"]
+        title = node["props"].get("hotkey-overlay-title")
+        hidden = isinstance(title, Bare) and title == "null"
+        cmd = ""
+        if action == "spawn":
+            cmd = " ".join(str(a) for a in args)
+        elif action == "spawn-sh" and args:
+            cmd = str(args[0])
+        ov = {}
+        for k, v in OVERRIDES.items():
+            if norm_key(k) == norm_key(key):
+                ov = v
+        mods, base = split_key(key)
+        if ov.get("label"):
+            label = ov["label"]
+        elif title is not None and not hidden:
+            label = str(title)
+        else:
+            label = action_label(action, args, aprops)
+            if base.lower().startswith("xf86") and (label.startswith("Run ") or label.startswith("Open ")):
+                label = KEY_LABELS.get(base.lower(), label)
+            if re.match(r"(wheelscroll|touchpadscroll)", base.lower()):
+                label += " (wheel)" if base.lower().startswith("wheel") else " (touchpad)"
+        stem = os.path.splitext(os.path.basename(path))[0]
+        group = ov.get("group") or group_for(key, stem, action, args, label, cmd)
+        binds.append({
+            "key": key, "norm": norm_key(key), "caps": caps_for(mods, base), "label": label,
+            "group": group, "action": action, "args": [str(a) for a in args], "cmd": cmd,
+            "file": path, "line": line, "titled": title is not None and not hidden,
+            "_mods": mods, "_base": base,
+        })
+    # later definitions of the same key win (niri merges includes in order)
+    last = {}
+    for i, b in enumerate(binds):
+        last[b["norm"]] = i
+    dups = [b for i, b in enumerate(binds) if last[b["norm"]] != i]
+    binds = [b for i, b in enumerate(binds) if last[b["norm"]] == i]
+    if fold:
+        binds = fold_runs(binds)
+    order = {g: i for i, g in enumerate(GROUP_ORDER)}
+    binds.sort(key=lambda b: order.get(b["group"], len(order)))  # stable: keeps file order
+    for b in binds:
+        b.pop("_mods", None); b.pop("_base", None)
+    return binds, dups
+
+
+def fold_runs(binds):
+    """Mod+1 … Mod+9 doing the same action with the digit as argument → one row."""
+    out, i = [], 0
+    while i < len(binds):
+        b = binds[i]
+        run = [b]
+        if b["_base"].isdigit() and b["args"] and b["args"][0] == b["_base"] and not b["titled"]:
+            j = i + 1
+            while j < len(binds):
+                c = binds[j]
+                if (c["_mods"] == b["_mods"] and c["action"] == b["action"] and c["_base"].isdigit()
+                        and c["args"] and c["args"][0] == c["_base"] and c["args"][1:] == b["args"][1:]
+                        and int(c["_base"]) == int(run[-1]["_base"]) + 1 and not c["titled"]):
+                    run.append(c); j += 1
+                else:
+                    break
+        if len(run) >= 3:
+            lo, hi = run[0]["_base"], run[-1]["_base"]
+            m = dict(b)
+            m["key"] = "+".join(b["_mods"] + [f"{lo}…{hi}"])
+            m["caps"] = caps_for(b["_mods"], f"{lo}–{hi}")
+            m["label"] = b["label"].replace(f" {lo}", f" {lo}–{hi}", 1) if f" {lo}" in b["label"] else b["label"]
+            m["count"] = len(run)
+            out.append(m)
+            i += len(run)
+        else:
+            out.append(b); i += 1
+    return out
+
+
+def merge_same_label(items, max_caps=6):
+    """Rows of one group with the same label → one row with alternative keys ("A / B")."""
+    out, by_label = [], {}
+    for b in items:
+        prev = by_label.get(b["label"])
+        if prev is not None and len(prev["caps"]) + 1 + len(b["caps"]) <= max_caps:
+            prev["caps"] = prev["caps"] + [{"t": "/", "mod": False, "sep": True}] + b["caps"]
+            prev["key"] += " / " + b["key"]
+            prev["alt"] = prev.get("alt", []) + [b["key"]]
+            continue
+        b = dict(b)
+        by_label[b["label"]] = b
+        out.append(b)
+    return out
+
+
+def main(argv):
+    config = DEFAULT_CONFIG
+    if "--config" in argv:
+        config = os.path.expanduser(argv[argv.index("--config") + 1])
+    binds, dups = load(config, fold="--raw" not in argv)
+    if "--check" in argv:
+        if not dups:
+            print(f"ok: {len(binds)} binds, no duplicate keys")
+            return 0
+        for d in dups:
+            print(f"duplicate {d['key']}: {d['file']}:{d['line']} (overridden later)")
+        return 1
+    if "--json" in argv:
+        groups = []
+        for g in GROUP_ORDER + sorted({b["group"] for b in binds} - set(GROUP_ORDER)):
+            items = merge_same_label([b for b in binds if b["group"] == g])
+            if items:
+                groups.append({"name": g, "icon": GROUP_ICONS.get(g, GROUP_ICONS["Other"]), "items": items})
+        json.dump({"config": config, "count": len(binds), "groups": groups,
+                   "duplicates": [d["key"] for d in dups]}, sys.stdout, ensure_ascii=False)
+        print()
+        return 0
+    tty = sys.stdout.isatty()
+    bold = (lambda s: f"\033[1m{s}\033[0m") if tty else (lambda s: s)
+    dim = (lambda s: f"\033[2m{s}\033[0m") if tty else (lambda s: s)
+    width = max((len(b["key"]) for b in binds), default=10) + 2
+    cur = None
+    for b in binds:
+        if b["group"] != cur:
+            cur = b["group"]
+            print(("\n" if b is not binds[0] else "") + bold(cur))
+        print(f"  {b['key']:<{width}}{b['label']}")
+    if dups:
+        print(dim(f"\n{len(dups)} duplicate key(s): run `niri-keys --check`"))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except BrokenPipeError:
+        pass

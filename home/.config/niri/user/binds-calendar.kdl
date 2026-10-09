@@ -1,0 +1,11 @@
+// Keybinds owned by the calendar feature (Google Calendar + Obsidian agenda).
+binds {
+    // Glass agenda panel: today + next 7 days (also: click the bar clock).
+    Mod+C hotkey-overlay-title="Agenda (calendar + tasks)" { spawn "serpantinum" "ipc" "call" "agenda" "toggle"; }
+    // Same panel, straight into the full-month view (toggles when it is already showing).
+    Mod+K hotkey-overlay-title="Calendar: month view" { spawn "serpantinum" "ipc" "call" "agenda" "month"; }
+    // Open (or create) today's Obsidian daily note.
+    Mod+O hotkey-overlay-title="Obsidian: today's daily note" { spawn "sh" "-c" "$HOME/.local/bin/gcal-sync daily"; }
+    // Quick-capture a task into today's daily note (or the vault inbox).
+    Mod+Shift+O hotkey-overlay-title="Obsidian: quick capture task" { spawn "serpantinum" "ipc" "call" "agenda" "capture"; }
+}

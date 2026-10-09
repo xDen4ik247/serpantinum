@@ -1,0 +1,5 @@
+// Keybinds owned by the notes feature (ai-notes: local AI for the Obsidian vault).
+binds {
+    Mod+N hotkey-overlay-title="Notes: ask your Obsidian vault (local AI)" { spawn "ai-notes-panel" "ask"; }
+    Mod+Shift+N hotkey-overlay-title="Notes: actions for the open note (links, tidy, cards, voice, weekly)" { spawn "ai-notes-panel" "menu"; }
+}

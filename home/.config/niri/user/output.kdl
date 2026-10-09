@@ -1,0 +1,8 @@
+// 2880x1800 panel at 1.5 → a 1920x1200 workspace.
+// Keep Serpantinum's Settings → Display scale at the same value (it re-applies its own at login).
+output "eDP-1" {
+    mode "2880x1800@120.000"
+    scale 1.5
+    // VRR only kicks in for windows with `variable-refresh-rate true` (see rules.kdl).
+    variable-refresh-rate on-demand=true
+}
