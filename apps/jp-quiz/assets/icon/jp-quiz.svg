@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8f9ff0"/>
+      <stop offset="0.55" stop-color="#5a66b8"/>
+      <stop offset="1" stop-color="#3a3f7e"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.08"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd27a"/>
+      <stop offset="1" stop-color="#e59a3c"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="30" fill="url(#bg)"/>
+  <path d="M36 6h56a30 30 0 0 1 30 30v8C96 56 32 56 6 44v-8A30 30 0 0 1 36 6z" fill="url(#sheen)"/>
+  <rect x="6.75" y="6.75" width="114.5" height="114.5" rx="29.25" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
+  <!-- 日 -->
+  <g fill="#ffffff">
+    <rect x="38" y="28" width="11" height="68" rx="3"/>
+    <rect x="79" y="28" width="11" height="68" rx="3"/>
+    <rect x="38" y="28" width="52" height="10" rx="3"/>
+    <rect x="44" y="57" width="40" height="9" rx="3"/>
+    <rect x="38" y="86" width="52" height="10" rx="3"/>
+  </g>
+  <!-- check badge -->
+  <circle cx="98" cy="98" r="19" fill="url(#badge)" stroke="#ffffff" stroke-opacity="0.85" stroke-width="2.5"/>
+  <path d="M89 98.5l6.5 6.5 12-13" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
