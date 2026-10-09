@@ -20,29 +20,15 @@ Item {
     property bool isRound: false
     property int weekStart: 1
 
-    // only changes once a day, so the grid is not rebuilt every clock tick
-    readonly property string todayKey: Qt.formatDate(DateTime.now, "yyyy-MM-dd")
-    readonly property date today: { let p = todayKey.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
-
-    property int viewYear: today.getFullYear()
-    property int viewMonth: today.getMonth()
-    readonly property bool isCurrentMonth: viewYear === today.getFullYear() && viewMonth === today.getMonth()
-
-    function shift(delta) {
-        cal.slideDir = delta > 0 ? 1 : -1;
-        let d = new Date(viewYear, viewMonth + delta, 1);
-        viewYear = d.getFullYear();
-        viewMonth = d.getMonth();
-        resetTimer.restart();
-    }
-    function goToday() {
-        if (isCurrentMonth) return;
-        cal.slideDir = (viewYear * 12 + viewMonth) > (today.getFullYear() * 12 + today.getMonth()) ? -1 : 1;
-        viewYear = today.getFullYear();
-        viewMonth = today.getMonth();
-    }
-    // drift back to the current month after a while of browsing
-    Timer { id: resetTimer; interval: 60000; onTriggered: root.goToday() }
+    // month navigation (today + browse offset) shared with the other calendar face: MonthGrid.qml
+    MonthGrid.MonthNav { id: nav; grid: cal }
+    readonly property string todayKey: nav.todayKey
+    readonly property date today: nav.today
+    readonly property int viewYear: nav.viewYear
+    readonly property int viewMonth: nav.viewMonth
+    readonly property bool isCurrentMonth: nav.isCurrentMonth
+    function shift(delta) { nav.shift(delta); }
+    function goToday() { nav.goToday(); }
 
     readonly property real pad: Math.max(14, Math.min(width, height) * 0.07)
     readonly property real titlePx: Math.max(14, Math.min(width * 0.085, height * 0.075))

@@ -14,6 +14,42 @@ Item {
     property int weekStart: 1            // 1 = Monday, 0 = Sunday
     property int slideDir: 1
 
+    // MonthGrid.MonthNav: month navigation shared by the calendar faces (CalendarFace, CalendarFaceSplit):
+    // today + a browse offset in months. The shown month is derived from `today`, so with
+    // offset 0 it keeps following the current month across midnight / month ends. (Before,
+    // each face assigned viewYear/viewMonth directly, which broke their binding to `today`
+    // after the first browse or reset.)
+    component MonthNav: Item {
+        id: nav
+        visible: false
+
+        property Item grid: null               // MonthGrid: gets the slide direction
+        property int resetAfter: 60000         // drift back to the current month after browsing
+
+        // only changes once a day, so the grid is not rebuilt every clock tick
+        property string todayKey: Qt.formatDate(DateTime.now, "yyyy-MM-dd")
+        readonly property date today: { let p = todayKey.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+
+        property int offset: 0
+        readonly property int viewIndex: today.getFullYear() * 12 + today.getMonth() + offset
+        readonly property int viewYear: Math.floor(viewIndex / 12)
+        readonly property int viewMonth: viewIndex - viewYear * 12
+        readonly property bool isCurrentMonth: offset === 0
+
+        function shift(delta) {
+            if (grid) grid.slideDir = delta > 0 ? 1 : -1;
+            offset += delta;
+            resetTimer.restart();
+        }
+        function goToday() {
+            resetTimer.stop();
+            if (offset === 0) return;
+            if (grid) grid.slideDir = offset > 0 ? -1 : 1;
+            offset = 0;
+        }
+        Timer { id: resetTimer; interval: nav.resetAfter; onTriggered: nav.goToday() }
+    }
+
     readonly property real headerH: height / 7.2
     readonly property real cellW: width / 7
     readonly property real cellH: (height - headerH) / 6
