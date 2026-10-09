@@ -195,7 +195,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
@@ -203,16 +202,25 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(n) if n else b""
 
-    def do_OPTIONS(self):  # CORS preflight (QML XMLHttpRequest / browsers)
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+    # Local clients only (CLI, QML panels): browsers always send Origin on cross-site requests and
+    # a DNS-rebinding page would carry a foreign Host, so both are refused. No CORS headers are sent,
+    # so no web page can read a reply either.
+    _LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+    def _refuse_foreign(self):
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+        if self.headers.get("Origin") is not None or host not in self._LOCAL_HOSTS:
+            self._send(403, {"error": "forbidden: local clients only"})
+            return True
+        return False
+
+    def do_OPTIONS(self):  # no CORS: refuse preflights
+        self._send(403, {"error": "forbidden: local clients only"})
 
     # -- routes -------------------------------------------------------------------------------
     def do_GET(self):
+        if self._refuse_foreign():
+            return
         url = urllib.parse.urlparse(self.path)
         S = self.S
         if url.path == "/health":
@@ -234,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if self._refuse_foreign():
+            return
         url = urllib.parse.urlparse(self.path)
         q = {k: v[-1] for k, v in urllib.parse.parse_qs(url.query).items()}
         S = self.S
@@ -320,7 +330,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True

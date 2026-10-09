@@ -51,7 +51,7 @@ def _request(text, lang, stream):
         "stream": stream,
     }
     st = status()
-    if st["model"]:
+    if st["model"] and st["model"] != "loading":   # "loading" is a status, not a model id
         body["model"] = st["model"]
     return urllib.request.Request(LLM_URL + "/v1/chat/completions", data=json.dumps(body).encode(),
                                   headers={"Content-Type": "application/json"})
