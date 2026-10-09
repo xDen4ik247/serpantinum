@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# music-ctl play-pause|next|previous|… — playerctl for the music keys (Mod+/ Mod+, Mod+.).
+#
+# Picks the player the way the Serpantinum bar does, so the keys always act on what the
+# bar shows: the player that is playing right now; otherwise the music library (MPD);
+# otherwise whatever player exists. Plain `playerctl` would pick an arbitrary paused
+# player (e.g. a browser tab) instead of resuming the music.
+
+cmd=${1:-play-pause}
+shift
+
+player=$(playerctl -a -f '{{playerInstance}}|{{status}}' status 2>/dev/null |
+    awk -F'|' '$2 == "Playing" { print $1; exit }')
+if [[ -z "$player" ]]; then
+    if playerctl -l 2>/dev/null | grep -qx 'mpd'; then
+        player=mpd
+    else
+        player=$(playerctl -l 2>/dev/null | head -n 1)
+    fi
+fi
+
+[[ -n "$player" ]] || exit 0
+exec playerctl -p "$player" "$cmd" "$@"

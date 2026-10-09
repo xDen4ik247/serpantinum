@@ -1,0 +1,16 @@
+# music-smart: smart-shuffle queue keeper + play-history logger (~/.local/bin/music-smart).
+# Blocks on MPD's idle protocol (no polling); ~0 CPU while nothing changes.
+[Unit]
+Description=Smart shuffle for MPD (history logger + queue top-up)
+After=mpd.service
+Wants=mpd.service
+
+[Service]
+Type=simple
+ExecStart=/home/user/.local/bin/music-smart daemon
+Restart=on-failure
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=default.target

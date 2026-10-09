@@ -1,0 +1,1019 @@
+#!/usr/bin/python3
+"""music-smart — one key that starts good music from the MPD library.
+
+    music-smart              start a smart queue, or re-roll it if smart mode is already on
+    music-smart start        same as above (Mod+S, the bar island and the music panel use this)
+    music-smart reroll       always build a fresh queue with a different vibe
+    music-smart stop         leave smart mode (the queue and playback stay as they are)
+    music-smart why          explain why the current track was picked   (alias: explain-why)
+    music-smart stats        what the history has learned so far
+    music-smart love|unlove|ban|unban [FILE]   mark the current (or given) track; stored as
+                             MPD stickers, so they survive and work with any client
+    music-smart status       one line (or --json) about smart mode
+    music-smart seed         (re)import past plays from MPD's journal
+    music-smart daemon       the event-driven logger + queue keeper (music-smart.service)
+
+How it picks (weighted shuffle, ~50 tracks, no artist repeats within 3 tracks):
+  · history: full listens raise a track/artist, early skips lower it (decays over ~2 months)
+  · favourites: the library is the user's liked Yandex tracks; MPD stickers love/rating/ban refine it
+  · genre → mood (heavy, rock, alt, rap, electronic, pop, chill) and time of day: what you
+    actually play at night/morning/day/evening, starting from sensible defaults
+  · a strong "played recently" penalty for the track and a softer one for its artist
+  · each queue opens on a "vibe" (a mood picked for this hour); re-roll picks another one
+
+The daemon blocks on MPD's idle protocol (no polling): it logs every play into
+~/.local/share/music-smart/history.sqlite, tops the queue up as it drains, and writes
+~/.local/state/music-smart/state.json for the Serpantinum bar / music panel.
+"""
+
+import json
+import math
+import os
+import random
+import re
+import socket
+import sqlite3
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DATA_DIR = os.path.join(os.environ.get("XDG_DATA_HOME", HOME + "/.local/share"), "music-smart")
+STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", HOME + "/.local/state"), "music-smart")
+DB_PATH = os.path.join(DATA_DIR, "history.sqlite")
+STATE_PATH = os.path.join(STATE_DIR, "state.json")
+CHANNEL = "music-smart"
+
+QUEUE_SIZE = 50        # tracks in a fresh smart queue
+TOPUP_BELOW = 12       # top up when fewer than this many tracks are left after the current one
+TOPUP_COUNT = 25
+KEEP_PLAYED = 15       # already-played tracks kept above the current one
+ARTIST_WINDOW = 3      # no artist repeats within this many tracks
+
+# ── moods ────────────────────────────────────────────────────────────────────
+MOODS = ["heavy", "rock", "alt", "rap", "electronic", "pop", "chill"]
+MOOD_LABEL = {"heavy": "Heavy", "rock": "Rock", "alt": "Alt & indie", "rap": "Rap",
+              "electronic": "Electronic", "pop": "Pop", "chill": "Chill"}
+# Yandex genre ids → mood; first matching substring wins (order matters).
+GENRE_RULES = [
+    ("metal", "heavy"), ("core", "heavy"), ("thrash", "heavy"), ("doom", "heavy"),
+    ("hardrock", "heavy"), ("stoner", "heavy"), ("grunge", "heavy"),
+    ("triphop", "chill"), ("jazz", "chill"), ("bebop", "chill"), ("bigband", "chill"),
+    ("lounge", "chill"), ("relax", "chill"), ("newage", "chill"), ("ambient", "chill"),
+    ("classical", "chill"), ("soundtrack", "chill"), ("films", "chill"), ("videogame", "chill"),
+    ("bard", "chill"), ("folk", "chill"), ("country", "chill"), ("reggae", "chill"),
+    ("soul", "chill"), ("blues", "chill"), ("jewish", "chill"), ("chill", "chill"),
+    ("hyperpop", "rap"), ("phonk", "rap"), ("rap", "rap"), ("hiphop", "rap"), ("trap", "rap"),
+    ("edm", "electronic"), ("house", "electronic"), ("electron", "electronic"), ("idm", "electronic"),
+    ("breakbeat", "electronic"), ("techno", "electronic"), ("trance", "electronic"),
+    ("dnb", "electronic"), ("dubstep", "electronic"), ("synth", "electronic"),
+    ("postpunk", "alt"), ("alternative", "alt"), ("indie", "alt"), ("experimental", "alt"),
+    ("modern", "alt"), ("shoegaze", "alt"),
+    ("punk", "rock"), ("rock", "rock"), ("rnr", "rock"), ("prog", "rock"), ("ska", "rock"),
+    ("rnb", "pop"), ("funk", "pop"), ("disco", "pop"), ("dance", "pop"), ("estrada", "pop"),
+    ("reggaeton", "pop"), ("latin", "pop"), ("pop", "pop"), ("sport", "pop"),
+]
+
+BUCKETS = [("night", 0, 6), ("morning", 6, 12), ("day", 12, 18), ("evening", 18, 24)]
+# Sensible defaults until there is enough history for a time slot.
+TOD_DEFAULT = {
+    "night":   {"heavy": 0.55, "rock": 0.8, "alt": 1.15, "rap": 0.95, "electronic": 1.25, "pop": 0.8, "chill": 1.6},
+    "morning": {"heavy": 0.6, "rock": 1.05, "alt": 1.25, "rap": 0.85, "electronic": 0.95, "pop": 1.2, "chill": 1.35},
+    "day":     {"heavy": 1.1, "rock": 1.15, "alt": 1.0, "rap": 1.1, "electronic": 1.05, "pop": 1.0, "chill": 0.8},
+    "evening": {"heavy": 1.05, "rock": 1.05, "alt": 1.0, "rap": 1.2, "electronic": 1.15, "pop": 0.95, "chill": 0.95},
+}
+
+
+def bucket_of(ts):
+    h = time.localtime(ts).tm_hour
+    for name, a, b in BUCKETS:
+        if a <= h < b:
+            return name
+    return "night"
+
+
+def mood_of(genres):
+    for g in genres:
+        g = g.lower().replace(" ", "").replace("-", "")
+        for key, mood in GENRE_RULES:
+            if key in g:
+                return mood
+    return "alt"
+
+
+def split_artists(values):
+    out = []
+    for v in values:
+        for part in re.split(r";|\s+feat\.?\s+|\s+ft\.\s+|\s+x\s+", v, flags=re.I):
+            p = part.strip().lower()
+            if p:
+                out.append(p)
+    return out
+
+
+def fmt_age(hours):
+    if hours is None:
+        return "never"
+    if hours < 1 / 60:
+        return "just now"
+    if hours < 1:
+        return f"{max(1, round(hours * 60))} min ago"
+    if hours < 48:
+        return f"{round(hours)} h ago"
+    return f"{round(hours / 24)} days ago"
+
+
+# ── tiny MPD client (no dependencies) ────────────────────────────────────────
+class MPDError(Exception):
+    pass
+
+
+def _quote(a):
+    a = str(a)
+    return '"' + a.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+class MPD:
+    def __init__(self, timeout=10):
+        rt = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        path = os.path.join(rt, "mpd", "socket")
+        if os.path.exists(path):
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect(path)
+        else:
+            s = socket.create_connection(("127.0.0.1", 6600), timeout=timeout)
+        self.sock = s
+        self.f = s.makefile("rwb")
+        hello = self.f.readline()
+        if not hello.startswith(b"OK MPD"):
+            raise MPDError("not an MPD server")
+
+    def close(self):
+        try:
+            self.f.write(b"close\n")
+            self.f.flush()
+        except Exception:
+            pass
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+    def _send(self, line):
+        self.f.write(line.encode() + b"\n")
+        self.f.flush()
+
+    def _read(self, list_ok=False):
+        """Read pairs until OK (or list_OK when list_ok). Raises on ACK."""
+        pairs = []
+        while True:
+            raw = self.f.readline()
+            if not raw:
+                raise ConnectionError("MPD closed the connection")
+            line = raw.decode("utf-8", "replace").rstrip("\n")
+            if line == "OK" or (list_ok and line == "list_OK"):
+                return pairs
+            if line.startswith("ACK"):
+                raise MPDError(line)
+            k, _, v = line.partition(": ")
+            pairs.append((k, v))
+
+    def cmd(self, name, *args):
+        self._send(" ".join([name] + [_quote(a) for a in args]))
+        return self._read()
+
+    def batch(self, cmds):
+        """Run a command list atomically; returns one pair list per command."""
+        lines = ["command_list_ok_begin"]
+        for c in cmds:
+            lines.append(" ".join([c[0]] + [_quote(a) for a in c[1:]]))
+        lines.append("command_list_end")
+        self.f.write(("\n".join(lines) + "\n").encode())
+        self.f.flush()
+        out = []
+        for _ in cmds:
+            out.append(self._read(list_ok=True))
+        self._read()  # final OK
+        return out
+
+    def dict(self, name, *args):
+        d = {}
+        for k, v in self.cmd(name, *args):
+            d.setdefault(k, v)
+        return d
+
+    @staticmethod
+    def songs(pairs):
+        out, cur = [], None
+        for k, v in pairs:
+            if k in ("file", "directory", "playlist"):
+                cur = {"_kind": k, "file": v} if k == "file" else {"_kind": k}
+                out.append(cur)
+                continue
+            if cur is None:
+                continue
+            if k in ("Artist", "Genre", "AlbumArtist"):
+                cur.setdefault(k, []).append(v)
+            else:
+                cur.setdefault(k, v)
+        return [s for s in out if s.get("_kind") == "file"]
+
+    def idle(self, *subsystems):
+        self._send(" ".join(["idle"] + list(subsystems)))
+        self.sock.settimeout(None)  # block for as long as nothing happens
+        try:
+            return [v for k, v in self._read() if k == "changed"]
+        finally:
+            self.sock.settimeout(10)
+
+
+# ── history database ─────────────────────────────────────────────────────────
+def db_open():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    db = sqlite3.connect(DB_PATH, timeout=10)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS plays(
+            id INTEGER PRIMARY KEY,
+            file TEXT NOT NULL,
+            artist TEXT,
+            mood TEXT,
+            started REAL NOT NULL,      -- unix time the track began
+            listened REAL,              -- seconds actually played (NULL for seeded rows)
+            duration REAL,
+            outcome TEXT NOT NULL,      -- full | partial | skip | seed | replaced
+            smart INTEGER DEFAULT 0     -- 1 if it came from a smart queue
+        );
+        CREATE INDEX IF NOT EXISTS plays_file ON plays(file);
+        CREATE INDEX IF NOT EXISTS plays_started ON plays(started);
+        CREATE TABLE IF NOT EXISTS picks(
+            file TEXT NOT NULL,
+            at REAL NOT NULL,
+            vibe TEXT,
+            weight REAL,
+            factors TEXT                -- JSON: factor name → [multiplier, note]
+        );
+        CREATE INDEX IF NOT EXISTS picks_file ON picks(file);
+        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+    """)
+    return db
+
+
+def seed_from_journal(db, lib_by_file):
+    """Import MPD's own 'player: played "…"' journal lines as history (deduplicated)."""
+    try:
+        out = subprocess.run(
+            ["journalctl", "--user", "-u", "mpd", "-o", "short-unix", "--no-pager",
+             "-g", "player: played"], capture_output=True, text=True, timeout=30).stdout
+    except Exception:
+        return 0
+    have = {(f, round(t)) for f, t in db.execute("SELECT file, started FROM plays")}
+    n = 0
+    for line in out.splitlines():
+        m = re.match(r'^(\d+(?:\.\d+)?)\s.*player: played "(.*)"\s*$', line)
+        if not m:
+            continue
+        ts, f = float(m.group(1)), m.group(2).replace('\\"', '"')
+        if (f, round(ts)) in have or any((f, round(ts) + d) in have for d in range(-3, 4)):
+            continue
+        s = lib_by_file.get(f)
+        db.execute("INSERT INTO plays(file, artist, mood, started, outcome) VALUES(?,?,?,?, 'seed')",
+                   (f, s["primary"] if s else f.split("/")[0], s["mood"] if s else None, ts))
+        have.add((f, round(ts)))
+        n += 1
+    db.execute("INSERT OR REPLACE INTO meta VALUES('seeded', ?)", (str(time.time()),))
+    db.commit()
+    return n
+
+
+# ── library ──────────────────────────────────────────────────────────────────
+def load_library(mpd):
+    songs = MPD.songs(mpd.cmd("listallinfo"))
+    lib = []
+    for s in songs:
+        f = s["file"]
+        if f.startswith(".") or "/." in f:
+            continue
+        primary = f.split("/")[0] if "/" in f else (s.get("AlbumArtist") or s.get("Artist") or ["?"])[0]
+        keys = {primary.lower()} | set(split_artists(s.get("Artist", []) + s.get("AlbumArtist", [])))
+        try:
+            dur = float(s.get("duration") or s.get("Time") or 0)
+        except ValueError:
+            dur = 0.0
+        lib.append({
+            "file": f,
+            "title": s.get("Title") or os.path.splitext(os.path.basename(f))[0],
+            "artist": "; ".join(s.get("Artist", [])) or primary,
+            "primary": primary,
+            "keys": keys,
+            "album": s.get("Album", ""),
+            "genres": s.get("Genre", []),
+            "mood": mood_of(s.get("Genre", [])),
+            "duration": dur,
+        })
+    return lib
+
+
+def load_stickers(mpd):
+    st = {"love": set(), "ban": set(), "rating": {}}
+    for name in ("love", "ban", "rating"):
+        try:
+            pairs = mpd.cmd("sticker", "find", "song", "", name)
+        except MPDError:
+            continue
+        cur = None
+        for k, v in pairs:
+            if k == "file":
+                cur = v
+            elif k == "sticker" and cur is not None:
+                key, _, val = v.partition("=")
+                if key != name:
+                    continue
+                if name == "rating":
+                    try:
+                        st["rating"][cur] = float(val)
+                    except ValueError:
+                        pass
+                elif val not in ("0", ""):
+                    st[name].add(cur)
+    return st
+
+
+# ── the model ────────────────────────────────────────────────────────────────
+class Model:
+    """Everything learned from history, recomputed cheaply before each pick batch."""
+
+    HALF_LIFE_DAYS = 60.0
+
+    def __init__(self, db, lib, stickers, now=None):
+        self.now = now or time.time()
+        self.lib = lib
+        self.stickers = stickers
+        self.bucket = bucket_of(self.now)
+        self.track = {}       # file → dict(full, partial, skip, last)
+        self.artist = {}      # primary → dict(full, skip, last)
+        tod_counts = {b: {m: 0.0 for m in MOODS} for b, _, _ in BUCKETS}
+        mood_of_file = {s["file"]: s["mood"] for s in lib}
+        primary_of = {s["file"]: s["primary"] for s in lib}
+        self.total_plays = 0
+        for f, artist, mood, started, outcome in db.execute(
+                "SELECT file, artist, mood, started, outcome FROM plays WHERE outcome != 'replaced'"):
+            age_days = max(0.0, (self.now - started) / 86400)
+            decay = 0.5 ** (age_days / self.HALF_LIFE_DAYS)
+            t = self.track.setdefault(f, {"full": 0.0, "partial": 0.0, "skip": 0.0, "last": 0.0, "n": 0})
+            a = self.artist.setdefault(primary_of.get(f, artist or "?"),
+                                       {"full": 0.0, "skip": 0.0, "last": 0.0, "n": 0})
+            t["n"] += 1
+            a["n"] += 1
+            t["last"] = max(t["last"], started)
+            a["last"] = max(a["last"], started)
+            if outcome in ("full", "seed"):
+                t["full"] += decay
+                a["full"] += decay
+            elif outcome == "partial":
+                t["partial"] += decay
+                a["full"] += 0.5 * decay
+            elif outcome == "skip":
+                t["skip"] += decay
+                a["skip"] += decay
+            if outcome != "skip":
+                self.total_plays += 1
+                m = mood_of_file.get(f, mood)
+                if m in MOODS:
+                    tod_counts[bucket_of(started)][m] += decay
+        # mood share of the library (what a plain shuffle would give)
+        lib_share = {m: 1e-3 for m in MOODS}
+        for s in lib:
+            lib_share[s["mood"]] += 1
+        tot = sum(lib_share.values())
+        self.lib_share = {m: v / tot for m, v in lib_share.items()}
+        # time-of-day mood preference: defaults blended with what history says
+        self.tod = {}
+        self.tod_n = {}
+        for b, _, _ in BUCKETS:
+            n = sum(tod_counts[b].values())
+            a = n / (n + 40.0)
+            prefs = {}
+            for m in MOODS:
+                learned = ((tod_counts[b][m] + 0.5) / (n + 0.5 * len(MOODS))) / self.lib_share[m]
+                learned = min(2.5, max(0.35, learned))
+                prefs[m] = math.exp((1 - a) * math.log(TOD_DEFAULT[b][m]) + a * math.log(learned))
+            self.tod[b] = prefs
+            self.tod_n[b] = n
+
+    # Static part of a track's weight (everything except the queue-position effects).
+    def base(self, s):
+        f = s["file"]
+        fac = {}
+        if f in self.stickers["ban"]:
+            return 0.0, {"ban": [0.0, "banned"]}
+        w = 1.0
+        if f in self.stickers["love"]:
+            fac["love"] = [2.5, "you loved it"]
+        if f in self.stickers["rating"]:
+            r = self.stickers["rating"][f]
+            fac["rating"] = [0.4 + 1.6 * min(10, max(0, r)) / 10, f"rated {r:g}/10"]
+        t = self.track.get(f)
+        if t:
+            aff = (1 + 0.3 * min(t["full"], 5) + 0.1 * t["partial"]) / (1 + 1.2 * t["skip"])
+            aff = min(3.0, max(0.15, aff))
+            if abs(aff - 1) > 0.03:
+                note = f"{t['full']:.0f} full listens" if aff > 1 else f"skipped {t['skip']:.0f}×"
+                fac["history"] = [aff, note]
+            h = (self.now - t["last"]) / 3600 if t["last"] else None
+            if h is not None:
+                if h < 3:
+                    rec = 0.02
+                else:
+                    rec = max(0.03, min(1.0, (h / 120.0) ** 0.75))
+                if rec < 0.98:
+                    fac["recent"] = [rec, f"played {fmt_age(h)}"]
+                else:
+                    fac["rested"] = [1.0, f"last played {fmt_age(h)}"]
+        else:
+            fac["fresh"] = [1.15, "not played here yet"]
+        a = self.artist.get(s["primary"])
+        if a:
+            aff = (1 + 0.08 * min(a["full"], 10)) / (1 + 0.25 * a["skip"])
+            aff = min(2.0, max(0.4, aff))
+            if abs(aff - 1) > 0.03:
+                fac["artist"] = [aff, f"you like {s['primary']}" if aff > 1 else f"{s['primary']} often skipped"]
+            ha = (self.now - a["last"]) / 3600 if a["last"] else 1e9
+            if ha < 2:
+                fac["artist_recent"] = [0.35, f"{s['primary']} played {fmt_age(ha)}"]
+            elif ha < 12:
+                fac["artist_recent"] = [0.7, f"{s['primary']} played {fmt_age(ha)}"]
+        d = s["duration"]
+        if 0 < d < 70:
+            fac["short"] = [0.25, "very short (intro/skit)"]
+        elif d > 900:
+            fac["long"] = [0.5, "very long"]
+        tw = self.tod[self.bucket][s["mood"]]
+        fac["time"] = [tw, f"{MOOD_LABEL[s['mood']].lower()} fits your {self.bucket}" if tw >= 1
+                       else f"{MOOD_LABEL[s['mood']].lower()} is rare for your {self.bucket}"]
+        for k, (m, _) in fac.items():
+            w *= m
+        return w, fac
+
+    def pick_vibe(self, avoid=None):
+        moods = [m for m in MOODS if m != avoid and self.lib_share[m] > 0.02]
+        weights = [self.tod[self.bucket][m] * math.sqrt(self.lib_share[m]) for m in moods]
+        return random.choices(moods, weights)[0]
+
+    def pick(self, count, vibe, exclude, recent_keys, start_index=0):
+        """Weighted random picks without replacement, honouring the artist window."""
+        cands = []
+        for s in self.lib:
+            if s["file"] in exclude:
+                continue
+            w, fac = self.base(s)
+            if w > 0:
+                cands.append((s, w, fac))
+        window = [set(k) for k in recent_keys][-ARTIST_WINDOW:]
+        out = []
+        prev_mood = None
+        guard = 0
+        while len(out) < count and guard < count * 3:
+            guard += 1
+            idx = start_index + len(out)
+            vibe_boost = 1 + 4.0 * math.exp(-idx / 10.0)
+            strict = idx < 3   # a fresh queue opens squarely on its vibe
+            pool, weights = [], []
+            for j, (s, w, fac) in enumerate(cands):
+                if s is None:
+                    continue
+                if any(s["keys"] & k for k in window):
+                    continue
+                if strict and s["mood"] != vibe:
+                    continue
+                m = 1.0
+                if s["mood"] == vibe:
+                    m *= vibe_boost
+                if prev_mood and s["mood"] == prev_mood:
+                    m *= 1.3
+                pool.append(j)
+                weights.append(w * m)
+            if not pool:
+                if strict:
+                    start_index += 3 - idx   # no vibe tracks left: fall back to the soft boost
+                    continue
+                if window:
+                    window = window[1:]   # tiny library corner case: relax the artist rule
+                    continue
+                break
+            j = random.choices(pool, weights)[0]
+            s, w, fac = cands[j]
+            cands[j] = (None, 0, None)
+            fac = dict(fac)
+            if s["mood"] == vibe and vibe_boost > 1.05:
+                fac["vibe"] = [vibe_boost, f"matches the {MOOD_LABEL[vibe].lower()} vibe"]
+            out.append((s, w, fac))
+            window = (window + [s["keys"]])[-ARTIST_WINDOW:]
+            prev_mood = s["mood"]
+        return out
+
+
+def short_why(fac):
+    """Two most telling reasons, for the bar / panel."""
+    if not fac:
+        return ""
+    order = []
+    for k, (m, note) in fac.items():
+        if k == "rested":
+            strength = 0.6
+        elif k == "fresh":
+            strength = 0.5
+        else:
+            strength = abs(math.log(max(m, 1e-3)))
+        if k in ("recent", "artist_recent", "short", "long") or m < 1:
+            strength *= 0.4   # lead with the reasons it was chosen, not the penalties
+        order.append((strength, note))
+    order.sort(reverse=True)
+    # lead with reasons it was chosen; mention a penalty only when nothing positive exists
+    pos = [note for k, (m, note) in fac.items() if m >= 1]
+    picked = [n for _, n in order if n in pos][:2] or [n for _, n in order][:1]
+    return " · ".join(picked)
+
+
+# ── state file for the UI ────────────────────────────────────────────────────
+def write_state(st):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    st = dict(st)
+    st["updated"] = time.time()
+    # Rewritten in place (not rename-over) so the shell's inotify watch on the file survives;
+    # the JSON is a single small write, readers retry on a torn read.
+    data = json.dumps(st, ensure_ascii=False)
+    with open(STATE_PATH, "a+") as fh:
+        fh.seek(0)
+        fh.truncate()
+        fh.write(data)
+
+
+def read_state():
+    try:
+        with open(STATE_PATH) as fh:
+            return json.load(fh)
+    except Exception:
+        return {"active": False}
+
+
+# ── engine: build / top up the smart queue ───────────────────────────────────
+class Engine:
+    def __init__(self, mpd, db):
+        self.mpd = mpd
+        self.db = db
+        self.lib = []
+        self.by_file = {}
+        self.stickers = {"love": set(), "ban": set(), "rating": {}}
+        self.state = read_state()
+        self.ids = set(int(i) for i in self.state.get("ids", []))
+        self.why = {}   # file → (short why, factors)
+
+    def refresh_library(self):
+        self.lib = load_library(self.mpd)
+        self.by_file = {s["file"]: s for s in self.lib}
+
+    def refresh_stickers(self):
+        self.stickers = load_stickers(self.mpd)
+
+    def model(self):
+        return Model(self.db, self.lib, self.stickers)
+
+    def _record_picks(self, picks, vibe):
+        now = time.time()
+        rows = []
+        for s, w, fac in picks:
+            self.why[s["file"]] = (short_why(fac), fac)
+            rows.append((s["file"], now, vibe, w, json.dumps(fac, ensure_ascii=False)))
+        self.db.executemany("INSERT INTO picks VALUES(?,?,?,?,?)", rows)
+        self.db.execute("DELETE FROM picks WHERE rowid NOT IN (SELECT rowid FROM picks ORDER BY at DESC LIMIT 3000)")
+        self.db.commit()
+
+    def start(self, reroll=False):
+        """Replace the queue with a fresh smart queue and play it."""
+        if not self.lib:
+            self.refresh_library()
+        m = self.model()
+        avoid = self.state.get("vibe") if (reroll or self.state.get("active")) else None
+        vibe = m.pick_vibe(avoid=avoid)
+        cur = self.mpd.dict("currentsong")
+        exclude = {cur["file"]} if cur.get("file") else set()
+        recent = [r[0] for r in self.db.execute("SELECT file FROM plays ORDER BY started DESC LIMIT 3")]
+        recent_keys = [self.by_file[f]["keys"] for f in reversed(recent) if f in self.by_file]
+        picks = m.pick(QUEUE_SIZE, vibe, exclude, recent_keys)
+        if not picks:
+            return None
+        self._record_picks(picks, vibe)
+        cmds = [("clear",), ("random", "0"), ("single", "0"), ("consume", "0"), ("repeat", "0")]
+        cmds += [("addid", s["file"]) for s, _, _ in picks]
+        cmds += [("play", "0")]
+        res = self.mpd.batch(cmds)
+        ids = []
+        for r in res[5:5 + len(picks)]:
+            for k, v in r:
+                if k == "Id":
+                    ids.append(int(v))
+        self.ids = set(ids)
+        first = picks[0]
+        self.state = {"active": True, "vibe": vibe, "vibeLabel": MOOD_LABEL[vibe],
+                      "bucket": m.bucket, "started": time.time(), "ids": sorted(self.ids),
+                      "file": first[0]["file"], "why": short_why(first[2]), "queued": len(picks),
+                      "picks": len(picks)}
+        write_state(self.state)
+        return vibe, picks
+
+    def stop(self, reason="stopped"):
+        if self.state.get("active"):
+            self.state = {"active": False, "vibe": self.state.get("vibe"), "reason": reason}
+            self.ids = set()
+            write_state(self.state)
+
+    def check(self):
+        """After a player/playlist change: stay in smart mode, top up, trim, update the UI."""
+        if not self.state.get("active"):
+            return
+        st = self.mpd.dict("status")
+        queue = MPD.songs(self.mpd.cmd("playlistinfo"))
+        qids = [int(s.get("Id", -1)) for s in queue]
+        mine = self.ids & set(qids)
+        cur_id = int(st["songid"]) if "songid" in st else None
+        if not mine:
+            return self.stop("queue replaced")
+        if cur_id is not None and cur_id not in self.ids:
+            return self.stop("another track was started")
+        if st.get("random") == "1":
+            return self.stop("random was switched on")
+        pos = int(st.get("song", -1)) if "song" in st else -1
+        changed = False
+        # top up as the queue drains
+        if cur_id is not None and len(queue) - pos - 1 < TOPUP_BELOW:
+            if not self.lib:
+                self.refresh_library()
+            m = self.model()
+            exclude = {s["file"] for s in queue}
+            tail = [self.by_file[s["file"]]["keys"] for s in queue[-ARTIST_WINDOW:] if s["file"] in self.by_file]
+            picks = m.pick(TOPUP_COUNT, self.state.get("vibe"), exclude, tail,
+                           start_index=self.state.get("picks", QUEUE_SIZE))
+            if picks:
+                self._record_picks(picks, self.state.get("vibe"))
+                res = self.mpd.batch([("addid", s["file"]) for s, _, _ in picks])
+                for r in res:
+                    for k, v in r:
+                        if k == "Id":
+                            self.ids.add(int(v))
+                self.state["picks"] = self.state.get("picks", 0) + len(picks)
+                changed = True
+        # keep the played part of the queue short
+        if pos > KEEP_PLAYED:
+            self.mpd.cmd("delete", f"0:{pos - KEEP_PLAYED}")
+            changed = True
+        if changed:
+            st = self.mpd.dict("status")
+            queue = MPD.songs(self.mpd.cmd("playlistinfo"))
+            qids = [int(s.get("Id", -1)) for s in queue]
+            pos = int(st.get("song", -1)) if "song" in st else -1
+        self.ids &= set(qids)
+        cur_file = queue[pos]["file"] if 0 <= pos < len(queue) else ""
+        why = self.why.get(cur_file)
+        if why is None and cur_file:
+            why = lookup_pick(self.db, cur_file)
+        new = dict(self.state)
+        new.update({"ids": sorted(self.ids), "file": cur_file, "why": why[0] if why else "",
+                    "queued": max(0, len(queue) - pos - 1)})
+        if {k: v for k, v in new.items() if k != "updated"} != {k: v for k, v in self.state.items() if k != "updated"}:
+            self.state = new
+            write_state(new)
+
+
+def lookup_pick(db, f):
+    row = db.execute("SELECT factors FROM picks WHERE file=? ORDER BY at DESC LIMIT 1", (f,)).fetchone()
+    if not row:
+        return None
+    fac = json.loads(row[0])
+    return short_why(fac), fac
+
+
+# ── play logger ──────────────────────────────────────────────────────────────
+class Tracker:
+    """Turns MPD player events into play rows: listened time is wall-clock time in 'play'."""
+
+    def __init__(self, engine):
+        self.e = engine
+        self.cur = None
+        self.replacing = False
+
+    def _finish(self, now):
+        c = self.cur
+        if not c:
+            return
+        self.cur = None
+        listened = c["offset"] + c["acc"] + ((now - c["since"]) if c["since"] else 0)
+        dur = c["duration"]
+        if self.replacing:
+            outcome = "replaced"
+        elif dur > 0 and (listened >= 0.75 * dur or dur - listened < 25):
+            outcome = "full"
+        elif dur > 0 and listened < 0.4 * dur:
+            outcome = "skip"
+        elif dur <= 0 and listened >= 120:
+            outcome = "full"
+        else:
+            outcome = "partial"
+        if listened < 1.5 and outcome == "skip" and c["offset"] == 0 and c["acc"] == 0 and not c["since"]:
+            return  # passed over without ever playing (e.g. stepping through a paused queue)
+        s = self.e.by_file.get(c["file"])
+        self.e.db.execute(
+            "INSERT INTO plays(file, artist, mood, started, listened, duration, outcome, smart) VALUES(?,?,?,?,?,?,?,?)",
+            (c["file"], s["primary"] if s else c["file"].split("/")[0], s["mood"] if s else None,
+             c["started"], round(listened, 1), dur, outcome, 1 if c["smart"] else 0))
+        self.e.db.commit()
+
+    def update(self):
+        now = time.time()
+        st = self.e.mpd.dict("status")
+        state = st.get("state", "stop")
+        sid = st.get("songid")
+        elapsed = float(st.get("elapsed", 0) or 0)
+        if state == "stop" or sid is None:
+            self._finish(now)
+            self.replacing = False
+            return
+        c = self.cur
+        restarted = c and c["id"] == sid and state == "play" and elapsed + 5 < c.get("last_el", 0) and elapsed < 5
+        if c is None or c["id"] != sid or restarted:
+            self._finish(now)
+            self.replacing = False
+            song = self.e.mpd.dict("currentsong")
+            dur = float(st.get("duration", 0) or song.get("duration", 0) or 0)
+            self.cur = {"id": sid, "file": song.get("file", ""), "duration": dur,
+                        "started": now - elapsed, "offset": elapsed if elapsed > 3 else 0.0, "acc": 0.0,
+                        "since": now if state == "play" else None, "last_el": elapsed,
+                        "smart": self.e.state.get("active") and int(sid) in self.e.ids}
+            return
+        if state == "play" and not c["since"]:
+            c["since"] = now
+        elif state != "play" and c["since"]:
+            c["acc"] += now - c["since"]
+            c["since"] = None
+        c["last_el"] = elapsed
+
+
+def daemon():
+    # Single instance per state dir: two loggers would double every play row.
+    import fcntl
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lock = open(os.path.join(STATE_DIR, "daemon.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("music-smart: another daemon is already running", flush=True)
+        return
+    backoff = 1
+    while True:
+        mpd = None
+        try:
+            mpd = MPD()
+            db = db_open()
+            eng = Engine(mpd, db)
+            eng.refresh_library()
+            eng.refresh_stickers()
+            if not db.execute("SELECT 1 FROM meta WHERE key='seeded'").fetchone():
+                n = seed_from_journal(db, eng.by_file)
+                print(f"music-smart: seeded {n} plays from the MPD journal", flush=True)
+            mpd.cmd("subscribe", CHANNEL)
+            tracker = Tracker(eng)
+            tracker.update()
+            eng.check()
+            if not eng.state.get("active"):
+                write_state(eng.state if eng.state else {"active": False})
+            print("music-smart: ready (%d tracks)" % len(eng.lib), flush=True)
+            backoff = 1
+            while True:
+                changed = mpd.idle("player", "playlist", "database", "message", "sticker", "options")
+                if "database" in changed:
+                    eng.refresh_library()
+                if "sticker" in changed:
+                    eng.refresh_stickers()
+                if "message" in changed:
+                    for k, v in mpd.cmd("readmessages"):
+                        if k != "message":
+                            continue
+                        if v in ("start", "reroll"):
+                            tracker.replacing = True
+                            tracker._finish(time.time())
+                            tracker.replacing = False
+                            eng.start(reroll=(v == "reroll"))
+                        elif v == "stop":
+                            eng.stop("stopped")
+                    tracker.update()
+                if changed and set(changed) & {"player", "playlist", "options"}:
+                    tracker.update()
+                    eng.check()
+        except (ConnectionError, OSError, MPDError, socket.timeout) as ex:
+            print(f"music-smart: MPD unavailable ({ex}); retrying in {backoff}s", flush=True)
+            try:
+                if mpd:
+                    mpd.close()
+            except Exception:
+                pass
+            time.sleep(backoff)
+            backoff = min(60, backoff * 2)
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+def daemon_listening(mpd):
+    try:
+        return any(v == CHANNEL for k, v in mpd.cmd("channels"))
+    except MPDError:
+        return False
+
+
+def cmd_start(reroll=False):
+    mpd = MPD()
+    if daemon_listening(mpd):
+        before = read_state().get("updated", 0)
+        mpd.cmd("sendmessage", CHANNEL, "reroll" if reroll else "start")
+        mpd.close()
+        for _ in range(40):           # wait (≤2 s) so the printed vibe is the new one
+            st = read_state()
+            if st.get("updated", 0) > before and st.get("active"):
+                break
+            time.sleep(0.05)
+        st = read_state()
+        print(f"Smart shuffle: {st.get('vibeLabel', '?')} vibe, {int(st.get('queued', 0)) + 1} tracks queued")
+        if st.get("why"):
+            print(f"  now: {st['why']}")
+        return
+    # No daemon: do it here (no top-up until the service runs again).
+    db = db_open()
+    eng = Engine(mpd, db)
+    eng.refresh_library()
+    eng.refresh_stickers()
+    if not db.execute("SELECT 1 FROM meta WHERE key='seeded'").fetchone():
+        seed_from_journal(db, eng.by_file)
+    r = eng.start(reroll=reroll or eng.state.get("active", False))
+    mpd.close()
+    if r:
+        print(f"Smart shuffle: {MOOD_LABEL[r[0]]} vibe, {len(r[1])} tracks queued "
+              "(music-smart.service is not running: no automatic top-up)")
+
+
+def cmd_stop():
+    mpd = MPD()
+    if daemon_listening(mpd):
+        mpd.cmd("sendmessage", CHANNEL, "stop")
+    else:
+        st = read_state()
+        if st.get("active"):
+            write_state({"active": False, "vibe": st.get("vibe"), "reason": "stopped"})
+    mpd.close()
+    print("Smart mode off (the queue keeps playing).")
+
+
+def cmd_why():
+    mpd = MPD()
+    song = mpd.dict("currentsong")
+    db = db_open()
+    if not song.get("file"):
+        print("Nothing is playing.")
+        return
+    f = song["file"]
+    title = f"{song.get('Artist', '?')} — {song.get('Title', f)}"
+    st = read_state()
+    row = db.execute("SELECT at, vibe, weight, factors FROM picks WHERE file=? ORDER BY at DESC LIMIT 1", (f,)).fetchone()
+    print(title)
+    if row and st.get("active") and st.get("file") == f:
+        at, vibe, weight, factors = row
+        print(f"Picked by smart shuffle {fmt_age((time.time() - at) / 3600)} "
+              f"({MOOD_LABEL.get(vibe, vibe)} vibe), weight {weight:.2f} vs 1.00 for an average track:")
+        fac = json.loads(factors)
+    else:
+        print("Not from the current smart queue; this is how it would score right now:")
+        lib = load_library(mpd)
+        s = next((x for x in lib if x["file"] == f), None)
+        if not s:
+            print("  (not in the library)")
+            return
+        mdl = Model(db, lib, load_stickers(mpd))
+        weight, fac = mdl.base(s)
+        print(f"  weight {weight:.2f}")
+    for k, (m, note) in sorted(fac.items(), key=lambda kv: -abs(math.log(max(kv[1][0], 1e-3)))):
+        arrow = "▲" if m > 1.02 else ("▼" if m < 0.98 else "·")
+        print(f"  {arrow} ×{m:<5.2f} {note}")
+    mpd.close()
+
+
+def cmd_stats():
+    mpd = MPD()
+    db = db_open()
+    lib = load_library(mpd)
+    stick = load_stickers(mpd)
+    mpd.close()
+    mdl = Model(db, lib, stick)
+    now = time.time()
+    rows = db.execute("SELECT outcome, COUNT(*) FROM plays GROUP BY outcome").fetchall()
+    counts = dict(rows)
+    total = sum(counts.values())
+    week = db.execute("SELECT COUNT(*) FROM plays WHERE started > ? AND outcome != 'replaced'", (now - 7 * 86400,)).fetchone()[0]
+    smart = db.execute("SELECT COUNT(*), SUM(outcome='skip') FROM plays WHERE smart=1").fetchone()
+    st = read_state()
+    print(f"Library: {len(lib)} tracks, {len({s['primary'] for s in lib})} artists "
+          f"(all liked on Yandex) · loved {len(stick['love'])} · banned {len(stick['ban'])}")
+    mix = {m: sum(1 for s in lib if s["mood"] == m) for m in MOODS}
+    print("Moods:   " + "  ".join(f"{MOOD_LABEL[m]} {mix[m]}" for m in MOODS))
+    print(f"History: {total} rows — " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) +
+          f"; {week} plays in the last 7 days; {len(mdl.track)} different tracks")
+    if smart[0]:
+        print(f"Smart queue: {smart[0]} tracks played, {smart[1] or 0} skipped "
+              f"({100 * (smart[1] or 0) / smart[0]:.0f} %)")
+    print(f"Smart mode: {'ON — ' + st.get('vibeLabel', '') + ' vibe, ' + str(st.get('queued', 0)) + ' tracks left' if st.get('active') else 'off'}")
+    print("\nTime of day (mood weight now in use; ✱ = learned from ≥ 10 plays):")
+    for b, a, z in BUCKETS:
+        mark = "→" if b == mdl.bucket else " "
+        n = mdl.tod_n[b]
+        best = sorted(MOODS, key=lambda m: -mdl.tod[b][m])
+        print(f" {mark} {b:<8} {a:02d}–{z:02d}  {'✱' if n >= 10 else ' '} plays {n:5.1f}  " +
+              "  ".join(f"{MOOD_LABEL[m]} {mdl.tod[b][m]:.2f}" for m in best[:4]))
+    top = sorted(mdl.artist.items(), key=lambda kv: -kv[1]["full"])[:8]
+    if top:
+        print("\nMost listened artists: " + ", ".join(f"{a} ({v['full']:.1f})" for a, v in top))
+    skipped = sorted(((v["skip"], f) for f, v in mdl.track.items() if v["skip"] >= 1), reverse=True)[:5]
+    if skipped:
+        print("Most skipped: " + ", ".join(f"{f.split('/')[-1].rsplit('.', 1)[0]} ({n:.0f})" for n, f in skipped))
+    last = db.execute("SELECT file, started, outcome, listened FROM plays ORDER BY started DESC LIMIT 6").fetchall()
+    if last:
+        print("\nRecent plays:")
+        for f, t, o, li in last:
+            print(f"  {time.strftime('%a %H:%M', time.localtime(t))}  {o:<8} "
+                  f"{'' if li is None else str(round(li)) + ' s':>6}  {f}")
+
+
+def cmd_sticker(name, value, target):
+    mpd = MPD()
+    f = target or mpd.dict("currentsong").get("file")
+    if not f:
+        print("Nothing is playing; give a file path relative to ~/Music.")
+        return 1
+    if value is None:
+        try:
+            mpd.cmd("sticker", "delete", "song", f, name)
+        except MPDError:
+            pass
+    else:
+        mpd.cmd("sticker", "set", "song", f, name, value)
+    mpd.close()
+    print(f"{'un' if value is None else ''}{name}: {f}")
+    return 0
+
+
+def cmd_status(as_json):
+    st = read_state()
+    if as_json:
+        print(json.dumps({k: v for k, v in st.items() if k != "ids"}, ensure_ascii=False))
+    elif st.get("active"):
+        print(f"on · {st.get('vibeLabel')} vibe · {st.get('queued', 0)} tracks left · {st.get('why', '')}")
+    else:
+        print("off")
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "start"
+    try:
+        if cmd in ("start", "toggle", "go"):
+            cmd_start(reroll=False)
+        elif cmd in ("reroll", "re-roll"):
+            cmd_start(reroll=True)
+        elif cmd in ("stop", "off"):
+            cmd_stop()
+        elif cmd in ("why", "explain-why", "explain"):
+            cmd_why()
+        elif cmd == "stats":
+            cmd_stats()
+        elif cmd in ("love", "ban"):
+            return cmd_sticker(cmd, "1", argv[2] if len(argv) > 2 else None)
+        elif cmd in ("unlove", "unban"):
+            return cmd_sticker(cmd[2:], None, argv[2] if len(argv) > 2 else None)
+        elif cmd == "status":
+            cmd_status("--json" in argv)
+        elif cmd == "seed":
+            mpd = MPD()
+            db = db_open()
+            n = seed_from_journal(db, {s["file"]: s for s in load_library(mpd)})
+            mpd.close()
+            print(f"Imported {n} plays from the MPD journal.")
+        elif cmd == "daemon":
+            daemon()
+        elif cmd in ("-h", "--help", "help"):
+            print(__doc__.strip())
+        else:
+            print(__doc__.strip())
+            return 2
+    except (ConnectionError, OSError) as ex:
+        print(f"music-smart: cannot reach MPD ({ex})", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

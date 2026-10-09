@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# music-player — open the music library player (rmpc) in a floating glass kitty,
+# or focus it if it is already open. Bound to Mod+Shift+M (~/.config/niri/user/binds-music.kdl);
+# the window rule for app-id "music-player" lives in ~/.config/niri/user/rules-music.kdl.
+#
+# Closing the window never stops the music: playback runs in the MPD user service.
+
+app_id="music-player"
+
+id=$(niri msg --json windows 2>/dev/null |
+    jq -r --arg a "$app_id" 'first(.[] | select(.app_id == $a) | .id) // empty' 2>/dev/null)
+if [[ -n "$id" ]]; then
+    exec niri msg action focus-window --id "$id"
+fi
+
+# MPD normally starts at login; make sure it is up before the client connects.
+systemctl --user start mpd.service >/dev/null 2>&1
+
+# A slightly smaller font than the shell terminals so the library fits more rows.
+exec kitty --class "$app_id" --title "Music" -o font_size=13 rmpc
