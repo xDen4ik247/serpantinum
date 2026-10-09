@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch the Serpantinum wallpaper/palette for the serp-glass greeter
+
+[Path]
+PathChanged=%h/.cache/serpantinum/wallpaper/current_eDP-1
+PathChanged=%h/.local/state/serpantinum/qs_colors.json
+TriggerLimitIntervalSec=10
+TriggerLimitBurst=3
+
+[Install]
+WantedBy=default.target

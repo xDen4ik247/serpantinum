@@ -1,0 +1,8 @@
+[Unit]
+Description=Copy current wallpaper + Matugen palette to the serp-glass SDDM greeter
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=idle
+ExecStart=%h/.local/bin/greeter-sync

@@ -1,0 +1,11 @@
+[SddmGreeterTheme]
+Name=Serp Glass
+Description=Liquid-glass greeter matching the niri + Serpantinum desktop (wallpaper + Matugen palette via greeter-sync)
+Author=user
+License=MIT
+Type=sddm-theme
+Version=1.0
+MainScript=Main.qml
+ConfigFile=theme.conf
+Theme-API=2.0
+QtVersion=6
