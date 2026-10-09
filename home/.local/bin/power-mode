@@ -8,9 +8,11 @@
 #   power-mode daemon          (power-mode.service) apply, then re-apply whenever UPower's OnBattery flips
 #
 # What a policy flips (all values in ~/.config/power-mode.conf):
-#   - eDP-1 refresh rate: 120 Hz (perf) / 60 Hz (save)  -> the mode line in ~/.config/niri/user/output.kdl
+#   - eDP-1 refresh rate: PERF_REFRESH / SAVE_REFRESH, both 120 Hz (user rule: always 120 Hz, never lower it
+#     on battery). Applied transiently with `niri msg output`; niri config files are never edited.
 #   - power-profiles-daemon profile: balanced (perf) / power-saver (save)
 #   - gcal-sync timer every minute (perf) / every 5 min (save); anki-queue-flush every 5 min / hourly
+#     (still 2 min after boot in both)
 #     (runtime drop-ins in $XDG_RUNTIME_DIR/systemd/user/*.timer.d/power-mode.conf, gone after reboot)
 #   - local LLM idle stop: 30 min (perf) / 10 min (save)  -> ~/.local/state/power-mode/llm.env
 #   - Serpantinum reads ~/.local/state/power-mode/mode + UPower itself (PowerSaver singleton): slower
@@ -23,7 +25,6 @@ MODE_FILE="$STATE_DIR/mode"
 APPLIED_FILE="$STATE_DIR/applied"
 LLM_ENV="$STATE_DIR/llm.env"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/power-mode.conf"
-OUTPUT_KDL="${XDG_CONFIG_HOME:-$HOME/.config}/niri/user/output.kdl"
 RUNTIME_UNITS="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/user"
 
 # defaults (override in power-mode.conf)
@@ -34,6 +35,7 @@ PERF_PROFILE=balanced
 SAVE_PROFILE=power-saver
 SAVE_GCAL_ONCALENDAR='*:0/5:05'
 SAVE_ANKI_INTERVAL=60min
+ANKI_ON_BOOT=2min   # the drop-in's empty OnUnitActiveSec= clears every monotonic trigger, so OnBootSec is re-added
 PERF_LLM_IDLE=30min
 SAVE_LLM_IDLE=10min
 SWITCH_REFRESH=1
@@ -66,24 +68,29 @@ effective() {
     esac
 }
 
-set_refresh() {   # $1 = wanted refresh (e.g. 60.001)
-    [ "$SWITCH_REFRESH" = 1 ] && [ -f "$OUTPUT_KDL" ] || return 0
-    local cur res want
-    cur=$(grep -oP '^\s*mode\s+"\K[0-9]+x[0-9]+@[0-9.]+' "$OUTPUT_KDL" | head -1)
-    [ -n "$cur" ] || { log "refresh: no mode line in $OUTPUT_KDL, skipped"; return 0; }
-    res=${cur%@*}; want="$res@$1"
+set_refresh() {   # $1 = wanted refresh (e.g. 120.000) - transient `niri msg output`, no config edits
+    [ "$SWITCH_REFRESH" = 1 ] || return 0
+    local info cur want
+    # "<current WxH@Hz> <offered mode at that size closest to $1 (within 0.5 Hz), or ->"
+    info=$(niri msg --json outputs 2>/dev/null | /usr/bin/python3 -c '
+import json, sys
+o = json.load(sys.stdin).get(sys.argv[1]) or {}
+modes, i = o.get("modes") or [], o.get("current_mode")
+if i is None or i >= len(modes): sys.exit(1)
+fmt = lambda m: "%dx%d@%.3f" % (m["width"], m["height"], m["refresh_rate"] / 1000)
+c = modes[i]
+ok = [m for m in modes if (m["width"], m["height"]) == (c["width"], c["height"])
+      and abs(m["refresh_rate"] / 1000 - float(sys.argv[2])) < 0.5]
+print(fmt(c), fmt(min(ok, key=lambda m: abs(m["refresh_rate"] / 1000 - float(sys.argv[2])))) if ok else "-")
+' "$OUTPUT" "$1") || { log "refresh: $OUTPUT not found, skipped"; return 0; }
+    cur=${info% *}; want=${info#* }
+    [ "$want" = - ] && { log "refresh: ${1} Hz is not offered by $OUTPUT, kept $cur"; return 0; }
     [ "$cur" = "$want" ] && { log "refresh: $want (unchanged)"; return 0; }
-    # only modes the panel really offers
-    if ! niri msg outputs 2>/dev/null | grep -q "^\s*$want\b"; then
-        log "refresh: $want is not offered by $OUTPUT, kept $cur"; return 0
+    if niri msg output "$OUTPUT" mode "$want" >/dev/null 2>&1; then
+        log "refresh: $cur -> $want (transient)"
+    else
+        log "refresh: could not set $want, kept $cur"; return 1
     fi
-    cp -p "$OUTPUT_KDL" "$STATE_DIR/output.kdl.prev"
-    sed -i "s|mode \"$cur\"|mode \"$want\"|" "$OUTPUT_KDL"
-    if ! niri validate >/dev/null 2>&1; then
-        cp -p "$STATE_DIR/output.kdl.prev" "$OUTPUT_KDL"
-        log "refresh: niri validate failed, restored $cur"; return 1
-    fi
-    log "refresh: $cur -> $want"
 }
 
 set_profile() {
@@ -100,7 +107,8 @@ set_timers() {   # $1 = save|perf
         mkdir -p "$g" "$a"
         want=$(printf '# power-mode (battery): runs less often on battery\n[Timer]\nOnCalendar=\nOnCalendar=%s\n' "$SAVE_GCAL_ONCALENDAR")
         [ "$(cat "$g/power-mode.conf" 2>/dev/null)" = "$want" ] || { printf '%s\n' "$want" > "$g/power-mode.conf"; changed=1; }
-        want=$(printf '# power-mode (battery): runs less often on battery\n[Timer]\nOnUnitActiveSec=\nOnUnitActiveSec=%s\n' "$SAVE_ANKI_INTERVAL")
+        # the empty OnUnitActiveSec= resets ALL monotonic triggers (OnBootSec too), so re-add OnBootSec
+        want=$(printf '# power-mode (battery): runs less often on battery\n[Timer]\nOnUnitActiveSec=\nOnBootSec=%s\nOnUnitActiveSec=%s\n' "$ANKI_ON_BOOT" "$SAVE_ANKI_INTERVAL")
         [ "$(cat "$a/power-mode.conf" 2>/dev/null)" = "$want" ] || { printf '%s\n' "$want" > "$a/power-mode.conf"; changed=1; }
     else
         for f in "$g/power-mode.conf" "$a/power-mode.conf"; do [ -f "$f" ] && { rm -f "$f"; changed=1; }; done
@@ -165,6 +173,6 @@ case "${1:-status}" in
     apply) apply ;;
     status|"") status ;;
     daemon) daemon ;;
-    -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h|--help|help) sed -n '2,/^set -u/{/^set -u/!p}' "$0" | sed 's/^# \{0,1\}//' ;;
     *) echo "usage: power-mode [auto|perf|save|apply|status|daemon]" >&2; exit 2 ;;
 esac
