@@ -1,0 +1,18 @@
+[Unit]
+Description=ai-notes vault watcher (inotify, debounced; re-indexes only while the embedding server is up)
+Documentation=file:///home/user/claude/.workers/reports/notes.md
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ai-notes watch
+Restart=on-failure
+RestartSec=30
+Nice=10
+Environment=OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+# AI_NOTES_EAGER=1 would start the embedding server after every edit pause (costs battery).
+#Environment=AI_NOTES_EAGER=1
+
+[Install]
+WantedBy=default.target

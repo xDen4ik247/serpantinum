@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop the ai-notes embedding server after 10 idle minutes (re-armed by every ai-notes use)
+
+[Timer]
+OnActiveSec=10min
+AccuracySec=30s

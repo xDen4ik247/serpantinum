@@ -1,0 +1,11 @@
+#!/bin/bash
+# ai-notes-panel ask|menu — liquid-glass panel for the local Obsidian AI tools (Mod+N / Mod+Shift+N).
+# A second press closes an open panel. UI: ~/.local/share/ai-notes/ui/shell.qml (standalone quickshell).
+mode=${1:-ask}
+dir="${XDG_RUNTIME_DIR:-/tmp}/ai-notes"
+mkdir -p "$dir"
+if [ -f "$dir/panel.pid" ] && kill -0 "$(cat "$dir/panel.pid")" 2>/dev/null; then
+    kill "$(cat "$dir/panel.pid")"; rm -f "$dir/panel.pid"; exit 0
+fi
+AIN_MODE=$mode qs -p "$HOME/.local/share/ai-notes/ui" >"$dir/panel.log" 2>&1 &
+echo $! > "$dir/panel.pid"

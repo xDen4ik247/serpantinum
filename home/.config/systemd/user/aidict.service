@@ -1,0 +1,14 @@
+[Unit]
+Description=aidict - Whisper dictation daemon on the Intel NPU (Mod+Z)
+After=graphical-session.target pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.venvs/npu/bin/python %h/.local/share/aifeat/dictd.py
+Environment=AIDICT_IDLE_UNLOAD=600
+Restart=on-failure
+RestartSec=3
+MemoryHigh=2G
+
+[Install]
+WantedBy=default.target

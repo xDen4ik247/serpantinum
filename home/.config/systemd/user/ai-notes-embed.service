@@ -1,0 +1,26 @@
+[Unit]
+Description=ai-notes embedding server (llama.cpp CPU backend, Qwen3-Embedding-0.6B) - http://127.0.0.1:8767
+Documentation=file:///home/user/claude/.workers/reports/notes.md
+# Never restart in a loop (CRITICAL #2): at most 3 starts per 5 minutes.
+StartLimitIntervalSec=300
+StartLimitBurst=3
+# Started on demand by `ai-notes`; ai-notes-embed-idle.timer stops it after 10 idle minutes.
+
+[Service]
+Type=simple
+# CPU backend on purpose: the OpenVINO GPU backend recompiles per input length (2 GB, ~6 s/request)
+# and failed with compute errors for embeddings; see reports/notes.md.
+# GGML_OPENVINO_DEVICE=CPU too: even if the OpenVINO backend were picked, it never touches the GPU.
+Environment=GGML_OPENVINO_DEVICE=CPU
+Environment=LD_LIBRARY_PATH=%h/.local/opt/openvino/runtime/lib/intel64:%h/.local/opt/openvino/runtime/3rdparty/tbb/lib
+ExecStart=%h/.local/opt/llama.cpp-ov/bin/llama-server \
+  -m %h/.local/share/ai-notes/models/Qwen3-Embedding-0.6B-Q8_0.gguf \
+  --embedding --pooling last --device none -t 6 \
+  --host 127.0.0.1 --port 8767 \
+  -c 2048 -b 1024 -ub 1024 -np 1 --no-webui --no-warmup
+Restart=on-failure
+RestartSec=5
+Nice=5
+MemoryHigh=2G
+MemoryMax=3G
+OOMScoreAdjust=500

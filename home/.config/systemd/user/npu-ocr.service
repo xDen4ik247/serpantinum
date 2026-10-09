@@ -1,0 +1,20 @@
+[Unit]
+Description=jocr - Japanese OCR daemon on the Intel NPU (http://127.0.0.1:8766)
+Documentation=file:///home/user/claude/.workers/reports/ocr.md
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/npu-ocr
+Environment=PYTHONPATH=%h/.local/share/npu-ocr
+Environment=PYTHONUNBUFFERED=1
+# Free the models after 30 idle minutes (~420 MB); the next request reloads them from the
+# compiled-blob cache in ~2-3 s. Set to 0 to keep them loaded forever.
+Environment=JOCR_IDLE_UNLOAD=1800
+ExecStart=%h/.venvs/npu/bin/python -m jocr.server --port 8766
+Restart=on-failure
+RestartSec=3
+Nice=2
+
+[Install]
+WantedBy=default.target

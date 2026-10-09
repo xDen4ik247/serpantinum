@@ -1,0 +1,20 @@
+#!/bin/bash
+# aipanel actions|reader — liquid-glass AI popups (Mod+Shift+A / Mod+Shift+Z).
+# Snapshots the primary selection, the clipboard and the last jocr OCR text, then starts
+# the quickshell UI in ~/.local/share/aifeat/ui/panel. A second press closes an open panel.
+mode=${1:-actions}
+dir="${XDG_RUNTIME_DIR:-/tmp}/aifeat/panel"
+mkdir -p "$dir"
+if [ -f "$dir/pid" ] && kill -0 "$(cat "$dir/pid")" 2>/dev/null; then
+    kill "$(cat "$dir/pid")"; rm -f "$dir/pid"; exit 0
+fi
+txt() { timeout 1 wl-paste "$@" --no-newline --type text 2>/dev/null | head -c 20000; }
+txt --primary > "$dir/primary.txt"
+txt > "$dir/clip.txt"
+# identical primary/clipboard: keep one
+cmp -s "$dir/primary.txt" "$dir/clip.txt" && : > "$dir/primary.txt"
+: > "$dir/ocr.txt"
+last=$(ls -t "${XDG_RUNTIME_DIR:-/tmp}"/jocr/state-*.json 2>/dev/null | head -1)
+[ -n "$last" ] && python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("result") or {}).get("text",""), end="")' "$last" > "$dir/ocr.txt" 2>/dev/null
+AIP_MODE=$mode AIP_DIR=$dir qs -p "$HOME/.local/share/aifeat/ui/panel" >/dev/null 2>&1 &
+echo $! > "$dir/pid"

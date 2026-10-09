@@ -1,0 +1,6 @@
+[Unit]
+Description=Send notes queued by anki-add while Anki was closed
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/anki-add --flush --quiet

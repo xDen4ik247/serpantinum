@@ -1,0 +1,3 @@
+#!/bin/sh
+# ai-notes - local AI tools for the Obsidian vault (see `ai-notes --help`, report: ~/claude/.workers/reports/notes.md)
+exec "$HOME/.venvs/default/bin/python" -I "$HOME/.local/share/ai-notes/ai_notes.py" "$@"

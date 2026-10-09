@@ -1,0 +1,225 @@
+#!/usr/bin/python3
+"""jocr - Japanese OCR on the Intel NPU (client for npu-ocr.service, http://127.0.0.1:8766).
+
+  jocr FILE.png                 print the text
+  jocr --region                 select an area (slurp), OCR it, copy the text to the clipboard
+  jocr --region --ui            ... and show the glass result popup        (Mod+X)
+  jocr --region --ui --translate                                            (Mod+Shift+X)
+  options: --json  --vertical | --horizontal  --block (one bubble, no detection)
+           --furigana  --translate [--lang en|ru]  --no-copy  --status
+"""
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+URL = os.environ.get("JOCR_URL", "http://127.0.0.1:8766")
+UI = os.path.expanduser("~/.local/share/npu-ocr/ui/shell.qml")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "jocr")
+
+
+def http(path, data=None, ctype="application/json", timeout=60):
+    req = urllib.request.Request(URL + path, data=data, headers={"Content-Type": ctype} if data is not None else {})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+def ensure_daemon(wait=20):
+    try:
+        if http("/health", timeout=1).get("state") in ("ready", "unloaded"):
+            return True
+    except Exception:
+        subprocess.run(["systemctl", "--user", "start", "npu-ocr.service"], stderr=subprocess.DEVNULL)
+    t = time.time()
+    while time.time() - t < wait:
+        try:
+            st = http("/health", timeout=1).get("state")
+            if st in ("ready", "unloaded"):
+                return True
+            if st == "error":
+                return False
+        except Exception:
+            pass
+        time.sleep(0.25)
+    return False
+
+
+def notify(title, body=""):
+    subprocess.run(["notify-send", "-a", "jocr", "-i", "accessories-dictionary", title, body], stderr=subprocess.DEVNULL)
+
+
+def output_of(x, y):
+    """niri output containing the logical point -> (name, ox, oy)."""
+    try:
+        outs = json.loads(subprocess.run(["niri", "msg", "-j", "outputs"], capture_output=True, text=True, timeout=2).stdout)
+        for name, o in outs.items():
+            lg = o.get("logical") or {}
+            if lg and lg["x"] <= x < lg["x"] + lg["width"] and lg["y"] <= y < lg["y"] + lg["height"]:
+                return name, lg["x"], lg["y"]
+    except Exception:
+        pass
+    return "", 0, 0
+
+
+def write_state(path, obj):
+    # in place (one write) so the popup's file watch survives; it re-parses on every change
+    data = json.dumps(obj, ensure_ascii=False)
+    with open(path, "w") as f:
+        f.write(data)
+
+
+def kill_previous_ui():
+    pidf = os.path.join(RUN, "ui.pid")
+    try:
+        pid = int(open(pidf).read())
+        cmd = open(f"/proc/{pid}/cmdline", "rb").read()
+        if b"npu-ocr/ui" in cmd:
+            os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="jocr", description=__doc__.split("\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("file", nargs="?")
+    ap.add_argument("--region", action="store_true", help="select a screen area with slurp")
+    ap.add_argument("--ui", action="store_true", help="show the glass result popup")
+    ap.add_argument("--json", action="store_true", help="print the full JSON (boxes, lines, timings)")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--vertical", action="store_true", help="treat all text as vertical (縦書き)")
+    g.add_argument("--horizontal", action="store_true", help="treat all text as horizontal")
+    ap.add_argument("--block", action="store_true", help="the image is one bubble/text block: skip detection")
+    ap.add_argument("--furigana", action="store_true", help="print the reading in hiragana too")
+    ap.add_argument("--translate", action="store_true", help="translate with the local LLM (127.0.0.1:8765)")
+    ap.add_argument("--lang", default=os.environ.get("JOCR_LANG", "en"), help="translation language: en, ru")
+    ap.add_argument("--no-copy", action="store_true", help="don't copy the text to the clipboard")
+    ap.add_argument("--status", action="store_true", help="daemon + translator status")
+    a = ap.parse_args()
+
+    if a.status:
+        ensure_daemon(wait=3)
+        try:
+            h = http("/health", timeout=2)
+        except Exception as e:
+            h = {"error": str(e)}
+        try:
+            llm = http("/llm", timeout=3)
+        except Exception as e:
+            llm = {"error": str(e)}
+        print(json.dumps({"ocr": h, "translator": llm}, ensure_ascii=False, indent=1))
+        return 0
+    if not a.region and not a.file:
+        ap.print_help()
+        return 2
+
+    os.makedirs(RUN, exist_ok=True)
+    q = []
+    if a.vertical:
+        q.append("direction=vertical")
+    if a.horizontal:
+        q.append("direction=horizontal")
+    if a.block:
+        q.append("mode=block")
+    if a.ui or a.furigana:
+        q.append("furigana=1")
+    if a.ui:
+        q.append("save=1")  # keep the crop for the Anki Picture field
+    path = "/ocr" + ("?" + "&".join(q) if q else "")
+
+    state = os.path.join(RUN, f"state-{os.getpid()}.json")
+    ui = None
+    sel = None
+    source = "jocr"
+    if a.region:
+        kill_previous_ui()
+        try:  # where the text came from (Anki Source field)
+            fw = json.loads(subprocess.run(["niri", "msg", "-j", "focused-window"], capture_output=True, text=True, timeout=1).stdout) or {}
+            if fw.get("title"):
+                source = "jocr · " + fw["title"][:120]
+        except Exception:
+            pass
+        r = subprocess.run(["slurp", "-d", "-b", "#00000040", "-c", "#ffffffd0", "-s", "#ffffff18", "-w", "2"],
+                           capture_output=True, text=True)
+        geom = r.stdout.strip()
+        if r.returncode != 0 or not geom:
+            return 1  # selection cancelled
+        xy, wh = geom.split(" ")
+        x, y = (int(v) for v in xy.split(","))
+        w, h = (int(v) for v in wh.split("x"))
+        name, ox, oy = output_of(x + w / 2, y + h / 2)
+        sel = {"x": x - ox, "y": y - oy, "w": w, "h": h, "output": name}
+        if a.ui:
+            write_state(state, {"phase": "capturing", "sel": sel})
+            env = dict(os.environ, JOCR_STATE=state, JOCR_URL=URL)
+            ui = subprocess.Popen(["qs", "-p", UI], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  start_new_session=True)
+            with open(os.path.join(RUN, "ui.pid"), "w") as f:
+                f.write(str(ui.pid))
+        img = subprocess.run(["grim", "-g", geom, "-t", "ppm", "-"], capture_output=True).stdout
+        if not img:
+            notify("jocr: screen capture failed")
+            return 1
+        if ui:
+            write_state(state, {"phase": "ocr", "sel": sel})
+        ctype = "image/x-portable-pixmap"
+    else:
+        img = open(a.file, "rb").read()
+        ctype = "application/octet-stream"
+
+    if not ensure_daemon():
+        msg = "npu-ocr.service is not running (systemctl --user status npu-ocr)"
+        if ui:
+            write_state(state, {"phase": "error", "sel": sel, "error": msg})
+        else:
+            notify("jocr", msg)
+        print(msg, file=sys.stderr)
+        return 1
+    try:
+        res = http(path, data=img, ctype=ctype, timeout=60)
+    except urllib.error.HTTPError as e:
+        res = {"error": e.read().decode(errors="replace")}
+    except Exception as e:
+        res = {"error": str(e)}
+    if "error" in res:
+        if ui:
+            write_state(state, {"phase": "error", "sel": sel, "error": res["error"]})
+        print("jocr:", res["error"], file=sys.stderr)
+        return 1
+
+    text = res.get("text", "")
+    if a.region and text and not a.no_copy:
+        subprocess.run(["wl-copy", "--", text])
+    if ui:
+        write_state(state, {"phase": "done", "sel": sel, "result": res, "translate": a.translate, "source": source,
+                            "lang": a.lang, "copied": bool(text) and not a.no_copy})
+    elif a.region and not text:
+        notify("jocr", "No Japanese text found in the selection")
+
+    if a.json:
+        print(json.dumps(res, ensure_ascii=False, indent=1))
+    else:
+        print(text)
+        if a.furigana and res.get("tokens"):
+            print("".join(t["reading"] or t["surface"] for t in res["tokens"]))
+    if a.translate and text and not ui:
+        try:
+            tr = http("/translate", data=json.dumps({"text": text, "lang": a.lang}).encode(), timeout=120)
+            print(tr.get("translation", ""))
+        except urllib.error.HTTPError as e:
+            print("(translator offline: " + e.read().decode(errors="replace") + ")", file=sys.stderr)
+    # leave the state file for the popup; clean up old ones
+    for f in os.listdir(RUN):
+        p = os.path.join(RUN, f)
+        if f.startswith("state-") and p != state and time.time() - os.path.getmtime(p) > 600:
+            os.remove(p)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

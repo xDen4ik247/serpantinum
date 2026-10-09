@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop the idle ai-notes embedding server
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user stop ai-notes-embed.service

@@ -1,0 +1,9 @@
+[Unit]
+Description=Flush the anki-add queue every 5 minutes (no-op when it is empty or Anki is closed)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

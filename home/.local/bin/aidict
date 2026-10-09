@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+"""aidict - dictation on the NPU (Whisper small). Mod+Z runs `aidict toggle`.
+  aidict toggle|start|stop|cancel|status|load|unload
+  aidict lang auto|en|ru|ja        sticky language hint (auto = detect EN/RU/JA)
+  aidict file X.wav [lang]         transcribe a 16 kHz mono WAV (test; prints JSON, types nothing)"""
+import json, os, socket, subprocess, sys, time
+SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "aifeat", "dict.sock")
+args = sys.argv[1:] or ["status"]
+if args[0] in ("-h", "--help", "help"):
+    print(__doc__); sys.exit(0)
+if args[0] in ("file", "simulate"):
+    args[1] = os.path.abspath(args[1])
+def send(cmd):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(360)
+    s.connect(SOCK)
+    s.sendall(cmd.encode())
+    s.shutdown(socket.SHUT_WR)
+    out = b""
+    while (b := s.recv(65536)):
+        out += b
+    return json.loads(out or b"{}")
+try:
+    r = send(" ".join(args))
+except (FileNotFoundError, ConnectionRefusedError):
+    subprocess.run(["systemctl", "--user", "start", "aidict.service"])
+    for _ in range(50):
+        time.sleep(0.1)
+        try:
+            r = send(" ".join(args)); break
+        except (FileNotFoundError, ConnectionRefusedError):
+            pass
+    else:
+        subprocess.run(["notify-send", "-a", "Dictation", "Dictation daemon is not running", "systemctl --user status aidict"])
+        sys.exit(1)
+print(json.dumps(r, ensure_ascii=False))
+sys.exit(0 if r.get("ok") else 1)

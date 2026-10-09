@@ -1,0 +1,7 @@
+[Unit]
+Description=ai-notes weekly review note (Weekly/YYYY-Www.md; never overwrites)
+
+[Service]
+Type=oneshot
+Nice=10
+ExecStart=%h/.local/bin/ai-notes weekly --write --notify

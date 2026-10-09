@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""ai - command-line client for the local LLM (npu-llm.service, llama.cpp OpenVINO, OpenAI API).
+
+  ai "question"                     stream an answer
+  echo text | ai                    the piped text is the prompt
+  echo text | ai "what is this?"    piped text + your question
+  echo text | ai -s "system"        custom system prompt
+  ai -t summarize < file.txt        tasks: summarize, translate:en|ru|ja, fix, explain
+  ai -t translate:ja "good morning"
+  ai --json-schema schema.json "..."  structured JSON output
+  ai status                         service, model, device, quick speed check
+
+Options: -n MAX_TOKENS, --temp T, --raw (no stats line)
+Environment: AI_URL (default http://127.0.0.1:8765)
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+URL = os.environ.get("AI_URL", "http://127.0.0.1:8765").rstrip("/")
+LANGS = {"en": "English", "ru": "Russian", "ja": "Japanese"}
+TASKS = {
+    "summarize": "Summarize the user's text concisely: a one-line gist, then the key points as short "
+                 "bullets. Answer in the same language as the text.",
+    "fix": "Fix spelling, grammar and punctuation in the user's text. Keep its language, meaning, tone "
+           "and formatting. Output only the corrected text, nothing else.",
+    "explain": "Explain the user's text or code clearly and briefly for a beginner. Answer in the same "
+               "language as the user's question, or English if there is none.",
+}
+
+
+def die(msg, code=1):
+    print(f"ai: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def task_prompt(task):
+    if task.startswith("translate"):
+        lang = task.partition(":")[2] or "en"
+        name = LANGS.get(lang, lang)
+        return (f"Translate the user's text into {name}. Output only the translation, keeping the "
+                f"formatting. Do not add notes or explanations.")
+    if task in TASKS:
+        return TASKS[task]
+    die(f"unknown task '{task}' (summarize, translate:en|ru|ja, fix, explain)")
+
+
+def request(path, body=None, timeout=600):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(URL + path, data, {"Content-Type": "application/json"})
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        die(f"server error {e.code}: {e.read().decode(errors='replace')[:300]}")
+    except (urllib.error.URLError, ConnectionError) as e:
+        die(f"cannot reach {URL} ({getattr(e, 'reason', e)}).\n"
+            f"    start it: systemctl --user start npu-llm")
+
+
+def status():
+    out = subprocess.run(["systemctl", "--user", "is-active", "npu-llm"], capture_output=True, text=True)
+    print(f"service   npu-llm.service: {out.stdout.strip()}")
+    print(f"endpoint  {URL}/v1  (OpenAI-compatible)")
+    try:
+        h = json.load(urllib.request.urlopen(URL + "/health", timeout=3))
+        m = json.load(urllib.request.urlopen(URL + "/v1/models", timeout=3))
+        props = json.load(urllib.request.urlopen(URL + "/props", timeout=3))
+    except Exception as e:
+        print(f"health    unreachable ({e})")
+        return 1
+    model = m["data"][0]["id"] if m.get("data") else "?"
+    ctx = props.get("default_generation_settings", {}).get("n_ctx", "?")
+    env = subprocess.run(["systemctl", "--user", "show", "npu-llm", "-p", "Environment", "-p", "MemoryCurrent"],
+                         capture_output=True, text=True).stdout
+    dev = next((w.split("GGML_OPENVINO_DEVICE=", 1)[1] for w in env.split() if "GGML_OPENVINO_DEVICE=" in w), "CPU")
+    mem = next((l.split("=", 1)[1] for l in env.splitlines() if l.startswith("MemoryCurrent=")), "")
+    mem = f"{int(mem) / 2**30:.1f} GiB" if mem.isdigit() else "?"
+    print(f"health    {h.get('status')}")
+    print(f"model     {model}   ctx {ctx}   device {dev} (OpenVINO)   memory {mem}")
+    t = time.time()
+    r = json.load(request("/v1/chat/completions", {"messages": [{"role": "user", "content": "Say hi in 3 words."}],
+                                                   "max_tokens": 16, "temperature": 0}))
+    tm = r.get("timings", {})
+    print(f"speed     {time.time() - t:.2f}s round trip, prompt {tm.get('prompt_per_second', 0):.0f} tok/s, "
+          f"gen {tm.get('predicted_per_second', 0):.1f} tok/s")
+    return 0
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("status", "help"):
+        if sys.argv[1] == "help":
+            print(__doc__.strip())
+            return 0
+        return status()
+
+    ap = argparse.ArgumentParser(prog="ai", description="Ask the local LLM.",
+                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("prompt", nargs="*")
+    ap.add_argument("-s", "--system", help="system prompt")
+    ap.add_argument("-t", "--task", help="summarize | translate:en|ru|ja | fix | explain")
+    ap.add_argument("-n", "--max-tokens", type=int, default=2048)
+    ap.add_argument("--temp", type=float)
+    ap.add_argument("--json-schema", metavar="FILE", help="JSON schema file; output is JSON matching it")
+    ap.add_argument("--raw", action="store_true", help="no stats line")
+    a = ap.parse_args()
+
+    question = " ".join(a.prompt).strip()
+    piped = "" if sys.stdin.isatty() else sys.stdin.read().strip()
+    user = f"{piped}\n\n{question}" if piped and question else (piped or question)
+    if not user:
+        ap.print_usage(sys.stderr)
+        return 2
+
+    system = task_prompt(a.task) if a.task else None
+    if a.system:
+        system = f"{system}\n{a.system}" if system else a.system
+    msgs = [{"role": "system", "content": system}] if system else []
+    msgs.append({"role": "user", "content": user})
+
+    body = {"messages": msgs, "max_tokens": a.max_tokens, "stream": True}
+    if a.temp is not None:
+        body["temperature"] = a.temp
+    elif a.task == "fix" or (a.task or "").startswith("translate"):
+        body["temperature"] = 0.2
+    if a.json_schema:
+        with open(a.json_schema) as f:
+            body["response_format"] = {"type": "json_schema", "json_schema": {"name": "out", "schema": json.load(f)}}
+
+    t0 = time.time()
+    tm = {}
+    try:
+        for line in request("/v1/chat/completions", body):
+            line = line.decode().strip()
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                continue
+            d = json.loads(line[6:])
+            tm = d.get("timings") or tm
+            ch = d.get("choices") or []
+            if ch and ch[0].get("delta", {}).get("content"):
+                sys.stdout.write(ch[0]["delta"]["content"])
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        print()
+        return 130
+    print()
+    if sys.stderr.isatty() and sys.stdout.isatty() and not a.raw and tm:
+        print(f"\033[2m[{tm.get('predicted_n', 0)} tok, {tm.get('predicted_per_second', 0):.1f} tok/s, "
+              f"{time.time() - t0:.1f}s]\033[0m", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

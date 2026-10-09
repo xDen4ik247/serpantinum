@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly review note every Sunday 20:00 (optional: systemctl --user enable --now ai-notes-weekly.timer)
+
+[Timer]
+OnCalendar=Sun 20:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
