@@ -11,6 +11,8 @@ import "../reusables"
 Item {
     id: window
     focus: true
+    // creates the Gcal singleton (agenda panel, quick capture, "agenda" IPC) when Main preloads this popup
+    readonly property bool gcalReady: Gcal.loaded
 
     function s(val) {
         return Scaler.s(val);

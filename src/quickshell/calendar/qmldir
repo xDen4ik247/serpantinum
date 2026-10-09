@@ -1,0 +1,6 @@
+singleton Gcal 1.0 Gcal.qml
+AgendaDay 1.0 AgendaDay.qml
+AgendaEventRow 1.0 AgendaEventRow.qml
+AgendaTaskRow 1.0 AgendaTaskRow.qml
+DayDots 1.0 DayDots.qml
+CaptureBox 1.0 CaptureBox.qml
