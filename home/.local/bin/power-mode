@@ -29,7 +29,7 @@ RUNTIME_UNITS="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/user"
 # defaults (override in power-mode.conf)
 OUTPUT=eDP-1
 PERF_REFRESH=120.000
-SAVE_REFRESH=60.001
+SAVE_REFRESH=120.000
 PERF_PROFILE=balanced
 SAVE_PROFILE=power-saver
 SAVE_GCAL_ONCALENDAR='*:0/5:05'
