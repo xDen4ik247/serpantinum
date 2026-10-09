@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "../"
 
 // Shared, ref-counted system sampler for desktop widgets (vitals rings, traffic graph).
 // Reads /proc and /sys directly through FileView once per second while at least one
@@ -105,7 +106,8 @@ Singleton {
     FileView { id: npuFile; path: root.npuPath; blockLoading: true; printErrors: false }
 
     Timer {
-        interval: 1000
+        // battery worker: every 2 s while PowerSaver is saving (on battery), 1 s on AC
+        interval: PowerSaver.interval(1000, 2000)
         repeat: true
         running: root.active && root.discovered
         onTriggered: root.sample()

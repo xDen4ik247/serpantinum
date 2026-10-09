@@ -23,8 +23,14 @@ Item {
         enabled: ring.live
         NumberAnimation { duration: 700; easing.type: Easing.OutCubic }
     }
-    onValueChanged: shown = Math.max(0, Math.min(1, value))
-    Component.onCompleted: shown = Math.max(0, Math.min(1, value))
+    // battery: changes under 0.5 % (about a pixel of arc) don't restart the 700 ms arc animation,
+    // which re-tessellates the curve every frame; the number in the middle still updates
+    property real _target: 0
+    onValueChanged: {
+        let t = Math.max(0, Math.min(1, value));
+        if (Math.abs(t - _target) >= 0.005 || ((t === 0 || t === 1) && t !== _target)) { _target = t; shown = t; }
+    }
+    Component.onCompleted: { _target = Math.max(0, Math.min(1, value)); shown = _target; }
 
     Shape {
         id: arcs

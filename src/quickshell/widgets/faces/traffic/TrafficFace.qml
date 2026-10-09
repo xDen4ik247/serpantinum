@@ -135,14 +135,17 @@ Item {
             lastAY = lastBY = -100;
             return;
         }
-        pathA = smoothPath(pa);
+        let newA = smoothPath(pa), newB = smoothPath(pb);
+        // battery: a flat, unchanged chart would scroll onto an identical picture, so skip that animation
+        let unchanged = newA === pathA && newB === pathB;
+        pathA = newA;
         areaA = pathA + " L " + w.toFixed(2) + " " + h + " L " + pa[0].x.toFixed(2) + " " + h + " Z";
-        pathB = smoothPath(pb);
+        pathB = newB;
         areaB = pathB + " L " + w.toFixed(2) + " " + h + " L " + pb[0].x.toFixed(2) + " " + h + " Z";
         lastAY = pa[pa.length - 1].y;
         lastBY = pb[pb.length - 1].y;
 
-        if (advance && root.visible) {
+        if (advance && root.visible && !unchanged) {
             scrollAnim.stop();
             plot.x = dx;
             scrollAnim.start();
@@ -330,19 +333,19 @@ Item {
     }
 
     // live "now" dots ride at the right edge of the plot
-    Repeater {
-        model: [{ y: root.lastBY, c: root.colorB }, { y: root.lastAY, c: root.colorA }]
-        delegate: Rectangle {
-            visible: modelData.y > -50
-            width: root.stroke * 3.4
-            height: width
-            radius: width / 2
-            color: modelData.c
-            border.width: root.stroke * 0.9
-            border.color: ThemeBackend.surface0
-            x: plotArea.x + plotArea.width - width / 2
-            y: plotArea.y + modelData.y - height / 2
-            Behavior on y { NumberAnimation { duration: 650; easing.type: Easing.OutCubic } }
-        }
+    // (battery: two fixed dots instead of a Repeater over a fresh array, which rebuilt both every sample)
+    component NowDot: Rectangle {
+        property real dotY: -100
+        visible: dotY > -50
+        width: root.stroke * 3.4
+        height: width
+        radius: width / 2
+        border.width: root.stroke * 0.9
+        border.color: ThemeBackend.surface0
+        x: plotArea.x + plotArea.width - width / 2
+        y: plotArea.y + dotY - height / 2
+        Behavior on y { NumberAnimation { duration: 650; easing.type: Easing.OutCubic } }
     }
+    NowDot { dotY: root.lastBY; color: root.colorB }
+    NowDot { dotY: root.lastAY; color: root.colorA }
 }

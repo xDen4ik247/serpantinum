@@ -95,6 +95,8 @@ Rectangle {
     Loader {
         id: faceLoader
         anchors.fill: parent
+        // battery: the side bar exists even when the bar is horizontal; don't build (and poll/paint) its faces then
+        active: !root.barWindow || !!root.barWindow.isVertical
         source: BarModuleRegistry.faceFile(root.moduleId, root.variant, true)
 
         onLoaded: {

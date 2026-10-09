@@ -51,7 +51,8 @@ Item {
 
     Timer {
         id: fetchTimer
-        interval: 2000
+        // battery worker: 5 s while PowerSaver is saving (on battery), 2 s on AC
+        interval: PowerSaver.interval(2000, 5000)
         repeat: true
         running: false
         onTriggered: {
