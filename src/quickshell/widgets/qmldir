@@ -1,3 +1,4 @@
 Widget 1.0 Widget.qml
 singleton WidgetRegistry 1.0 WidgetRegistry.qml
-
+singleton WidgetSensors 1.0 WidgetSensors.qml
+singleton WidgetToggle 1.0 WidgetToggle.qml

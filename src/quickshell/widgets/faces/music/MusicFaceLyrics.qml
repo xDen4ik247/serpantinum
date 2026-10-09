@@ -323,9 +323,13 @@ Item {
 
             Text {
                 Layout.alignment: Qt.AlignHCenter
+                Layout.maximumWidth: root.width - Scaler.s(24)
+                elide: Text.ElideRight
                 text: {
                     if (!Lyrics.isMediaActive) return I18n.t("music.nothing_playing");
                     if (Lyrics.loading) return I18n.t("music.searching_lyrics");
+                    // Library track without a .lrc: show what is playing instead.
+                    if (Lyrics.isLocalTrack) return Lyrics.trackTitle + (Lyrics.trackArtist !== "" ? "  —  " + Lyrics.trackArtist : "");
                     return I18n.t("music.no_lyrics");
                 }
                 font.family: ThemeBackend.fontFamily
@@ -337,7 +341,7 @@ Item {
             ClickButton {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: Scaler.s(4)
-                visible: Lyrics.isMediaActive && !Lyrics.loading
+                visible: Lyrics.isMediaActive && !Lyrics.loading && !Lyrics.isLocalTrack
                 implicitHeight: Scaler.s(28)
                 horizontalPadding: Scaler.s(14)
                 cornerRadius: Scaler.s(8)

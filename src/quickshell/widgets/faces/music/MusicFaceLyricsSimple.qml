@@ -107,11 +107,15 @@ Item {
 
     Text {
         anchors.centerIn: parent
+        width: Math.min(implicitWidth, root.width - Scaler.s(24))
+        elide: Text.ElideRight
         visible: !(Lyrics.isMediaActive && Lyrics.hasLyrics)
         text: {
             if (typeof I18n !== "undefined") {
                 if (!Lyrics.isMediaActive) return I18n.t("music.nothing_playing");
                 if (Lyrics.loading) return I18n.t("music.searching_lyrics");
+                // Library track without a .lrc: show what is playing instead.
+                if (Lyrics.isLocalTrack) return "♪  " + Lyrics.trackTitle + (Lyrics.trackArtist !== "" ? "  —  " + Lyrics.trackArtist : "");
                 return I18n.t("music.no_lyrics");
             }
             if (!Lyrics.isMediaActive) return "Nothing is playing";

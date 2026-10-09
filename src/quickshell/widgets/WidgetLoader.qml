@@ -13,6 +13,8 @@ Item {
     readonly property string safeMonitorName: (monitorName || (screen ? screen.name : "default")).replace(/[^a-zA-Z0-9_-]/g, "_")
 
     property bool isRedacting: false
+    // instantiates the WidgetToggle singleton (and its "widgets" IPC target) with the loader
+    readonly property bool widgetsHidden: WidgetToggle.hidden
 
     function s(val) {
         return Math.round(Scaler.s(val));
@@ -713,7 +715,7 @@ Item {
         delegate: Widget {
             screen: loaderRoot.screen
             isRedacting: loaderRoot.isRedacting
-            visible: !loaderRoot.isRedacting && !(model.isRemoving || false)
+            visible: !loaderRoot.isRedacting && !(model.isRemoving || false) && !WidgetToggle.windowsHidden
             wId: model.wId
             wType: model.wType
             wVariant: model.wVariant

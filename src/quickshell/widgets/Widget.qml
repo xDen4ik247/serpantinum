@@ -167,8 +167,8 @@ PanelWindow {
         height: root.effectiveHeight
         anchors.centerIn: parent
         rotation: root.wRotation || 0
-        opacity: root.wOpacity
-        Behavior on opacity { NumberAnimation { duration: 150 } }
+        opacity: root.wOpacity * WidgetToggle.fade
+        Behavior on opacity { enabled: !WidgetToggle.hidden && WidgetToggle.fade >= 1; NumberAnimation { duration: 150 } }
         Behavior on rotation { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
         onLoaded: {
             if (item) {

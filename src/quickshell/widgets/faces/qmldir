@@ -19,3 +19,14 @@ VisualizerFaceContinuous 1.0 visualizer/VisualizerFaceContinuous.qml
 WeatherFaceCompact 1.0 weather/WeatherFaceCompact.qml
 WeatherFaceFull 1.0 weather/WeatherFaceFull.qml
 WeatherFaceRound 1.0 weather/WeatherFaceRound.qml
+VitalsFace 1.0 vitals/VitalsFace.qml
+VitalsFaceList 1.0 vitals/VitalsFaceList.qml
+CalendarFace 1.0 calendar/CalendarFace.qml
+CalendarFaceSplit 1.0 calendar/CalendarFaceSplit.qml
+AppsFace 1.0 apps/AppsFace.qml
+AppsFaceLabeled 1.0 apps/AppsFaceLabeled.qml
+TrafficFace 1.0 traffic/TrafficFace.qml
+TrafficFaceDisk 1.0 traffic/TrafficFaceDisk.qml
+VitalRing 1.0 vitals/VitalRing.qml
+VitalsData 1.0 vitals/VitalsData.qml
+MonthGrid 1.0 calendar/MonthGrid.qml

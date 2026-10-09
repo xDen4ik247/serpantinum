@@ -483,6 +483,55 @@ QtObject {
             variants: {
                 "default": { file: "faces/github/GithubFace.qml", icon: "1", label: typeof I18n !== "undefined" ? I18n.t("widgets.variants.default", "Default") : "Default" }
             }
+        },
+        // ---- local additions: vitals / calendar / favorites / traffic ----
+        "vitals": {
+            name: "Vitals",
+            icon: String.fromCodePoint(0xF07AF),
+            iconOffsetX: 0,
+            defaultWidth: 480,
+            defaultHeight: 150,
+            defaultVariant: "rings",
+            variants: {
+                "rings": { file: "faces/vitals/VitalsFace.qml",     icon: "1", label: "Rings" },
+                "list":  { file: "faces/vitals/VitalsFaceList.qml", icon: "2", label: "List" }
+            }
+        },
+        "calendar": {
+            name: "Calendar",
+            icon: String.fromCodePoint(0xF0E17),
+            iconOffsetX: 0,
+            defaultWidth: 320,
+            defaultHeight: 320,
+            defaultVariant: "month",
+            variants: {
+                "month": { file: "faces/calendar/CalendarFace.qml",      icon: "1", label: "Month" },
+                "split": { file: "faces/calendar/CalendarFaceSplit.qml", icon: "2", label: "Clock + Month" }
+            }
+        },
+        "apps": {
+            name: "Favorites",
+            icon: String.fromCodePoint(0xF003B),
+            iconOffsetX: 0,
+            defaultWidth: 340,
+            defaultHeight: 180,
+            defaultVariant: "grid",
+            variants: {
+                "grid":    { file: "faces/apps/AppsFace.qml",        icon: "1", label: "Icons" },
+                "labeled": { file: "faces/apps/AppsFaceLabeled.qml", icon: "2", label: "Labeled" }
+            }
+        },
+        "traffic": {
+            name: "Traffic",
+            icon: String.fromCodePoint(0xF0127),
+            iconOffsetX: 0,
+            defaultWidth: 400,
+            defaultHeight: 180,
+            defaultVariant: "net",
+            variants: {
+                "net":  { file: "faces/traffic/TrafficFace.qml",     icon: "1", label: "Network" },
+                "disk": { file: "faces/traffic/TrafficFaceDisk.qml", icon: "2", label: "Disk" }
+            }
         }
     })
 

@@ -1,14 +1,13 @@
 import QtQuick
-import QtQuick.Layouts
-import QtQuick.Controls
 import QtQuick.Effects
 import Quickshell
-import Quickshell.Io
 import Quickshell.Services.Mpris
 import "../../../reusables"
-import "../../../reusables/inputs"
+import "../../../media"
 import "../../../"
 
+// Desktop music widget ("full" variant): cover, title/artist, a slim seek bar and the
+// transport, on a soft blur of the cover. The cover column hides on very small sizes.
 Item {
     id: root
     anchors.fill: parent
@@ -20,12 +19,12 @@ Item {
     property real minAspect: 2.4
     property real maxAspect: 3.2
 
-    property real dynMargin: Math.max(6, Math.min(24, root.height * 0.12))
-    property real dynSpacing: Math.max(4, Math.min(20, root.height * 0.08))
-    property real btnSize: Math.max(18, Math.min(56, root.height * 0.24))
-    property real iconSize: Math.round(btnSize * 0.3)
-    property real titleSize: Math.max(10, Math.min(24, root.height * 0.14))
-    property real subSize: Math.max(8, Math.min(16, root.height * 0.1))
+    property real dynMargin: Math.max(6, Math.min(22, root.height * 0.12))
+    property real dynSpacing: Math.max(4, Math.min(18, root.height * 0.09))
+    property real btnSize: Math.max(18, Math.min(52, root.height * 0.25))
+    property real iconSize: Math.round(btnSize * 0.36)
+    property real titleSize: Math.max(10, Math.min(24, root.height * 0.145))
+    property real subSize: Math.max(8, Math.min(16, root.height * 0.105))
 
     property bool showArt: true
     property bool showTime: true
@@ -33,7 +32,6 @@ Item {
     property bool showBars: true
 
     property bool isVisVisible: visible && showBars
-
     property bool isSubscribed: false
 
     onIsVisVisibleChanged: updateSubscription()
@@ -79,6 +77,12 @@ Item {
 
     property var player: MprisController.activePlayer
     property bool isMediaActive: player !== null && player.playbackState !== MprisPlaybackState.Stopped && player.trackTitle !== ""
+    readonly property bool isPlaying: isMediaActive && (player.playbackState === MprisPlaybackState.Playing || player.isPlaying)
+    readonly property string artSource: {
+        let u = MprisController.artUrl;
+        if (!isMediaActive || !u) return "";
+        return (u.startsWith("file://") || u.startsWith("http")) ? u : "file://" + u;
+    }
 
     property int barCount: 40
     property real barSpacing: Math.max(2, Math.floor(width * 0.008))
@@ -86,10 +90,13 @@ Item {
     property int activeBars: Math.min(barCount, Math.max(4, Math.floor(qWidth / (5 + barSpacing))))
 
     function formatTime(sec) {
-        sec = Math.floor(sec || 0);
+        sec = Math.max(0, Math.floor(sec || 0));
         let m = Math.floor(sec / 60), s = sec % 60;
-        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+        return m + ":" + (s < 10 ? "0" : "") + s;
     }
+
+    readonly property color chip: Qt.alpha(ThemeBackend.text, 0.09)
+    readonly property color chipHover: Qt.alpha(ThemeBackend.text, 0.18)
 
     Rectangle {
         id: bgContainer
@@ -97,21 +104,50 @@ Item {
         color: ThemeBackend.surface0
         radius: ThemeBackend.borderRadius
 
-        Rectangle {
+        Item {
             id: bgMask
             anchors.fill: parent
-            radius: bgContainer.radius
             visible: false
             layer.enabled: true
+            Rectangle { anchors.fill: parent; radius: bgContainer.radius; color: "black" }
         }
 
+        // Soft blur of the cover + the quiet visualizer, both clipped to the card.
         Item {
             anchors.fill: parent
-            visible: root.showBars
             layer.enabled: true
             layer.effect: MultiEffect {
                 maskEnabled: true
                 maskSource: bgMask
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
+            }
+
+            Image {
+                anchors.fill: parent
+                anchors.margins: -Scaler.s(30)
+                source: root.artSource
+                sourceSize: Qt.size(140, 140)
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                opacity: status === Image.Ready && source != "" ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 600; easing.type: Easing.InOutQuad } }
+                layer.enabled: true
+                layer.effect: MultiEffect {
+                    blurEnabled: true
+                    blur: 1.0
+                    blurMax: 56
+                    saturation: 0.2
+                    autoPaddingEnabled: false
+                }
+            }
+            Rectangle {
+                anchors.fill: parent
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: Qt.alpha(ThemeBackend.base, 0.45) }
+                    GradientStop { position: 1.0; color: Qt.alpha(ThemeBackend.base, 0.72) }
+                }
             }
 
             Visualizer {
@@ -119,76 +155,95 @@ Item {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: Math.max(20, parent.height * 0.55)
+                visible: root.showBars
                 active: root.isSubscribed
                 count: root.activeBars
                 spacing: root.barSpacing
                 rise: 0.5
                 fall: 0.5
-
-                // Levels only reach 55% here, so the bars stay a quiet background
                 maxLength: height * 0.85 * 0.55
-                opacityBase: 0.08
-                opacityRange: 0.12 * 0.55
+                opacityBase: 0.06
+                opacityRange: 0.10 * 0.55
             }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: bgContainer.radius
+            color: "transparent"
+            border.width: 1
+            border.color: Qt.alpha("#ffffff", 0.07)
         }
 
         Item {
             anchors.fill: parent
             anchors.margins: root.dynMargin
 
-            Rectangle {
+            Item {
                 id: artRect
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 width: root.showArt ? Math.min(200, root.height - root.dynMargin * 2) : 0
                 height: width
-                radius: ThemeBackend.borderRadius
-                color: ThemeBackend.surface1
-                border.width: 1
-                border.color: (root.isMediaActive && MprisController.isPlaying) ? ThemeBackend.mauve : ThemeBackend.surface1
                 visible: root.showArt
+                readonly property real radius: Math.max(8, width * 0.12)
 
-                Text {
-                    anchors.centerIn: parent
-                    text: "󰎈"
-                    font.family: ThemeBackend.fontFamily
-                    font.pixelSize: parent.width * 0.35
-                    color: ThemeBackend.subtext0
-                    visible: !root.isMediaActive || !MprisController.artUrl
+                RectangularShadow {
+                    anchors.fill: parent
+                    radius: artRect.radius
+                    blur: Math.max(8, artRect.width * 0.2)
+                    offset.y: Math.max(2, artRect.width * 0.06)
+                    color: Qt.rgba(0, 0, 0, 0.45)
+                    opacity: artImg.status === Image.Ready && root.isMediaActive ? 1 : 0
                 }
 
                 Rectangle {
-                    id: artMask
                     anchors.fill: parent
                     radius: artRect.radius
-                    visible: false
-                    layer.enabled: true
+                    color: root.chip
+                    Text {
+                        anchors.centerIn: parent
+                        text: "󰝚"
+                        font.family: ThemeBackend.iconFont
+                        font.pixelSize: parent.width * 0.34
+                        color: Qt.alpha(ThemeBackend.text, 0.35)
+                        visible: !root.isMediaActive || artImg.status !== Image.Ready
+                    }
                 }
 
                 Item {
-                    id: artMaskedContainer
+                    id: artMask
                     anchors.fill: parent
+                    visible: false
                     layer.enabled: true
-                    layer.effect: MultiEffect {
-                        maskEnabled: true
-                        maskSource: artMask
-                    }
+                    Rectangle { anchors.fill: parent; radius: artRect.radius; color: "black"; antialiasing: true }
+                }
 
-                    Image {
-                        id: artImg
-                        anchors.fill: parent
-                        source: (root.isMediaActive && MprisController.artUrl) ? (MprisController.artUrl.startsWith("file://") || MprisController.artUrl.startsWith("http") ? MprisController.artUrl : "file://" + MprisController.artUrl) : ""
-                        fillMode: Image.PreserveAspectCrop
-                        opacity: (root.isMediaActive && status === Image.Ready && MprisController.artUrl !== "") ? 1.0 : 0.0
-                        Behavior on opacity { NumberAnimation { duration: 300 } }
-                    }
+                Image {
+                    id: artImg
+                    anchors.fill: parent
+                    source: root.artSource
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    mipmap: true
+                    visible: false
+                }
+                MultiEffect {
+                    anchors.fill: parent
+                    source: artImg
+                    maskEnabled: true
+                    maskSource: artMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                    opacity: (root.isMediaActive && artImg.status === Image.Ready) ? 1.0 : 0.0
+                    Behavior on opacity { NumberAnimation { duration: 300 } }
                 }
             }
 
             Item {
                 id: detailsColumn
                 anchors.left: root.showArt ? artRect.right : parent.left
-                anchors.leftMargin: root.showArt ? root.dynSpacing : 0
+                anchors.leftMargin: root.showArt ? root.dynSpacing * 1.2 : 0
                 anchors.right: parent.right
                 anchors.top: root.showArt ? artRect.top : parent.top
                 anchors.bottom: root.showArt ? artRect.bottom : parent.bottom
@@ -215,20 +270,15 @@ Item {
                                 id: titleTextMain
                                 text: root.isMediaActive ? (MprisController.trackTitle || "Unknown Track") : I18n.t("music.nothing_playing")
                                 font.family: ThemeBackend.fontFamily
-                                font.weight: Font.Black
+                                font.weight: Font.Bold
                                 font.pixelSize: root.titleSize
                                 color: ThemeBackend.text
-
-                                onTextChanged: {
-                                    titleClip.scrollProgress = 0.0;
-                                }
+                                onTextChanged: titleClip.scrollProgress = 0.0
                             }
-
                             Text {
-                                id: titleTextClone
                                 text: titleTextMain.text
                                 font.family: ThemeBackend.fontFamily
-                                font.weight: Font.Black
+                                font.weight: Font.Bold
                                 font.pixelSize: root.titleSize
                                 color: ThemeBackend.text
                                 visible: titleTextMain.implicitWidth > titleClip.width
@@ -238,7 +288,7 @@ Item {
 
                     SequentialAnimation {
                         loops: Animation.Infinite
-                        running: titleTextMain.implicitWidth > titleClip.width
+                        running: titleTextMain.implicitWidth > titleClip.width && root.isPlaying && root.visible
 
                         PauseAnimation { duration: 3000 }
                         NumberAnimation {
@@ -246,7 +296,7 @@ Item {
                             property: "scrollProgress"
                             from: 0.0
                             to: 1.0
-                            duration: (titleTextMain.implicitWidth + titleClip.marqueeSpacing) * 25
+                            duration: (titleTextMain.implicitWidth + titleClip.marqueeSpacing) * 30
                         }
                         PropertyAction { target: titleClip; property: "scrollProgress"; value: 0.0 }
                     }
@@ -255,61 +305,56 @@ Item {
                 Text {
                     id: artistText
                     anchors.top: titleClip.bottom
-                    anchors.topMargin: Math.max(1, root.dynSpacing * 0.2)
+                    anchors.topMargin: Math.max(1, root.dynSpacing * 0.15)
                     anchors.left: parent.left
                     anchors.right: parent.right
                     text: root.isMediaActive ? (MprisController.trackArtist || "Unknown Artist") : ""
                     font.family: ThemeBackend.fontFamily
-                    font.weight: Font.Medium
+                    font.weight: Font.DemiBold
                     font.pixelSize: root.subSize
-                    color: ThemeBackend.subtext1
+                    color: Qt.lighter(ThemeBackend.mauve, 1.05)
                     elide: Text.ElideRight
                     visible: root.isMediaActive && root.showArtist
                 }
 
-                RowLayout {
+                Row {
                     id: controlsRow
                     anchors.bottom: parent.bottom
                     anchors.left: parent.left
                     spacing: Math.max(2, root.dynSpacing * 0.5)
 
                     IconButton {
-                        Layout.preferredWidth: root.btnSize
-                        Layout.preferredHeight: root.btnSize
-                        Layout.minimumWidth: 0
-                        Layout.minimumHeight: 0
-                        cornerRadius: Math.max(4, root.btnSize * 0.2)
+                        width: root.btnSize
+                        height: root.btnSize
+                        cornerRadius: Math.round(root.btnSize / 2)
                         buttonIcon: "󰒮"
                         iconFontSize: root.iconSize
-                        accentColor: ThemeBackend.surface1
-                        textColor: isHoveredOrHighlighted ? ThemeBackend.text : ThemeBackend.overlay2
-                        onClicked: if (root.player && root.player.canGoPrevious) root.player.previous()
+                        accentColor: isHoveredOrHighlighted ? root.chipHover : root.chip
+                        textColor: ThemeBackend.text
+                        enabled: root.player !== null && root.player.canGoPrevious
+                        onClicked: root.player.previous()
                     }
-
                     IconButton {
-                        Layout.preferredWidth: root.btnSize
-                        Layout.preferredHeight: root.btnSize
-                        Layout.minimumWidth: 0
-                        Layout.minimumHeight: 0
-                        cornerRadius: Math.max(4, root.btnSize * 0.2)
-                        buttonIcon: (root.isMediaActive && MprisController.isPlaying) ? "󰏤" : "󰐊"
+                        width: root.btnSize
+                        height: root.btnSize
+                        cornerRadius: Math.round(root.btnSize / 2)
+                        buttonIcon: root.isPlaying ? "󰏤" : "󰐊"
                         iconFontSize: root.iconSize
-                        accentColor: ThemeBackend.surface1
-                        textColor: isHoveredOrHighlighted ? ThemeBackend.green : ThemeBackend.text
-                        onClicked: if (root.player && root.player.canTogglePlaying) root.player.togglePlaying()
+                        accentColor: isHoveredOrHighlighted ? Qt.lighter(ThemeBackend.mauve, 1.08) : ThemeBackend.mauve
+                        textColor: ThemeBackend.base
+                        enabled: root.player !== null && root.player.canTogglePlaying
+                        onClicked: root.player.togglePlaying()
                     }
-
                     IconButton {
-                        Layout.preferredWidth: root.btnSize
-                        Layout.preferredHeight: root.btnSize
-                        Layout.minimumWidth: 0
-                        Layout.minimumHeight: 0
-                        cornerRadius: Math.max(4, root.btnSize * 0.2)
+                        width: root.btnSize
+                        height: root.btnSize
+                        cornerRadius: Math.round(root.btnSize / 2)
                         buttonIcon: "󰒭"
                         iconFontSize: root.iconSize
-                        accentColor: ThemeBackend.surface1
-                        textColor: isHoveredOrHighlighted ? ThemeBackend.text : ThemeBackend.overlay2
-                        onClicked: if (root.player && root.player.canGoNext) root.player.next()
+                        accentColor: isHoveredOrHighlighted ? root.chipHover : root.chip
+                        textColor: ThemeBackend.text
+                        enabled: root.player !== null && root.player.canGoNext
+                        onClicked: root.player.next()
                     }
                 }
 
@@ -320,73 +365,49 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
 
-                    RowLayout {
+                    Row {
                         id: seekRow
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        height: Math.max(14, Math.round(root.subSize * 1.2))
-                        spacing: Math.max(4, root.dynSpacing * 0.4)
+                        width: parent.width
+                        spacing: Math.max(4, root.dynSpacing * 0.5)
                         visible: root.showTime && root.isMediaActive
 
                         Text {
-                            text: root.isMediaActive && root.player ? root.formatTime(MprisController.livePosition) : "--:--"
+                            id: elapsedText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.formatTime(progBar.shownValue)
                             font.family: ThemeBackend.fontFamily
-                            font.weight: Font.Bold
-                            font.pixelSize: Math.max(7, root.subSize * 0.85)
-                            color: ThemeBackend.subtext0
-                            verticalAlignment: Text.AlignVCenter
-                            Layout.alignment: Qt.AlignVCenter
+                            font.weight: Font.DemiBold
+                            font.features: { "tnum": 1 }
+                            font.pixelSize: Math.max(7, root.subSize * 0.82)
+                            color: Qt.alpha(ThemeBackend.text, 0.6)
                         }
 
-                        WavySeekBar {
+                        MusicSeekBar {
                             id: progBar
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(14, Math.round(root.subSize * 1.2))
-                            Layout.maximumHeight: Math.max(14, Math.round(root.subSize * 1.2))
-                            Layout.minimumWidth: 0
-                            Layout.alignment: Qt.AlignVCenter
-                            from: 0.0
-                            to: root.player ? root.player.length : 100.0
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.max(0, seekRow.width - elapsedText.width - lengthText.width - seekRow.spacing * 2)
+                            height: Math.max(12, Math.round(root.subSize * 1.1))
+                            from: 0
+                            to: (root.player && root.player.length > 0) ? root.player.length : 1
                             value: MprisController.livePosition
-                            playing: root.player ? root.player.isPlaying : false
-                            waveColor: ThemeBackend.mauve
-
-                            property bool seekPending: false
-
-                            Timer {
-                                id: seekTimer
-                                interval: 1000
-                                onTriggered: progBar.seekPending = false
-                            }
-
-                            Connections {
-                                target: MprisController
-                                function onLivePositionChanged() {
-                                    if (!progBar.isDragging && !progBar.seekPending) {
-                                        progBar.value = MprisController.livePosition;
-                                    }
-                                }
-                            }
-
-                            onMoved: val => {
-                                if (root.player && root.player.canSeek) {
-                                    progBar.seekPending = true;
-                                    seekTimer.restart();
-                                    progBar.value = val;
-                                    root.player.position = val;
-                                }
-                            }
+                            interactive: root.player !== null && root.player.canSeek
+                            trackHeight: Math.max(2, Math.round(root.height * 0.025))
+                            hoverTrackHeight: Math.max(3, Math.round(root.height * 0.04))
+                            knobSize: Math.max(8, Math.round(root.height * 0.09))
+                            fillColor: root.isPlaying ? ThemeBackend.mauve : Qt.alpha(ThemeBackend.text, 0.6)
+                            onCommitted: (v) => { if (root.player && root.player.canSeek) root.player.position = v; }
                         }
 
                         Text {
-                            text: root.isMediaActive && root.player ? root.formatTime(root.player.length) : "--:--"
+                            id: lengthText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.player ? root.formatTime(root.player.length) : "0:00"
                             font.family: ThemeBackend.fontFamily
-                            font.weight: Font.Bold
-                            font.pixelSize: Math.max(7, root.subSize * 0.85)
-                            color: ThemeBackend.subtext0
-                            verticalAlignment: Text.AlignVCenter
-                            Layout.alignment: Qt.AlignVCenter
+                            font.weight: Font.DemiBold
+                            font.features: { "tnum": 1 }
+                            font.pixelSize: Math.max(7, root.subSize * 0.82)
+                            color: Qt.alpha(ThemeBackend.text, 0.6)
                         }
                     }
                 }
