@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# glass-music — open the Glass Music library app as a normal niri app (app-id "glass-music"),
+# or focus it when it is already running. Close it like any window (Mod+Q); music keeps
+# playing in the MPD user service.
+APP="${GLASS_MUSIC_APP:-$HOME/.local/share/glass-music/app}"
+TITLE="${GLASS_MUSIC_TITLE:-Glass Music}"
+APP_ID="${GLASS_MUSIC_APP_ID:-glass-music}"
+id=$(niri msg --json windows 2>/dev/null | python3 -c '
+import json, sys
+a, t = sys.argv[1], sys.argv[2]
+for w in json.load(sys.stdin):
+    if w.get("app_id") == a and w.get("title") == t:
+        print(w["id"]); break' "$APP_ID" "$TITLE")
+if [ -n "$id" ]; then
+    exec niri msg action focus-window --id "$id"
+fi
+# MPD normally starts at login; make sure it is up before the backend connects.
+systemctl --user start mpd.service >/dev/null 2>&1 &
+# QS_APP_ID makes quickshell use this as the Wayland xdg-toplevel app-id (default org.quickshell).
+export GLASS_MUSIC_APP="$APP" GLASS_MUSIC_TITLE="$TITLE" QS_APP_ID="$APP_ID"
+exec quickshell -n -p "$APP/qml" "$@"

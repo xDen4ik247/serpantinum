@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Glass Music
+GenericName=Music library
+Comment=Browse and play your music library (MPD) — artists, albums, smart mixes, synced lyrics
+Exec=glass-music
+Icon=glass-music
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;player;mpd;library;spotify;lyrics;
+StartupWMClass=glass-music
+StartupNotify=false
+Actions=terminal;
+
+[Desktop Action terminal]
+Name=Open terminal player (rmpc)
+Exec=music-player

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5fd0d8"/>
+      <stop offset="0.55" stop-color="#3f6fd8"/>
+      <stop offset="1" stop-color="#6a3fc4"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.38"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.10"/>
+    </linearGradient>
+    <linearGradient id="disc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="56" fill="url(#bg)"/>
+  <circle cx="150" cy="138" r="70" fill="url(#disc)" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2"/>
+  <circle cx="150" cy="138" r="16" fill="#ffffff" fill-opacity="0.25"/>
+  <path d="M104 74 L104 160 A26 22 0 1 1 88 141 L88 66 Q88 58 96 57 L166 46 Q176 45 176 55 L176 76 Z"
+        fill="#ffffff" opacity="0.96"/>
+  <rect x="16" y="16" width="224" height="112" rx="56" fill="url(#sheen)"/>
+  <rect x="17.5" y="17.5" width="221" height="221" rx="54.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+</svg>
