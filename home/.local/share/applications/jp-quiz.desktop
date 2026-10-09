@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=JP Quiz
+GenericName=Japanese quiz
+Comment=Endless adaptive Japanese quiz: particles, grammar, sentences, kanji (N5–N3)
+Exec=jp-quiz
+Icon=jp-quiz
+Terminal=false
+Categories=Education;Languages;
+Keywords=japanese;nihongo;jlpt;quiz;grammar;kanji;
+StartupWMClass=jp-quiz
+StartupNotify=false
