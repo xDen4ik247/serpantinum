@@ -1,0 +1,16 @@
+[Unit]
+Description=power-mode: battery-aware switch (refresh rate, power profile, timer cadence, LLM idle) on AC <-> battery
+Documentation=file:///home/user/claude/.workers/reports/battery.md
+PartOf=graphical-session.target
+After=graphical-session.target niri.service
+
+[Service]
+Type=simple
+# blocks in `gdbus monitor` on UPower's OnBattery; ~0 CPU / 0 wakeups while nothing changes
+ExecStart=%h/.local/bin/power-mode daemon
+Restart=on-failure
+RestartSec=10
+Nice=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,39 +1,15 @@
 [Unit]
-Description=Local LLM (llama.cpp OpenVINO backend, Intel Arc GPU) - OpenAI API on http://127.0.0.1:8765
-Documentation=file:///home/user/claude/.workers/reports/llm-api.md
-After=default.target
-# Never crash-loop: an OOM-killed server restarted over and over helped hang the laptop on 2026-10-08.
-StartLimitIntervalSec=600
-StartLimitBurst=3
+Description=Local LLM on demand - proxy 127.0.0.1:8765 -> llama-server (npu-llm-server.service), exits when idle
+Documentation=file:///home/user/claude/.workers/reports/battery.md file:///home/user/claude/.workers/reports/llm-api.md
+# battery worker 2026-10-09: started by npu-llm.socket on the first connection. After NPU_LLM_IDLE without any open
+# connection the proxy exits, npu-llm-server.service becomes unneeded and stops (frees ~7 GB RAM + GPU buffers).
+# `systemctl --user start npu-llm` still warms the model up by hand; `stop npu-llm.socket` turns the LLM off fully.
+Requires=npu-llm-server.service
+After=npu-llm-server.service
 
 [Service]
 Type=simple
-# Model: Qwen3.5-4B (2026), swapped in 2026-10-09 (see reports/llm-model.md); old Qwen3-4B-2507 unit backed up in
-# ~/backups/pre-ideas3-20261008/npu-llm.service.qwen3-4b
-# Device: GPU (Arc 140V). NPU works but generation is ~1 tok/s at useful context sizes (see reports/llm.md).
-# Do NOT set GGML_OPENVINO_CACHE_DIR on NPU (llama.cpp #25904).
-Environment=GGML_OPENVINO_DEVICE=GPU
-# STATEFUL execution (KV cache inside the OpenVINO model) is REQUIRED for memory safety: the default stateless
-# GPU path compiles a new model per prompt shape and keeps them all, ~1 MB of GPU memory per prompt token,
-# unbounded (4.3 -> 26 GB in a few hundred requests -> global OOM). Stateful stays flat at ~3.5 GB and is faster.
-# Stateful needs a prompt that starts at position 0 every time, hence --no-cache-prompt below
-# (prompt-cache reuse would rewind the sequence, which stateful mode does not support -> garbled answers).
-Environment=GGML_OPENVINO_STATEFUL_EXECUTION=1
-Environment=LD_LIBRARY_PATH=%h/.local/opt/openvino/runtime/lib/intel64:%h/.local/opt/openvino/runtime/3rdparty/tbb/lib
-ExecStart=%h/.local/opt/llama.cpp-ov/bin/llama-server \
-  -m %h/.local/share/npu-ai/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf \
-  --alias qwen3.5-4b \
-  --host 127.0.0.1 --port 8765 \
-  -c 8192 -np 1 -fa on --jinja --no-webui \
-  --no-cache-prompt -cram 0 --reasoning off \
-  --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0
-Restart=on-failure
-RestartSec=15
-Nice=5
-# Host-memory safety (GPU buffers are NOT counted here; they are bounded by stateful mode above).
-MemoryHigh=9G
-MemoryMax=11G
-OOMScoreAdjust=500
-
-[Install]
-WantedBy=default.target
+# idle time: 30 min on AC, 10 min on battery (written by `power-mode` to llm.env; read at each start)
+Environment=NPU_LLM_IDLE=30min
+EnvironmentFile=-%h/.local/state/power-mode/llm.env
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=${NPU_LLM_IDLE} 127.0.0.1:18765

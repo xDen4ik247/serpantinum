@@ -1,0 +1,43 @@
+[Unit]
+Description=Local LLM backend (llama.cpp OpenVINO, Intel Arc GPU) on 127.0.0.1:18765, started on demand by npu-llm.socket
+Documentation=file:///home/user/claude/.workers/reports/llm-api.md
+# battery worker 2026-10-09: on-demand. npu-llm.socket (127.0.0.1:8765) starts npu-llm.service (systemd-socket-proxyd),
+# which pulls this unit in and exits after an idle period; then this unit is unneeded and stops (frees ~7 GB + the GPU).
+StopWhenUnneeded=yes
+# Never crash-loop: an OOM-killed server restarted over and over helped hang the laptop on 2026-10-08.
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Model: Qwen3.5-4B (2026), swapped in 2026-10-09 (see reports/llm-model.md); old Qwen3-4B-2507 unit backed up in
+# ~/backups/pre-ideas3-20261008/npu-llm.service.qwen3-4b
+# Device: GPU (Arc 140V). NPU works but generation is ~1 tok/s at useful context sizes (see reports/llm.md).
+# Do NOT set GGML_OPENVINO_CACHE_DIR on NPU (llama.cpp #25904).
+Environment=GGML_OPENVINO_DEVICE=GPU
+# STATEFUL execution (KV cache inside the OpenVINO model) is REQUIRED for memory safety: the default stateless
+# GPU path compiles a new model per prompt shape and keeps them all, ~1 MB of GPU memory per prompt token,
+# unbounded (4.3 -> 26 GB in a few hundred requests -> global OOM). Stateful stays flat at ~3.5 GB and is faster.
+# Stateful needs a prompt that starts at position 0 every time, hence --no-cache-prompt below
+# (prompt-cache reuse would rewind the sequence, which stateful mode does not support -> garbled answers).
+Environment=GGML_OPENVINO_STATEFUL_EXECUTION=1
+Environment=LD_LIBRARY_PATH=%h/.local/opt/openvino/runtime/lib/intel64:%h/.local/opt/openvino/runtime/3rdparty/tbb/lib
+ExecStart=%h/.local/opt/llama.cpp-ov/bin/llama-server \
+  -m %h/.local/share/npu-ai/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf \
+  --alias qwen3.5-4b \
+  --host 127.0.0.1 --port 18765 \
+  -c 8192 -np 1 -fa on --jinja --no-webui \
+  --no-cache-prompt -cram 0 --reasoning off \
+  --temp 0.7 --top-p 0.8 --top-k 20 --min-p 0
+# The unit counts as started only once the model is loaded, so the proxy (After=) forwards to a ready server;
+# clients just wait in the socket backlog during the ~45 s load.
+ExecStartPost=/bin/sh -c 'for i in $(seq 900); do curl -sf -o /dev/null http://127.0.0.1:18765/health && exit 0; sleep 0.2; done; exit 1'
+TimeoutStartSec=240
+Restart=on-failure
+RestartSec=15
+Nice=5
+# Host-memory safety (GPU buffers are NOT counted here; they are bounded by stateful mode above).
+MemoryHigh=9G
+MemoryMax=11G
+OOMScoreAdjust=500
+

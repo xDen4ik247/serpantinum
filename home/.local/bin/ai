@@ -64,7 +64,7 @@ def request(path, body=None, timeout=600):
 
 def status():
     out = subprocess.run(["systemctl", "--user", "is-active", "npu-llm"], capture_output=True, text=True)
-    print(f"service   npu-llm.service: {out.stdout.strip()}")
+    print(f"service   npu-llm.service: {out.stdout.strip()}  (on demand via npu-llm.socket; stops when idle)")
     print(f"endpoint  {URL}/v1  (OpenAI-compatible)")
     try:
         h = json.load(urllib.request.urlopen(URL + "/health", timeout=3))
@@ -75,7 +75,8 @@ def status():
         return 1
     model = m["data"][0]["id"] if m.get("data") else "?"
     ctx = props.get("default_generation_settings", {}).get("n_ctx", "?")
-    env = subprocess.run(["systemctl", "--user", "show", "npu-llm", "-p", "Environment", "-p", "MemoryCurrent"],
+    # the model runs in npu-llm-server.service (npu-llm.service is the on-demand socket proxy, battery worker)
+    env = subprocess.run(["systemctl", "--user", "show", "npu-llm-server", "-p", "Environment", "-p", "MemoryCurrent"],
                          capture_output=True, text=True).stdout
     dev = next((w.split("GGML_OPENVINO_DEVICE=", 1)[1] for w in env.split() if "GGML_OPENVINO_DEVICE=" in w), "CPU")
     mem = next((l.split("=", 1)[1] for l in env.splitlines() if l.startswith("MemoryCurrent=")), "")

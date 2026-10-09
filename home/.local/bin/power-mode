@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# power-mode - one battery-aware switch for the desktop (battery worker, 2026-10-09).
+#
+#   power-mode                 show the current state
+#   power-mode auto            follow the charger: "save" on battery, "perf" on AC (default)
+#   power-mode save | perf     force one policy regardless of the charger
+#   power-mode apply           re-apply the policy now (the daemon does this on every AC change)
+#   power-mode daemon          (power-mode.service) apply, then re-apply whenever UPower's OnBattery flips
+#
+# What a policy flips (all values in ~/.config/power-mode.conf):
+#   - eDP-1 refresh rate: 120 Hz (perf) / 60 Hz (save)  -> the mode line in ~/.config/niri/user/output.kdl
+#   - power-profiles-daemon profile: balanced (perf) / power-saver (save)
+#   - gcal-sync timer every minute (perf) / every 5 min (save); anki-queue-flush every 5 min / hourly
+#     (runtime drop-ins in $XDG_RUNTIME_DIR/systemd/user/*.timer.d/power-mode.conf, gone after reboot)
+#   - local LLM idle stop: 30 min (perf) / 10 min (save)  -> ~/.local/state/power-mode/llm.env
+#   - Serpantinum reads ~/.local/state/power-mode/mode + UPower itself (PowerSaver singleton): slower
+#     sampling for the desktop vitals/traffic widgets and the bar's sysmon on battery.
+# It never touches fcitx5.service.
+set -u
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/power-mode"
+MODE_FILE="$STATE_DIR/mode"
+APPLIED_FILE="$STATE_DIR/applied"
+LLM_ENV="$STATE_DIR/llm.env"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/power-mode.conf"
+OUTPUT_KDL="${XDG_CONFIG_HOME:-$HOME/.config}/niri/user/output.kdl"
+RUNTIME_UNITS="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/user"
+
+# defaults (override in power-mode.conf)
+OUTPUT=eDP-1
+PERF_REFRESH=120.000
+SAVE_REFRESH=60.001
+PERF_PROFILE=balanced
+SAVE_PROFILE=power-saver
+SAVE_GCAL_ONCALENDAR='*:0/5:05'
+SAVE_ANKI_INTERVAL=60min
+PERF_LLM_IDLE=30min
+SAVE_LLM_IDLE=10min
+SWITCH_REFRESH=1
+SWITCH_PROFILE=1
+SWITCH_TIMERS=1
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF"
+
+mkdir -p "$STATE_DIR"
+log() { [ "${QUIET:-0}" = 1 ] || echo "$*"; }
+
+mode() { local m; m=$(cat "$MODE_FILE" 2>/dev/null | tr -d '[:space:]'); case "$m" in perf|save) echo "$m" ;; *) echo auto ;; esac; }
+
+on_battery() {
+    local v
+    v=$(busctl get-property org.freedesktop.UPower /org/freedesktop/UPower org.freedesktop.UPower OnBattery 2>/dev/null)
+    case "$v" in "b true") return 0 ;; "b false") return 1 ;; esac
+    # fallback: any mains supply online -> AC
+    for s in /sys/class/power_supply/*/; do
+        [ "$(cat "$s/type" 2>/dev/null)" = Mains ] && [ "$(cat "$s/online" 2>/dev/null)" = 1 ] && return 1
+    done
+    return 0
+}
+
+effective() {
+    case "$(mode)" in
+        perf) echo perf ;;
+        save) echo save ;;
+        *) if on_battery; then echo save; else echo perf; fi ;;
+    esac
+}
+
+set_refresh() {   # $1 = wanted refresh (e.g. 60.001)
+    [ "$SWITCH_REFRESH" = 1 ] && [ -f "$OUTPUT_KDL" ] || return 0
+    local cur res want
+    cur=$(grep -oP '^\s*mode\s+"\K[0-9]+x[0-9]+@[0-9.]+' "$OUTPUT_KDL" | head -1)
+    [ -n "$cur" ] || { log "refresh: no mode line in $OUTPUT_KDL, skipped"; return 0; }
+    res=${cur%@*}; want="$res@$1"
+    [ "$cur" = "$want" ] && { log "refresh: $want (unchanged)"; return 0; }
+    # only modes the panel really offers
+    if ! niri msg outputs 2>/dev/null | grep -q "^\s*$want\b"; then
+        log "refresh: $want is not offered by $OUTPUT, kept $cur"; return 0
+    fi
+    cp -p "$OUTPUT_KDL" "$STATE_DIR/output.kdl.prev"
+    sed -i "s|mode \"$cur\"|mode \"$want\"|" "$OUTPUT_KDL"
+    if ! niri validate >/dev/null 2>&1; then
+        cp -p "$STATE_DIR/output.kdl.prev" "$OUTPUT_KDL"
+        log "refresh: niri validate failed, restored $cur"; return 1
+    fi
+    log "refresh: $cur -> $want"
+}
+
+set_profile() {
+    [ "$SWITCH_PROFILE" = 1 ] && command -v powerprofilesctl >/dev/null || return 0
+    local cur; cur=$(powerprofilesctl get 2>/dev/null)
+    [ "$cur" = "$1" ] && { log "profile: $1 (unchanged)"; return 0; }
+    powerprofilesctl set "$1" 2>/dev/null && log "profile: $cur -> $1" || log "profile: could not set $1"
+}
+
+set_timers() {   # $1 = save|perf
+    [ "$SWITCH_TIMERS" = 1 ] || return 0
+    local g="$RUNTIME_UNITS/gcal-sync.timer.d" a="$RUNTIME_UNITS/anki-queue-flush.timer.d" changed=0 want
+    if [ "$1" = save ]; then
+        mkdir -p "$g" "$a"
+        want=$(printf '# power-mode (battery): runs less often on battery\n[Timer]\nOnCalendar=\nOnCalendar=%s\n' "$SAVE_GCAL_ONCALENDAR")
+        [ "$(cat "$g/power-mode.conf" 2>/dev/null)" = "$want" ] || { printf '%s\n' "$want" > "$g/power-mode.conf"; changed=1; }
+        want=$(printf '# power-mode (battery): runs less often on battery\n[Timer]\nOnUnitActiveSec=\nOnUnitActiveSec=%s\n' "$SAVE_ANKI_INTERVAL")
+        [ "$(cat "$a/power-mode.conf" 2>/dev/null)" = "$want" ] || { printf '%s\n' "$want" > "$a/power-mode.conf"; changed=1; }
+    else
+        for f in "$g/power-mode.conf" "$a/power-mode.conf"; do [ -f "$f" ] && { rm -f "$f"; changed=1; }; done
+        rmdir "$g" "$a" 2>/dev/null
+    fi
+    if [ $changed = 1 ]; then
+        systemctl --user daemon-reload
+        for t in gcal-sync.timer anki-queue-flush.timer; do
+            systemctl --user is-enabled -q "$t" 2>/dev/null && systemctl --user restart "$t"
+        done
+        log "timers: $1 schedule"
+    else
+        log "timers: $1 schedule (unchanged)"
+    fi
+}
+
+set_llm_idle() {
+    local want="NPU_LLM_IDLE=$1"
+    [ "$(cat "$LLM_ENV" 2>/dev/null)" = "$want" ] || echo "$want" > "$LLM_ENV"
+    log "llm: stops after $1 idle (next start)"
+}
+
+apply() {
+    local eff; eff=$(effective)
+    log "mode $(mode) -> $eff"
+    if [ "$eff" = save ]; then
+        set_refresh "$SAVE_REFRESH"; set_profile "$SAVE_PROFILE"; set_timers save; set_llm_idle "$SAVE_LLM_IDLE"
+    else
+        set_refresh "$PERF_REFRESH"; set_profile "$PERF_PROFILE"; set_timers perf; set_llm_idle "$PERF_LLM_IDLE"
+    fi
+    echo "$eff $(date +%s)" > "$APPLIED_FILE"
+}
+
+status() {
+    local ac=AC; on_battery && ac=battery
+    echo "mode       $(mode)  (power-mode auto|perf|save)"
+    echo "power      $ac -> policy $(effective)"
+    echo "refresh    $(niri msg outputs 2>/dev/null | grep -oP 'Current mode: \K.*' | head -1)"
+    echo "profile    $(powerprofilesctl get 2>/dev/null)"
+    echo "gcal-sync  $(systemctl --user show gcal-sync.timer -p TimersCalendar --value 2>/dev/null | grep -oP 'OnCalendar=\K[^;]+' | tail -1 | sed 's/ *$//')"
+    echo "anki-flush every $(systemctl --user show anki-queue-flush.timer -p TimersMonotonic --value 2>/dev/null | grep -oP 'OnUnitActiveUSec=\K[^ ;]+' | tail -1)"
+    echo "llm        $(cat "$LLM_ENV" 2>/dev/null)  server $(systemctl --user is-active npu-llm-server 2>/dev/null)"
+    echo "daemon     $(systemctl --user is-active power-mode 2>/dev/null)"
+    local p; for p in /sys/class/power_supply/BAT*/power_now; do
+        [ -f "$p" ] && echo "draw       $(awk '{printf "%.2f W", $1/1e6}' "$p")"
+    done
+}
+
+daemon() {
+    QUIET=0 apply
+    # gdbus blocks on D-Bus; only the UPower root object's PropertiesChanged (OnBattery, LidIsClosed) arrive here
+    gdbus monitor --system --dest org.freedesktop.UPower --object-path /org/freedesktop/UPower 2>/dev/null |
+    while IFS= read -r line; do
+        case "$line" in
+            *OnBattery*) sleep 1; QUIET=0 apply ;;
+        esac
+    done
+}
+
+case "${1:-status}" in
+    auto|perf|save) echo "$1" > "$MODE_FILE"; apply ;;
+    apply) apply ;;
+    status|"") status ;;
+    daemon) daemon ;;
+    -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) echo "usage: power-mode [auto|perf|save|apply|status|daemon]" >&2; exit 2 ;;
+esac

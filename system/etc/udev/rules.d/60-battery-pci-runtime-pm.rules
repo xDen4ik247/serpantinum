@@ -1,0 +1,3 @@
+# battery worker 2026-10-09: let every PCI device runtime-suspend when idle (what powertop --auto-tune does for PCI).
+# Revert: delete this file and reboot.
+ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{power/control}="auto"

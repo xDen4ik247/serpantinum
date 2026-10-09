@@ -1,0 +1,10 @@
+[Unit]
+Description=Local LLM API socket (127.0.0.1:8765): starts the model on the first request (battery worker 2026-10-09)
+Documentation=file:///home/user/claude/.workers/reports/battery.md
+
+[Socket]
+ListenStream=127.0.0.1:8765
+Backlog=128
+
+[Install]
+WantedBy=sockets.target

@@ -29,6 +29,11 @@ def status(timeout=0.6):
         models = [m.get("id") for m in d.get("data", [])] or [m.get("name") for m in d.get("models", [])]
         out["ok"] = True
         out["model"] = models[0] if models else None
+    except TimeoutError:
+        # battery worker: npu-llm is socket-activated; a connection that is accepted but not answered yet means
+        # the model is loading (~40 s after an idle stop). Report it as available so callers send the request.
+        out["ok"] = True
+        out["model"] = "loading"
     except Exception as e:  # noqa: BLE001 - report any failure as "translator offline"
         out["error"] = f"{type(e).__name__}: {e}"
     return out
