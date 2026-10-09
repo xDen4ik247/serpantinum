@@ -33,6 +33,7 @@ def main():
         line = line.strip()
         if not line:
             continue
+        req = None   # never reuse the previous line's request (its rid) if this line is not JSON
         try:
             req = json.loads(line)
             cmd = req.get("cmd")

@@ -3,7 +3,8 @@
 A Spotify-style library app for the MPD music library, in the liquid-glass / Matugen look of
 the Serpantinum desktop. Quickshell window (app-id `glass-music`) + a small Python backend.
 
-- `glass-music` (Mod+Shift+M) opens it, or focuses it if it is already open. Mod+Q closes it;
+- `glass-music` (Mod+Shift+M) opens it, or focuses it if it is already open (via the shared
+  `niri-focus-or-run` helper in `~/.local/bin`; without it a second window opens). Mod+Q closes it;
   playback keeps running in MPD.
 - Keys: Space play/pause · Ctrl+F search · Ctrl+L lyrics · Ctrl+Shift+Q queue · Ctrl+←/→ prev/next ·
   Ctrl+↑/↓ volume · Ctrl+S shuffle · Ctrl+R repeat · Alt+←/→ back/forward.

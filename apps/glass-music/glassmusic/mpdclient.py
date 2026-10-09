@@ -1,6 +1,7 @@
 """A tiny dependency-free MPD client (same wire handling as music-smart)."""
 
 import os
+import select
 import socket
 
 
@@ -30,6 +31,7 @@ class MPD:
         self.timeout = timeout
         self.sock = None
         self.f = None
+        self.sent = 0   # writes that reached the socket; Server.call() retries only while unchanged
         self.connect()
 
     def connect(self):
@@ -37,7 +39,11 @@ class MPD:
         if a.startswith("/"):
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(self.timeout)
-            s.connect(a)
+            try:
+                s.connect(a)
+            except OSError:
+                s.close()
+                raise
         else:
             host, _, port = a.rpartition(":")
             s = socket.create_connection((host or "127.0.0.1", int(port or 6600)), timeout=self.timeout)
@@ -46,6 +52,19 @@ class MPD:
         hello = self.f.readline()
         if not hello.startswith(b"OK MPD"):
             raise MPDError("not an MPD server")
+
+    def stale(self):
+        """True if the peer already closed this idle connection (EOF or junk waiting to be read).
+
+        MPD drops command clients after connection_timeout; spotting that before sending lets us
+        reconnect without ever having to guess whether a command was executed."""
+        try:
+            r, _, _ = select.select([self.sock], [], [], 0)
+            if not r:
+                return False
+            return True   # an idle command connection never has unread data: EOF, RST or desync
+        except (OSError, ValueError):
+            return True
 
     def close(self):
         try:
@@ -61,6 +80,7 @@ class MPD:
     def _send(self, line):
         self.f.write(line.encode() + b"\n")
         self.f.flush()
+        self.sent += 1
 
     def _read(self, list_ok=False):
         pairs = []
@@ -90,6 +110,7 @@ class MPD:
         lines.append("command_list_end")
         self.f.write(("\n".join(lines) + "\n").encode())
         self.f.flush()
+        self.sent += 1
         out = []
         try:
             for _ in cmds:

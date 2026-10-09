@@ -5,7 +5,8 @@ It quizzes **particles, conjugation and grammar, sentence meaning, 並べ替え 
 kanji reading/writing in context and vocabulary in context**, built from ~37 000 items made from
 real Tatoeba sentences, and picks every next question so that you succeed about 75 % of the time.
 
-Open it with **Mod+J** or `jp-quiz`. Keys: `1–4` answer · `Space` skip · `Enter` next ·
+Open it with **Mod+J** or `jp-quiz` (focuses the open window if there is one, via the shared
+`niri-focus-or-run` helper in `~/.local/bin`). Keys: `1–4` answer · `Space` skip · `Enter` next ·
 `A` add the item to Anki · `F` furigana · `L` EN/RU · `Tab` stats (`S` sync with Anki, `K` auto-add
 misses, `←→` target) · `Esc` close.
 

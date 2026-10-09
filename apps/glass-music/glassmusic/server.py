@@ -80,23 +80,36 @@ class Server:
 
     # ── MPD plumbing ─────────────────────────────────────────────────────────
     def conn(self):
+        if self.mpd is not None and self.mpd.stale():
+            self.drop()   # MPD timed the idle command connection out: reconnect before sending
         if self.mpd is None:
             self.mpd = MPD(self.address)
         return self.mpd
 
-    def call(self, fn):
-        """Run fn(mpd); reconnect once if MPD dropped the idle command connection."""
+    def drop(self):
+        try:
+            if self.mpd:
+                self.mpd.sock.close()
+        except Exception:
+            pass
+        self.mpd = None
+
+    def call(self, fn, idempotent=False):
+        """Run fn(mpd) on the command connection, reconnecting once on a connection error.
+
+        The retry re-runs fn only if it is safe: fn is a pure read (idempotent=True), or nothing
+        reached the socket before the failure. A command list like clear+add that was already
+        sent may have been executed, so it is never sent twice; the error goes to the caller."""
         for attempt in (0, 1):
+            m = None
             try:
-                return fn(self.conn())
-            except (ConnectionError, OSError, BrokenPipeError):
-                try:
-                    if self.mpd:
-                        self.mpd.sock.close()
-                except Exception:
-                    pass
-                self.mpd = None
-                if attempt:
+                m = self.conn()
+                before = m.sent
+                return fn(m)
+            except (ConnectionError, OSError):
+                sent = m is not None and m.sent != before
+                self.drop()
+                if attempt or (sent and not idempotent):
                     raise
 
     def idle_thread(self):
@@ -131,12 +144,12 @@ class Server:
         t0 = time.time()
         if not self.music_dir:
             try:
-                self.music_dir = self.call(lambda m: m.dict("config")).get("music_directory", "")
+                self.music_dir = self.call(lambda m: m.dict("config"), idempotent=True).get("music_directory", "")
             except MPDError:
                 pass
             if not self.music_dir:
                 self.music_dir = HOME + "/Music"
-        lib, cached = self.call(lambda m: library.load(m, self.music_dir, CACHE_DIR, force=force))
+        lib, cached = self.call(lambda m: library.load(m, self.music_dir, CACHE_DIR, force=force), idempotent=True)
         self.lib = lib
         self.files = {t["f"]: i for i, t in enumerate(lib["tracks"])}
         self.album_of = {a["k"]: a for a in lib["albums"]}
@@ -150,7 +163,7 @@ class Server:
             st = dict(r[0]) if r else {}
             cur = MPD.songs(r[1]) if len(r) > 1 else []
             return st, (cur[0] if cur else {})
-        st, cur = self.call(get)
+        st, cur = self.call(get, idempotent=True)
         f = cur.get("file", "")
         out = {"type": "status", "state": st.get("state", "stop"),
                "elapsed": float(st.get("elapsed", 0) or 0),
@@ -171,7 +184,7 @@ class Server:
             self.last_songid = out["id"]
 
     def send_queue(self):
-        items = MPD.songs(self.call(lambda m: m.cmd("playlistinfo")))
+        items = MPD.songs(self.call(lambda m: m.cmd("playlistinfo"), idempotent=True))
         out = []
         for s in items:
             i = self.files.get(s["file"], -1)
@@ -186,7 +199,7 @@ class Server:
     def stickers(self, name):
         files = []
         try:
-            pairs = self.call(lambda m: m.cmd("sticker", "find", "song", "", name))
+            pairs = self.call(lambda m: m.cmd("sticker", "find", "song", "", name), idempotent=True)
             cur = None
             for k, v in pairs:
                 if k == "file":
@@ -206,7 +219,7 @@ class Server:
     def send_playlists(self):
         names = []
         try:
-            for k, v in self.call(lambda m: m.cmd("listplaylists")):
+            for k, v in self.call(lambda m: m.cmd("listplaylists"), idempotent=True):
                 if k == "playlist":
                     names.append(v)
         except MPDError:
@@ -214,7 +227,7 @@ class Server:
         pls = []
         for n in sorted(names, key=str.casefold):
             try:
-                files = [v for k, v in self.call(lambda m: m.cmd("listplaylist", n)) if k == "file"]
+                files = [v for k, v in self.call(lambda m: m.cmd("listplaylist", n), idempotent=True) if k == "file"]
             except MPDError:
                 files = []
             pls.append({"n": n, "files": files})
@@ -268,7 +281,7 @@ class Server:
 
     def add_files(self, files, next_=False):
         if next_:
-            st = self.call(lambda m: m.dict("status"))
+            st = self.call(lambda m: m.dict("status"), idempotent=True)
             if "song" in st:
                 cmds = [("addid", f, "+0") for f in reversed(files)]
             else:
@@ -289,7 +302,7 @@ class Server:
                 stick = {"love": set(), "ban": set(), "rating": {}}
                 for name in ("love", "ban"):
                     try:
-                        pairs = self.call(lambda m: m.cmd("sticker", "find", "song", "", name))
+                        pairs = self.call(lambda m: m.cmd("sticker", "find", "song", "", name), idempotent=True)
                     except MPDError:
                         continue
                     cur = None
@@ -362,7 +375,7 @@ class Server:
             emit({"type": "toast", "icon": "queue",
                   "text": ("Playing next" if c.get("next") else "Added to queue") + (f" · {n} tracks" if n > 1 else "")})
         elif cmd == "toggle":
-            st = self.call(lambda m: m.dict("status")).get("state")
+            st = self.call(lambda m: m.dict("status"), idempotent=True).get("state")
             self.call(lambda m: m.cmd("play") if st == "stop" else m.cmd("pause", "1" if st == "play" else "0"))
         elif cmd in ("next", "previous", "stop"):
             self.call(lambda m: m.cmd(cmd))
@@ -383,7 +396,7 @@ class Server:
         elif cmd == "moveid":
             self.call(lambda m: m.cmd("moveid", str(c["id"]), str(c["to"])))
         elif cmd == "clearqueue":
-            st = self.call(lambda m: m.dict("status"))
+            st = self.call(lambda m: m.dict("status"), idempotent=True)
             if "song" in st:   # keep the current track, drop the rest
                 pos = int(st["song"])
                 n = int(st.get("playlistlength", 0))
@@ -453,18 +466,17 @@ class Server:
 
     def on_event(self, changed):
         ch = set(changed)
-        if "reconnect" in ch:
-            if self.lib is not None:
-                self.send_status()
-                self.send_queue()
-            return
+        # "reconnect" (idle watcher (re)connected: changes during the gap are unknown) needs a fresh
+        # status + queue; it can arrive in the same coalesced burst as real changes, which must
+        # still be handled, so it is folded in instead of returning early.
+        reconnect = "reconnect" in ch
         if "database" in ch:
             self.send_library()
             self.send_queue()
             self.send_home()
-        if "playlist" in ch and "database" not in ch:
+        elif "playlist" in ch or reconnect:
             self.send_queue()
-        if ch & {"player", "mixer", "options", "playlist", "update"}:
+        if reconnect or ch & {"player", "mixer", "options", "playlist", "update"}:
             self.send_status()
         if "sticker" in ch:
             self.send_likes()
