@@ -2,11 +2,14 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import QtQuick.Shapes
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import "../reusables"
+import "../media"
+import "../bar" as BarGlass
 import "../"
 
 PanelWindow {
@@ -22,6 +25,21 @@ PanelWindow {
 
     mask: Region {
         item: (sideMusicPopout.isVisible || menuContainer.animProgress > 0.001) ? menuContainer : null
+    }
+
+    // Liquid glass (modular bars): niri blurs what is behind the card; the card itself is a
+    // translucent tint with the bar's rim (bar/GlassPill.qml). Solid bars keep upstream's look.
+    readonly property bool glassCard: !isSolid
+    BackgroundEffect.blurRegion: glassCard ? glassRegion : null
+    // Window coordinates of the card (the window is full-screen), so the blur follows the
+    // slide-in; an `item:` region would not see its parent moving.
+    Region {
+        id: glassRegion
+        x: Math.round(menuContainer.x)
+        y: Math.round(menuContainer.y)
+        width: Math.round(menuContainer.width)
+        height: Math.round(menuContainer.height)
+        radius: sideMusicPopout.cornerRadius
     }
 
     anchors {
@@ -78,8 +96,8 @@ PanelWindow {
 
     visible: isVisible || menuContainer.animProgress > 0.001
 
-    property real menuWidth: s(220)
-    property real menuHeight: s(140)
+    property real menuWidth: s(300)
+    property real menuHeight: s(170)
 
     property var playerList: {
         if (!Mpris.players || !Mpris.players.values) return [];
@@ -174,6 +192,32 @@ PanelWindow {
         sec = Math.floor(sec || 0);
         let m = Math.floor(sec / 60), s = sec % 60;
         return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    readonly property string artSource: {
+        if (!targetPlayer) return "";
+        let u = (targetPlayer === MprisController.activePlayer) ? MprisController.artUrl : (targetPlayer.trackArtUrl || "");
+        if (!u) return "";
+        return (u.startsWith("file://") || u.startsWith("http")) ? u : "file://" + u;
+    }
+
+    // The line being sung, shown while the card is open (Lyrics singleton: the local
+    // .lrc for library tracks, online lyrics for other players).
+    property bool lyricsSubscribed: false
+    onIsVisibleChanged: {
+        if (isVisible && !lyricsSubscribed) {
+            lyricsSubscribed = true;
+            Lyrics.subscribe();
+        } else if (!isVisible && lyricsSubscribed) {
+            lyricsSubscribed = false;
+            Lyrics.unsubscribe();
+        }
+    }
+    Component.onDestruction: if (lyricsSubscribed) Lyrics.unsubscribe()
+    readonly property string currentLyric: {
+        if (!lyricsSubscribed || !Lyrics.hasLyrics || Lyrics.currentIndex < 0) return "";
+        let l = Lyrics.lyrics[Lyrics.currentIndex];
+        return (l && l.text) ? l.text : "";
     }
 
     property real clampedX: {
@@ -473,10 +517,19 @@ PanelWindow {
             }
         }
 
+        RectangularShadow {
+            anchors.fill: menuBox
+            visible: sideMusicPopout.glassCard
+            radius: sideMusicPopout.cornerRadius
+            blur: sideMusicPopout.s(24)
+            offset.y: sideMusicPopout.s(6)
+            color: Qt.rgba(0, 0, 0, 0.35)
+        }
+
         Rectangle {
             id: menuBox
             anchors.fill: parent
-            color: ThemeBackend.base
+            color: sideMusicPopout.glassCard ? Qt.alpha(ThemeBackend.base, 0.5) : ThemeBackend.base
             radius: sideMusicPopout.cornerRadius
             border.width: 0
             border.color: "transparent"
@@ -571,40 +624,132 @@ PanelWindow {
                 preventStealing: true
             }
 
-            ColumnLayout {
-                width: sideMusicPopout.menuWidth - sideMusicPopout.s(24)
-                height: sideMusicPopout.menuHeight - sideMusicPopout.s(16)
-                anchors.top: (!sideMusicPopout.isSideBar && !sideMusicPopout.alignBottom) ? parent.top : undefined
-                anchors.bottom: (!sideMusicPopout.isSideBar && sideMusicPopout.alignBottom) ? parent.bottom : undefined
-                anchors.left: (sideMusicPopout.isSideBar && !sideMusicPopout.alignRight) ? parent.left : undefined
-                anchors.right: (sideMusicPopout.isSideBar && sideMusicPopout.alignRight) ? parent.right : undefined
-                anchors.horizontalCenter: sideMusicPopout.isSideBar ? parent.horizontalCenter : undefined
-                anchors.verticalCenter: !sideMusicPopout.isSideBar ? parent.verticalCenter : undefined
-                anchors.topMargin: sideMusicPopout.s(8)
-                anchors.bottomMargin: sideMusicPopout.s(8)
-                anchors.leftMargin: sideMusicPopout.s(12)
-                anchors.rightMargin: sideMusicPopout.s(12)
-                spacing: sideMusicPopout.s(4)
+            // Soft blur of the cover behind the card (modular bars only; the solid
+            // style keeps upstream's flush, opaque look).
+            Item {
+                id: popBackdrop
+                anchors.fill: parent
+                visible: sideMusicPopout.glassCard
+                opacity: (sideMusicPopout.isMediaActive && sideMusicPopout.artSource !== "") ? 0.55 : 0
+                Behavior on opacity { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+                layer.enabled: visible
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: popMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                }
 
-                MouseArea {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: titleSection.implicitHeight
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (Caching.serpantinumDir) {
-                            Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"]);
+                Image {
+                    anchors.fill: parent
+                    anchors.margins: -sideMusicPopout.s(30)
+                    source: sideMusicPopout.isMediaActive ? sideMusicPopout.artSource : ""
+                    sourceSize: Qt.size(120, 120)
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        blurEnabled: true
+                        blur: 1.0
+                        blurMax: 48
+                        autoPaddingEnabled: false
+                    }
+                }
+                Rectangle {
+                    anchors.fill: parent
+                    color: Qt.alpha(ThemeBackend.base, 0.35)
+                }
+            }
+
+            BarGlass.GlassPill {
+                anchors.fill: parent
+                visible: sideMusicPopout.glassCard
+                radius: sideMusicPopout.cornerRadius
+                tintAlpha: 0.0
+                raised: false
+                lit: menuHoverHandler.hovered
+            }
+
+            Item {
+                id: popMask
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+                Rectangle { anchors.fill: parent; radius: sideMusicPopout.cornerRadius; color: "black" }
+            }
+
+            Item {
+                id: card
+                width: sideMusicPopout.menuWidth - sideMusicPopout.s(28)
+                height: sideMusicPopout.menuHeight - sideMusicPopout.s(24)
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: (sideMusicPopout.isSideBar && sideMusicPopout.alignRight) ? undefined : parent.left
+                anchors.right: (sideMusicPopout.isSideBar && sideMusicPopout.alignRight) ? parent.right : undefined
+                anchors.leftMargin: sideMusicPopout.s(14)
+                anchors.rightMargin: sideMusicPopout.s(14)
+
+                // Cover + titles; a click opens the music panel.
+                Item {
+                    id: header
+                    width: parent.width
+                    height: sideMusicPopout.s(54)
+
+                    Item {
+                        id: thumb
+                        width: header.height
+                        height: header.height
+                        readonly property real radius: sideMusicPopout.s(12)
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: thumb.radius
+                            color: Qt.alpha(ThemeBackend.text, 0.08)
+                            Text {
+                                anchors.centerIn: parent
+                                text: "󰝚"
+                                font.family: ThemeBackend.iconFont
+                                font.pixelSize: sideMusicPopout.s(20)
+                                color: Qt.alpha(ThemeBackend.text, 0.4)
+                                visible: thumbImg.status !== Image.Ready || !sideMusicPopout.isMediaActive
+                            }
+                        }
+                        Image {
+                            id: thumbImg
+                            anchors.fill: parent
+                            source: sideMusicPopout.isMediaActive ? sideMusicPopout.artSource : ""
+                            sourceSize: Qt.size(sideMusicPopout.s(108), sideMusicPopout.s(108))
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            visible: false
+                        }
+                        Item {
+                            id: thumbMask
+                            anchors.fill: parent
+                            visible: false
+                            layer.enabled: true
+                            Rectangle { anchors.fill: parent; radius: thumb.radius; color: "black"; antialiasing: true }
+                        }
+                        MultiEffect {
+                            anchors.fill: parent
+                            source: thumbImg
+                            maskEnabled: true
+                            maskSource: thumbMask
+                            maskThresholdMin: 0.5
+                            maskSpreadAtMin: 1.0
+                            visible: thumbImg.status === Image.Ready && sideMusicPopout.isMediaActive
                         }
                     }
 
-                    ColumnLayout {
-                        id: titleSection
-                        anchors.fill: parent
+                    Column {
+                        x: thumb.width + sideMusicPopout.s(11)
+                        width: header.width - x
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: sideMusicPopout.s(2)
 
                         Item {
                             id: titleClipArea
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: sideMusicPopout.s(18)
+                            width: parent.width
+                            height: titleMainText.implicitHeight
                             clip: true
 
                             property int marqueeSpacing: sideMusicPopout.s(40)
@@ -618,27 +763,24 @@ PanelWindow {
 
                                     Text {
                                         id: titleMainText
-                                        text: isMediaActive ? (targetPlayer ? targetPlayer.trackTitle : "") : I18n.t("music.nothing_playing")
+                                        text: sideMusicPopout.isMediaActive ? (sideMusicPopout.targetPlayer ? sideMusicPopout.targetPlayer.trackTitle : "") : I18n.t("music.nothing_playing")
                                         font.family: ThemeBackend.fontFamily
-                                        font.weight: Font.Black
-                                        font.pixelSize: sideMusicPopout.s(13)
+                                        font.weight: Font.Bold
+                                        font.pixelSize: sideMusicPopout.s(14)
                                         color: ThemeBackend.text
 
                                         onTextChanged: {
                                             marqueeTrack.x = 0;
-                                            if (implicitWidth > titleClipArea.width) {
-                                                titleScrollAnimation.restart();
-                                            } else {
-                                                titleScrollAnimation.stop();
-                                            }
+                                            if (implicitWidth > titleClipArea.width) titleScrollAnimation.restart();
+                                            else titleScrollAnimation.stop();
                                         }
                                     }
 
                                     Text {
                                         text: titleMainText.text
                                         font.family: ThemeBackend.fontFamily
-                                        font.weight: Font.Black
-                                        font.pixelSize: sideMusicPopout.s(13)
+                                        font.weight: Font.Bold
+                                        font.pixelSize: sideMusicPopout.s(14)
                                         color: ThemeBackend.text
                                         visible: titleMainText.implicitWidth > titleClipArea.width
                                     }
@@ -665,134 +807,147 @@ PanelWindow {
                         }
 
                         Text {
-                            Layout.fillWidth: true
-                            text: targetPlayer && targetPlayer.trackArtist ? targetPlayer.trackArtist : (targetPlayer ? targetPlayer.identity : "")
+                            width: parent.width
+                            text: sideMusicPopout.targetPlayer && sideMusicPopout.targetPlayer.trackArtist ? sideMusicPopout.targetPlayer.trackArtist : (sideMusicPopout.targetPlayer ? sideMusicPopout.targetPlayer.identity : "")
                             font.family: ThemeBackend.fontFamily
-                            font.weight: Font.Bold
+                            font.weight: Font.DemiBold
+                            font.pixelSize: sideMusicPopout.s(12)
+                            color: Qt.lighter(ThemeBackend.mauve, 1.05)
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            visible: text !== ""
+                            text: sideMusicPopout.isMediaActive && sideMusicPopout.targetPlayer ? (sideMusicPopout.targetPlayer.trackAlbum || "") : ""
+                            font.family: ThemeBackend.fontFamily
+                            font.weight: Font.Medium
                             font.pixelSize: sideMusicPopout.s(11)
-                            color: ThemeBackend.subtext0
+                            color: Qt.alpha(ThemeBackend.text, 0.5)
                             elide: Text.ElideRight
                         }
                     }
-                }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: sideMusicPopout.s(6)
-
-                    Dropdown {
-                        id: sourceDropdown
-                        visible: sideMusicPopout.playerList.length >= 2
-                        Layout.preferredHeight: sideMusicPopout.s(22)
-                        implicitHeight: sideMusicPopout.s(22)
-                        implicitWidth: sideMusicPopout.s(150)
-                        cornerRadius: ThemeBackend.borderRadius
-                        options: sideMusicPopout.playerOptions
-                        currentIndex: sideMusicPopout.currentPlayerIndex
-                        fontPixelSize: sideMusicPopout.s(10)
-                        iconSize: sideMusicPopout.s(11)
-                        accentColor: ThemeBackend.mauve
-                        baseColor: ThemeBackend.surface0
-                        hoverColor: ThemeBackend.surface1
-                        dropdownColor: ThemeBackend.mantle
-                        borderColor: Qt.alpha(ThemeBackend.surface2, 0.6)
-                        textColor: ThemeBackend.text
-                        activeTextColor: ThemeBackend.crust
-                        onValueChanged: (index, value) => {
-                            sideMusicPopout.selectPlayerByIndex(index);
-                        }
-                    }
-
-                    ClickButton {
-                        id: sourcePill
-                        visible: sideMusicPopout.playerList.length < 2
-                        Layout.preferredHeight: sideMusicPopout.s(20)
-                        cornerRadius: ThemeBackend.borderRadius
-                        horizontalPadding: sideMusicPopout.s(8)
-                        buttonText: I18n.t("music.via_source", { "source": sideMusicPopout.targetPlayer ? (sideMusicPopout.targetPlayer.identity || sideMusicPopout.targetPlayer.desktopEntry || "Media") : I18n.t("music.offline") })
-                        textFontSize: sideMusicPopout.s(10)
-                        accentColor: ThemeBackend.surface0
-                        textColor: ThemeBackend.overlay2
-                    }
-                }
-
-                Draggable {
-                    id: popupProgBar
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: sideMusicPopout.s(12)
-                    Layout.alignment: Qt.AlignVCenter
-                    from: 0.0
-                    to: (targetPlayer && typeof targetPlayer.length === "number" && !isNaN(targetPlayer.length)) ? targetPlayer.length : 100.0
-                    value: sideMusicPopout.currentLivePosition
-                    showValueBubble: false
-                    showTooltip: false
-                    valueFormatter: function(v) { return "" }
-                    backgroundColor: ThemeBackend.surface0
-                    accentColor: ThemeBackend.mauve
-                    gradColor1: Qt.lighter(ThemeBackend.blue, 1.2)
-                    gradColor2: Qt.lighter(ThemeBackend.mauve, 1.15)
-                    gradColor3: Qt.lighter(ThemeBackend.mauve, 1.15)
-                    cornerRadius: ThemeBackend.borderRadius
-                    handleSize: sideMusicPopout.s(12)
-
-                    handleColor: Qt.lighter(ThemeBackend.blue, 1.15)
-                    handleHoverColor: Qt.lighter(ThemeBackend.mauve, 1.65)
-                    handleDragColor: Qt.lighter(ThemeBackend.mauve, 1.65)
-                    handleBorderColor: Qt.rgba(0, 0, 0, 0.2)
-
-                    property bool seekPending: false
-
-                    Timer {
-                        id: seekDebounceTimer
-                        interval: 800
-                        onTriggered: popupProgBar.seekPending = false
-                    }
-
-                    Connections {
-                        target: sideMusicPopout
-                        function onCurrentLivePositionChanged() {
-                            if (!popupProgBar.isDragging && !popupProgBar.seekPending) {
-                                popupProgBar.value = sideMusicPopout.currentLivePosition;
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (Caching.serpantinumDir) {
+                                Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"]);
                             }
                         }
                     }
+                }
 
-                    onDragStarted: {
-                        SideMusicController.cancelHide();
+                // The lyric line being sung (local .lrc or online lyrics).
+                Text {
+                    id: lyricLine
+                    y: header.height + sideMusicPopout.s(8)
+                    width: parent.width
+                    height: sideMusicPopout.s(17)
+                    text: sideMusicPopout.currentLyric !== "" ? sideMusicPopout.currentLyric : " "
+                    font.family: ThemeBackend.fontFamily
+                    font.weight: Font.DemiBold
+                    font.pixelSize: sideMusicPopout.s(12)
+                    color: Qt.alpha(ThemeBackend.text, 0.85)
+                    elide: Text.ElideRight
+                    opacity: sideMusicPopout.currentLyric !== "" ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 300 } }
+                }
+
+                MusicSeekBar {
+                    id: popupProgBar
+                    y: lyricLine.y + lyricLine.height + sideMusicPopout.s(6)
+                    width: parent.width
+                    height: sideMusicPopout.s(12)
+                    from: 0
+                    to: (sideMusicPopout.targetPlayer && sideMusicPopout.targetPlayer.length > 0) ? sideMusicPopout.targetPlayer.length : 1
+                    value: sideMusicPopout.currentLivePosition
+                    interactive: sideMusicPopout.isMediaActive && sideMusicPopout.targetPlayer !== null && sideMusicPopout.targetPlayer.canSeek
+                    trackHeight: sideMusicPopout.s(3)
+                    hoverTrackHeight: sideMusicPopout.s(5)
+                    knobSize: sideMusicPopout.s(11)
+                    fillColor: sideMusicPopout.isPlaying ? ThemeBackend.mauve : Qt.alpha(ThemeBackend.text, 0.6)
+                    onDraggingChanged: dragging ? SideMusicController.cancelHide() : SideMusicController.requestHide()
+                    onCommitted: (v) => { if (sideMusicPopout.targetPlayer && sideMusicPopout.targetPlayer.canSeek) sideMusicPopout.targetPlayer.position = v; }
+                }
+
+                Item {
+                    id: timesRow
+                    y: popupProgBar.y + popupProgBar.height + sideMusicPopout.s(1)
+                    width: parent.width
+                    height: sideMusicPopout.s(13)
+                    Text {
+                        anchors.left: parent.left
+                        text: sideMusicPopout.formatTime(popupProgBar.shownValue)
+                        color: Qt.alpha(ThemeBackend.text, 0.55)
+                        font.family: ThemeBackend.fontFamily
+                        font.weight: Font.DemiBold
+                        font.features: { "tnum": 1 }
+                        font.pixelSize: sideMusicPopout.s(10)
                     }
-
-                    onDragFinished: {
-                        SideMusicController.requestHide();
-                    }
-
-                    onMoved: val => {
-                        if (targetPlayer && targetPlayer.canSeek) {
-                            popupProgBar.seekPending = true;
-                            seekDebounceTimer.restart();
-                            popupProgBar.value = val;
-                            targetPlayer.position = val;
-                        }
+                    Text {
+                        anchors.right: parent.right
+                        text: sideMusicPopout.formatTime(sideMusicPopout.targetPlayer ? sideMusicPopout.targetPlayer.length : 0)
+                        color: Qt.alpha(ThemeBackend.text, 0.55)
+                        font.family: ThemeBackend.fontFamily
+                        font.weight: Font.DemiBold
+                        font.features: { "tnum": 1 }
+                        font.pixelSize: sideMusicPopout.s(10)
                     }
                 }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: sideMusicPopout.formatTime(sideMusicPopout.currentLivePosition)
-                        color: ThemeBackend.subtext1
-                        font.family: ThemeBackend.fontFamily
-                        font.bold: true
-                        font.pixelSize: sideMusicPopout.s(9.5)
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    spacing: sideMusicPopout.s(8)
+
+                    IconButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: sideMusicPopout.s(32)
+                        height: sideMusicPopout.s(32)
+                        cornerRadius: Math.round(width / 2)
+                        buttonIcon: "󰒮"
+                        iconFontSize: sideMusicPopout.s(12)
+                        accentColor: isHoveredOrHighlighted ? Qt.alpha(ThemeBackend.text, 0.16) : Qt.alpha(ThemeBackend.text, 0.08)
+                        textColor: ThemeBackend.text
+                        enabled: sideMusicPopout.targetPlayer !== null && sideMusicPopout.targetPlayer.canGoPrevious
+                        onClicked: sideMusicPopout.targetPlayer.previous()
                     }
-                    Item {
-                        Layout.fillWidth: true
+                    IconButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: sideMusicPopout.s(38)
+                        height: sideMusicPopout.s(38)
+                        cornerRadius: Math.round(width / 2)
+                        buttonIcon: sideMusicPopout.isPlaying ? "󰏤" : "󰐊"
+                        iconFontSize: sideMusicPopout.s(15)
+                        accentColor: isHoveredOrHighlighted ? Qt.lighter(ThemeBackend.mauve, 1.08) : ThemeBackend.mauve
+                        textColor: ThemeBackend.base
+                        enabled: sideMusicPopout.targetPlayer !== null && sideMusicPopout.targetPlayer.canTogglePlaying
+                        onClicked: sideMusicPopout.targetPlayer.togglePlaying()
                     }
-                    Text {
-                        text: sideMusicPopout.formatTime(targetPlayer ? targetPlayer.length : 0)
-                        color: ThemeBackend.subtext1
-                        font.family: ThemeBackend.fontFamily
-                        font.bold: true
-                        font.pixelSize: sideMusicPopout.s(9.5)
+                    IconButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: sideMusicPopout.s(32)
+                        height: sideMusicPopout.s(32)
+                        cornerRadius: Math.round(width / 2)
+                        buttonIcon: "󰒭"
+                        iconFontSize: sideMusicPopout.s(12)
+                        accentColor: isHoveredOrHighlighted ? Qt.alpha(ThemeBackend.text, 0.16) : Qt.alpha(ThemeBackend.text, 0.08)
+                        textColor: ThemeBackend.text
+                        enabled: sideMusicPopout.targetPlayer !== null && sideMusicPopout.targetPlayer.canGoNext
+                        onClicked: sideMusicPopout.targetPlayer.next()
+                    }
+                    IconButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: sideMusicPopout.playerList.length > 1
+                        width: sideMusicPopout.s(28)
+                        height: sideMusicPopout.s(28)
+                        cornerRadius: Math.round(width / 2)
+                        buttonIcon: "󰁔"
+                        iconFontSize: sideMusicPopout.s(12)
+                        accentColor: isHoveredOrHighlighted ? Qt.alpha(ThemeBackend.text, 0.16) : "transparent"
+                        textColor: Qt.alpha(ThemeBackend.text, 0.6)
+                        onClicked: sideMusicPopout.selectPlayerByIndex((sideMusicPopout.currentPlayerIndex + 1) % sideMusicPopout.playerList.length)
                     }
                 }
             }

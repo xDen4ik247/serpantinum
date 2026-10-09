@@ -16,7 +16,22 @@ Item {
     readonly property bool isMediaActive: player !== null && player.playbackState !== MprisPlaybackState.Stopped && (player.trackTitle || "") !== ""
     readonly property string trackTitle: player ? (player.trackTitle || "") : ""
     readonly property string trackArtist: player ? (player.trackArtist || "") : ""
-    readonly property string currentTrackKey: isMediaActive ? (trackArtist.trim() + " - " + trackTitle.trim()) : ""
+
+    // Local library: players that expose the playing file (mpd-mpris sets xesam:url to
+    // file://…) take their lyrics from the synced .lrc next to the audio file. Nothing is
+    // fetched online for them, and a missing .lrc just means "no lyrics", so the views
+    // can hide their lyrics pane.
+    readonly property string localAudioPath: {
+        if (!player || !player.metadata) return "";
+        let u = player.metadata["xesam:url"];
+        u = u ? String(u) : "";
+        if (!u.startsWith("file://")) return "";
+        try { return decodeURIComponent(u.substring(7)); } catch (e) { return u.substring(7); }
+    }
+    readonly property bool isLocalTrack: localAudioPath !== ""
+    readonly property string localLrcPath: isLocalTrack ? localAudioPath.replace(/\.[^.\/]+$/, "") + ".lrc" : ""
+
+    readonly property string currentTrackKey: isMediaActive ? (isLocalTrack ? ("file:" + localAudioPath) : (trackArtist.trim() + " - " + trackTitle.trim())) : ""
 
     property var localCache: ({})
 
@@ -55,6 +70,9 @@ Item {
 
     function subscribe() {
         subscribers++;
+        // The position timer only runs while playing; a view opened during a pause
+        // must still start on the right line.
+        if (root.player) root.currentPosition = root.player.position;
         triggerSearch();
     }
 
@@ -200,7 +218,10 @@ Item {
     }
 
     onCurrentTrackKeyChanged: triggerSearch()
-    onPlayerChanged: triggerSearch()
+    onPlayerChanged: {
+        if (player) currentPosition = player.position;
+        triggerSearch();
+    }
 
     function triggerSearch() {
         if (root.subscribers <= 0) return;
@@ -231,6 +252,10 @@ Item {
     }
 
     function checkCacheAndFetch(key) {
+        if (root.isLocalTrack) {
+            loadSiblingLrc(key);
+            return;
+        }
         let mem = getMemCache();
         if (mem && mem[key] && Array.isArray(mem[key]) && mem[key].length > 0) {
             applyLyrics(mem[key], key, false);
@@ -889,6 +914,55 @@ Item {
             root.activeFetchKey = key;
             root.lastFetchedKey = key;
             applyLyrics(parsed, key, true);
+        }
+    }
+
+    FileView {
+        id: siblingLrcFile
+        property string targetKey: ""
+        printErrors: false
+        watchChanges: false
+        onLoaded: root.applySiblingLrc(text(), targetKey)
+        onLoadFailed: root.applySiblingLrc("", targetKey)
+    }
+
+    function loadSiblingLrc(key) {
+        root.loading = true;
+        siblingLrcFile.targetKey = key;
+        if (siblingLrcFile.path === root.localLrcPath) siblingLrcFile.reload();
+        else siblingLrcFile.path = root.localLrcPath;
+    }
+
+    // Leading 0:00 gaps are dropped and runs of empty (instrumental) lines collapse
+    // into one, so the views show a single "♪" per break.
+    function tidyLrcLines(list) {
+        let out = [];
+        for (let i = 0; i < list.length; i++) {
+            let empty = !list[i].text || list[i].text.trim() === "";
+            if (empty) {
+                if (out.length === 0 && list[i].time < 0.5) continue;
+                let prev = out.length > 0 ? out[out.length - 1] : null;
+                if (prev && (!prev.text || prev.text.trim() === "")) continue;
+            }
+            out.push(list[i]);
+        }
+        return out;
+    }
+
+    function applySiblingLrc(content, key) {
+        if (key !== root.activeFetchKey || key !== root.currentTrackKey) return;
+        let parsed = null;
+        if (content && content.trim() !== "") {
+            parsed = parseWordLevelLyrics(content);
+            if (!parsed || parsed.length === 0) parsed = tidyLrcLines(parseLrc(content));
+        }
+        if (parsed && parsed.length > 0) {
+            applyLyrics(parsed, key, false);
+        } else {
+            searchTimeoutTimer.stop();
+            root.lyrics = [];
+            root.hasLyrics = false;
+            root.loading = false;
         }
     }
 

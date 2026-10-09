@@ -1,16 +1,29 @@
 import QtQuick
 import QtQuick.Window
-import QtQuick.Controls
-import QtQuick.Layouts
 import QtQuick.Effects
-import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import "../"
 import "../reusables"
-import "../reusables/media"
+import "../bar" as BarGlass
+import "."
 
+// Music panel (Mod+M, or a click on the bar's now-playing pill).
+//
+//   ┌────────────┬──────────────────┐   With synced lyrics: the cover column on the left,
+//   │   cover    │  lyric (past)    │   the lyrics on the right; the current line is bright
+//   │            │  CURRENT LINE    │   and the view glides with it. Without lyrics the pane
+//   │ title …    │  next lines      │   slides away and the cover column moves to the centre
+//   │ ━━━━○───── │                  │   and grows. The whole panel sits on a soft blur of
+//   │ ⤮ ⏮ ⏯ ⏭ ⟳ │                  │   the cover.
+//   └────────────┴──────────────────┘
+//
+// Keys: Space play/pause · ←/→ seek 5 s · ↑/↓ volume · N/P next/previous · S shuffle ·
+//       R repeat · L lyrics · E equalizer · Tab lyrics↔equalizer · G smart shuffle · Esc closes.
+// Smart shuffle (music-smart, also Mod+S): the 󰒝 button next to lyrics/EQ/library starts or
+// re-rolls a smart queue (right-click leaves smart mode); while it plays, the button glows and
+// the info block shows the vibe and why the current track was picked.
 Item {
     id: root
 
@@ -18,2058 +31,896 @@ Item {
 
     readonly property bool active: root.visible && (!Window.window || Window.window.visible)
 
-    property bool cavaRegistered: false
-
-    function registerCava() {
-        if (!cavaRegistered) {
-            cavaRegistered = true;
-            Cava.registerConsumer();
-        }
-    }
-
-    function unregisterCava() {
-        if (cavaRegistered) {
-            cavaRegistered = false;
-            Cava.unregisterConsumer();
-        }
-    }
-
-    function s(val) { 
-        return Scaler.s(val); 
-    }
+    function s(val) { return Scaler.s(val); }
 
     function formatTime(sec) {
-        sec = Math.floor(sec || 0);
-        let m = Math.floor(sec / 60), s = sec % 60;
-        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+        sec = Math.max(0, Math.floor(sec || 0));
+        let m = Math.floor(sec / 60), ss = sec % 60;
+        return m + ":" + (ss < 10 ? "0" : "") + ss;
     }
 
-    function resetAndPlayIntro() {
-        introMain = 0;
-        introCover = 0;
-        introText = 0;
-        introControls = 0;
-        introSeparator = 0;
-        introEqHeader = 0;
-        introEqSliders = 0;
-        introPresets = 0;
-        maskRectOuter.drawProgress = 0;
-        introAnim.restart();
-        chargeAnim.restart();
-    }
-
-    property bool lyricsSubscribed: false
-
-    function updateLyricsSubscription() {
-        let shouldSub = root.active && (bottomSectionSwitch.currentIndex === 1);
-        if (shouldSub && !lyricsSubscribed) {
-            lyricsSubscribed = true;
-            Lyrics.customPlayer = root.targetPlayer;
-            Lyrics.subscribe();
-        } else if (!shouldSub && lyricsSubscribed) {
-            lyricsSubscribed = false;
-            Lyrics.customPlayer = null;
-            Lyrics.unsubscribe();
-        } else if (shouldSub && lyricsSubscribed) {
-            Lyrics.customPlayer = root.targetPlayer;
-        }
-    }
-
-    Shortcut {
-        sequence: "Tab"
-        enabled: root.active
-        onActivated: {
-            bottomSectionSwitch.currentIndex = (bottomSectionSwitch.currentIndex === 0 ? 1 : 0);
-            root.updateLyricsSubscription();
-        }
-    }
-
-    Shortcut {
-        sequence: "Backtab"
-        enabled: root.active
-        onActivated: {
-            bottomSectionSwitch.currentIndex = (bottomSectionSwitch.currentIndex === 0 ? 1 : 0);
-            root.updateLyricsSubscription();
-        }
-    }
-
-    onActiveChanged: {
-        updateLyricsSubscription();
-        if (active) {
-            forceActiveFocus();
-            resetAndPlayIntro();
-            registerCava();
-            triggerLocalArtFetch();
-            if (!eqProc.running) eqProc.running = true;
-            if (titleTextMain.implicitWidth > titleClipRect.width) {
-                marqueeContainer.x = 0;
-                titleAnim.restart();
-            }
-        } else {
-            unregisterCava();
-            titleAnim.stop();
-            marqueeContainer.x = 0;
-            if (lyricsPickerPopup.visible || lyricsPickerPopup.opened) {
-                lyricsPickerPopup.closePicker();
-            }
-            if (root.eqData && root.eqData.pending) {
-                root.restoreLastSavedEqualizer();
-            }
-        }
-    }
-
-    Component.onCompleted: {
-        if (root.eqData) {
-            root.savedEqData = Object.assign({}, root.eqData);
-        }
-        if (active) {
-            forceActiveFocus();
-            resetAndPlayIntro();
-            registerCava();
-            triggerLocalArtFetch();
-            updateLyricsSubscription();
-        }
-    }
-
-    Component.onDestruction: {
-        unregisterCava();
-        if (lyricsSubscribed) {
-            lyricsSubscribed = false;
-            Lyrics.unsubscribe();
-        }
-    }
-
-    Text {
-        id: eqMeasureText
-        visible: false
-        text: root.eqData && root.eqData.pending ? (typeof I18n !== "undefined" ? I18n.t("music.eq.apply") : "Apply") : (typeof I18n !== "undefined" ? I18n.t("music.eq.saved") : "Saved")
-        font.family: ThemeBackend.fontFamily
-        font.pixelSize: root.s(11.5)
-        font.bold: true
-    }
-
-    Text {
-        id: lyricsMeasureText
-        visible: false
-        text: typeof I18n !== "undefined" ? I18n.t("music.select_local_file", "Select file") : "Select file"
-        font.family: ThemeBackend.fontFamily
-        font.pixelSize: root.s(11.5)
-        font.bold: true
-    }
-
-    property real actionBtnMorph: 0.0
-    property real presetSlideProgress: 0.0
-
-    readonly property real eqActionBtnWidth: Math.max(root.s(68), eqMeasureText.implicitWidth + root.s(26))
-    readonly property real lyricsActionBtnWidth: Math.max(root.s(116), lyricsMeasureText.implicitWidth + root.s(44))
-    readonly property real actionBtnCurrentWidth: eqActionBtnWidth + (lyricsActionBtnWidth - eqActionBtnWidth) * actionBtnMorph
-
-    ParallelAnimation {
-        id: toLyricsAnim
-        running: false
-        NumberAnimation {
-            target: root
-            property: "actionBtnMorph"
-            to: 1.0
-            duration: 420
-            easing.type: Easing.OutCubic
-        }
-        NumberAnimation {
-            target: root
-            property: "presetSlideProgress"
-            to: 1.0
-            duration: 400
-            easing.type: Easing.OutCubic
-        }
-    }
-
-    ParallelAnimation {
-        id: toEqAnim
-        running: false
-        NumberAnimation {
-            target: root
-            property: "actionBtnMorph"
-            to: 0.0
-            duration: 420
-            easing.type: Easing.OutCubic
-        }
-        NumberAnimation {
-            target: root
-            property: "presetSlideProgress"
-            to: 0.0
-            duration: 400
-            easing.type: Easing.OutCubic
-        }
-    }
-
-    property int barCount: 60
-    property var rawBarLevels: []
-
-    Binding {
-        target: root
-        property: "rawBarLevels"
-        value: Cava.barLevels
-        when: root.active
-    }
-
-    // Sub-bass and kick strength for the glow and the disc bounce
-    property var beat: {
-        let source = rawBarLevels;
-        if (!source || source.length === 0) return { bass: 0.0, kick: 0.0 };
-
-        let subBass = (source[0] || 0.0) * 0.50 + (source[1] || 0.0) * 0.35 + (source[2] || 0.0) * 0.15;
-        let kickPunch = (source[1] || 0.0) * 0.30 + (source[2] || 0.0) * 0.45 + (source[3] || 0.0) * 0.25;
-        let rawKick = Math.max(subBass, kickPunch);
-
-        let kick = rawKick > 0.10 ? Math.min(1.0, Math.pow((rawKick - 0.10) / 0.90, 1.8) * 1.4) : 0.0;
-        let bass = Math.max(0.0, Math.min(1.0, subBass * 0.6 + kickPunch * 0.4));
-
-        return { bass: bass, kick: kick };
-    }
-
-    property real bassLevel: beat.bass
-    property real kickLevel: beat.kick
-
-    property var playerList: {
+    // ── Players ───────────────────────────────────────────────────────────────
+    readonly property var playerList: {
         if (!Mpris.players || !Mpris.players.values) return [];
         let list = [];
         let vals = Mpris.players.values;
-        for (let i = 0; i < vals.length; i++) {
-            if (vals[i]) list.push(vals[i]);
-        }
+        for (let i = 0; i < vals.length; i++) if (vals[i]) list.push(vals[i]);
         return list;
     }
-
     property var manualPlayer: null
-
-    property var targetPlayer: {
-        if (manualPlayer) {
-            for (let i = 0; i < playerList.length; i++) {
-                if (playerList[i] === manualPlayer) return manualPlayer;
-            }
-        }
+    readonly property var targetPlayer: {
+        if (manualPlayer && playerList.indexOf(manualPlayer) >= 0) return manualPlayer;
         return MprisController.activePlayer;
     }
+    readonly property bool hasPlayer: targetPlayer !== null
+    readonly property bool hasTrack: hasPlayer && targetPlayer.playbackState !== MprisPlaybackState.Stopped && (targetPlayer.trackTitle || "") !== ""
+    readonly property bool isPlaying: hasTrack && (targetPlayer.playbackState === MprisPlaybackState.Playing || targetPlayer.isPlaying)
+    readonly property real trackLength: (hasTrack && targetPlayer.length > 0) ? targetPlayer.length : 0
 
-    property bool hasTargetPlayer: targetPlayer !== null
-
-    property var playerOptions: {
-        let list = playerList;
-        let names = [];
-        let counts = {};
-        for (let i = 0; i < list.length; i++) {
-            let base = list[i].identity || list[i].desktopEntry || ("Player " + (i + 1));
-            counts[base] = (counts[base] || 0) + 1;
-        }
-        for (let i = 0; i < list.length; i++) {
-            let p = list[i];
-            let base = p.identity || p.desktopEntry || ("Player " + (i + 1));
-            if (counts[base] > 1 && p.trackTitle) {
-                names.push(base + " (" + p.trackTitle + ")");
-            } else {
-                names.push(base);
-            }
-        }
-        return names;
+    function cyclePlayer() {
+        if (playerList.length < 2) return;
+        let i = playerList.indexOf(targetPlayer);
+        manualPlayer = playerList[(i + 1) % playerList.length];
     }
 
-    property int currentPlayerIndex: {
-        if (!targetPlayer) return 0;
-        for (let i = 0; i < playerList.length; i++) {
-            if (playerList[i] === targetPlayer) return i;
-        }
-        return 0;
+    readonly property string sourceName: {
+        if (!targetPlayer) return "";
+        let id = targetPlayer.identity || targetPlayer.desktopEntry || "Media";
+        // mpd-mpris calls itself "MPD on <socket path>"; it is the music library.
+        if (/^MPD\b/.test(id) || /\.mpd$/.test(targetPlayer.dbusName || "")) return "Library";
+        return id;
     }
 
-    function selectPlayerByIndex(idx) {
-        if (idx >= 0 && idx < playerList.length) {
-            manualPlayer = playerList[idx];
-            triggerLocalArtFetch();
-        }
+    // ── Track metadata ────────────────────────────────────────────────────────
+    readonly property string title: hasTrack ? (targetPlayer.trackTitle || "") : ""
+    readonly property string artist: hasTrack ? (targetPlayer.trackArtist || "") : ""
+    readonly property string album: hasTrack ? (targetPlayer.trackAlbum || "") : ""
+    readonly property string year: {
+        if (!hasTrack || !targetPlayer.metadata) return "";
+        let d = targetPlayer.metadata["xesam:contentCreated"];
+        let m = d ? String(d).match(/^(\d{4})/) : null;
+        return m ? m[1] : "";
     }
 
-    property real currentLivePosition: targetPlayer ? targetPlayer.position : 0
-
-    Connections {
-        target: root.targetPlayer
-        function onPositionChanged() {
-            if (!root.active) return;
-            if (root.targetPlayer) root.currentLivePosition = root.targetPlayer.position;
-        }
-        function onPostTrackChanged() {
-            if (!root.active) return;
-            if (root.targetPlayer) root.currentLivePosition = root.targetPlayer.position;
-            root.triggerLocalArtFetch();
-        }
-        function onTrackArtUrlChanged() {
-            if (!root.active) return;
-            root.triggerLocalArtFetch();
-        }
-        function onTrackTitleChanged() {
-            if (!root.active) return;
-            root.triggerLocalArtFetch();
-        }
-    }
-
-    onTargetPlayerChanged: {
-        if (targetPlayer) currentLivePosition = targetPlayer.position;
-        triggerLocalArtFetch();
-        updateLyricsSubscription();
-    }
-
-    Timer {
-        interval: 1000
-        repeat: true
-        running: root.active && root.hasTargetPlayer && root.targetPlayer.isPlaying
-        onTriggered: {
-            if (root.targetPlayer) {
-                if (typeof root.targetPlayer.positionChanged === "function") {
-                    root.targetPlayer.positionChanged();
-                }
-                root.currentLivePosition = root.targetPlayer.position;
-            }
-        }
-    }
-
+    // ── Cover art (the active player's art is prepared by MprisController) ────
     property string localArtUrl: ""
-    property string localBlur: ""
-    property string localGrad: ""
-    property string localTextColor: ""
-    property string localDeviceIcon: "󰓃"
-    property string localDeviceName: "Speaker"
+    readonly property bool usesSharedArt: targetPlayer !== null && targetPlayer === MprisController.activePlayer
+    readonly property string artPath: usesSharedArt ? MprisController.artUrl : localArtUrl
+    readonly property string artSource: (hasTrack && artPath) ? ((artPath.startsWith("file://") || artPath.startsWith("http")) ? artPath : "file://" + artPath) : ""
 
     Process {
-        id: customArtFetchProc
+        id: artProc
         command: [
-            "bash",
-            Caching.qsDir + "/media/art_fetch.sh",
+            "bash", Caching.qsDir + "/media/art_fetch.sh",
+            root.targetPlayer ? (root.targetPlayer.dbusName || root.targetPlayer.identity || "") : "",
             root.targetPlayer ? (root.targetPlayer.trackArtUrl || "") : "",
             root.targetPlayer ? (root.targetPlayer.trackTitle || "") : "",
             root.targetPlayer ? (root.targetPlayer.trackArtist || "") : ""
         ]
         stdout: StdioCollector {
             onStreamFinished: {
-                let txt = this.text.trim();
-                if (txt !== "") {
-                    try {
-                        let d = JSON.parse(txt);
-                        root.localArtUrl = d.artUrl || "";
-                        root.localBlur = d.blur || "";
-                        root.localGrad = d.grad || "";
-                        root.localTextColor = d.textColor || "#cdd6f4";
-                        root.localDeviceIcon = d.deviceIcon || "󰓃";
-                        root.localDeviceName = d.deviceName || "Speaker";
-                    } catch(e) {}
+                try {
+                    let d = JSON.parse(this.text.trim());
+                    root.localArtUrl = d.isPlaceholder === false ? (d.artUrl || "") : "";
+                } catch (e) {}
+            }
+        }
+    }
+
+    function refreshArt() {
+        if (!targetPlayer || !active) return;
+        if (usesSharedArt) {
+            if (!MprisController.artUrl) MprisController.queueFetch();
+        } else {
+            artProc.running = false;
+            artProc.running = true;
+        }
+    }
+
+    // ── Position: read every frame while visible and playing (reads are local) ─
+    property real livePos: 0
+    function readPos() { livePos = targetPlayer ? Math.max(0, targetPlayer.position || 0) : 0; }
+    FrameAnimation {
+        running: root.active && root.isPlaying
+        onTriggered: root.readPos()
+    }
+
+    Connections {
+        target: root.targetPlayer
+        function onPositionChanged() { root.readPos(); }
+        function onPostTrackChanged() { root.readPos(); root.refreshArt(); }
+        function onTrackArtUrlChanged() { root.refreshArt(); }
+    }
+
+    onTargetPlayerChanged: {
+        readPos();
+        refreshArt();
+        updateLyricsSubscription();
+    }
+
+    // ── Lyrics ────────────────────────────────────────────────────────────────
+    property bool lyricsSubscribed: false
+    function updateLyricsSubscription() {
+        if (root.active && !lyricsSubscribed) {
+            lyricsSubscribed = true;
+            Lyrics.customPlayer = root.targetPlayer;
+            Lyrics.subscribe();
+        } else if (!root.active && lyricsSubscribed) {
+            lyricsSubscribed = false;
+            Lyrics.customPlayer = null;
+            Lyrics.unsubscribe();
+        } else if (root.active) {
+            Lyrics.customPlayer = root.targetPlayer;
+        }
+    }
+
+    // Debounced "has lyrics": a track change briefly clears them while the next .lrc
+    // loads, which must not make the pane flap.
+    property bool lyricsReady: false
+    Timer { id: lyricsOffTimer; interval: 450; onTriggered: root.lyricsReady = false }
+    function syncLyricsReady() {
+        if (Lyrics.hasLyrics) {
+            lyricsOffTimer.stop();
+            lyricsReady = true;
+        } else if (!Lyrics.loading) {
+            if (root.layoutAnimated) lyricsOffTimer.restart();
+            else lyricsReady = false;
+        }
+    }
+    Connections {
+        target: Lyrics
+        function onHasLyricsChanged() { root.syncLyricsReady(); }
+        function onLoadingChanged() { root.syncLyricsReady(); }
+    }
+
+    // ── Layout state ──────────────────────────────────────────────────────────
+    property bool eqOpen: false
+    property bool lyricsHidden: false
+    readonly property bool lyricsAvailable: lyricsReady && hasTrack
+    readonly property string paneMode: eqOpen ? "eq" : ((lyricsAvailable && !lyricsHidden) ? "lyrics" : "none")
+    property string paneContent: "lyrics"
+    onPaneModeChanged: if (paneMode !== "none") paneContent = paneMode
+
+    // The panel opens straight into its final layout; changes after that animate.
+    property bool layoutAnimated: false
+    Timer { id: settleTimer; interval: 420; onTriggered: root.layoutAnimated = true }
+
+    property real split: paneMode === "none" ? 0 : 1
+    Behavior on split {
+        enabled: root.layoutAnimated
+        NumberAnimation { duration: 680; easing.type: Easing.OutCubic }
+    }
+
+    readonly property real margin: s(22)
+    readonly property real colTwoW: s(236)
+    readonly property real colOneW: Math.min(width - margin * 2, s(400))
+    readonly property real coverOne: Math.max(s(160), Math.min(s(270), height - s(290)))
+    readonly property real colW: colOneW + (colTwoW - colOneW) * split
+    readonly property real colX: (width - colOneW) / 2 + (margin - (width - colOneW) / 2) * split
+    readonly property real coverSize: coverOne + (colTwoW - coverOne) * split
+    readonly property real paneX: margin + colTwoW + s(28)
+    readonly property real paneW: width - paneX - margin + s(4)
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    // Keys typed in the first moments after opening were meant for another window.
+    property real openedAt: 0
+
+    onActiveChanged: {
+        updateLyricsSubscription();
+        if (active) {
+            openedAt = Date.now();
+            forceActiveFocus();
+            layoutAnimated = false;
+            settleTimer.restart();
+            syncLyricsReady();
+            readPos();
+            refreshArt();
+        } else {
+            settleTimer.stop();
+            layoutAnimated = false;
+            eqOpen = false;
+        }
+    }
+
+    Component.onCompleted: {
+        if (active) {
+            forceActiveFocus();
+            updateLyricsSubscription();
+            settleTimer.restart();
+            readPos();
+            refreshArt();
+        }
+    }
+
+    Component.onDestruction: {
+        if (lyricsSubscribed) {
+            lyricsSubscribed = false;
+            Lyrics.customPlayer = null;
+            Lyrics.unsubscribe();
+        }
+    }
+
+    // ── Actions ───────────────────────────────────────────────────────────────
+    function togglePlay() { if (targetPlayer && targetPlayer.canTogglePlaying) targetPlayer.togglePlaying(); }
+    function seekBy(sec) {
+        if (!hasTrack || !targetPlayer.canSeek) return;
+        targetPlayer.position = Math.max(0, Math.min(trackLength - 1, livePos + sec));
+    }
+    function changeVolume(delta) {
+        if (!targetPlayer || !targetPlayer.volumeSupported) return;
+        targetPlayer.volume = Math.max(0, Math.min(1, Math.round((targetPlayer.volume + delta) * 100) / 100));
+        volumeFlash.restart();
+    }
+    function toggleShuffle() { if (targetPlayer && targetPlayer.shuffleSupported) targetPlayer.shuffle = !targetPlayer.shuffle; }
+    function cycleRepeat() {
+        if (!targetPlayer || !targetPlayer.loopSupported) return;
+        let l = targetPlayer.loopState;
+        targetPlayer.loopState = l === MprisLoopState.None ? MprisLoopState.Playlist
+            : (l === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None);
+    }
+    function openLibrary() {
+        Quickshell.execDetached(["bash", "-c", "\"" + Caching.serpantinumDir + "/scripts/qs_manager.sh\" close; exec \"$HOME/.local/bin/music-player\""]);
+    }
+
+    Keys.onPressed: (event) => {
+        if (Date.now() - root.openedAt < 600) return;
+        let k = event.key;
+        if (k === Qt.Key_Space) { togglePlay(); event.accepted = true; }
+        else if (k === Qt.Key_Left) { seekBy(-5); event.accepted = true; }
+        else if (k === Qt.Key_Right) { seekBy(5); event.accepted = true; }
+        else if (k === Qt.Key_Up) { changeVolume(0.05); event.accepted = true; }
+        else if (k === Qt.Key_Down) { changeVolume(-0.05); event.accepted = true; }
+        else if (k === Qt.Key_N) { if (targetPlayer && targetPlayer.canGoNext) targetPlayer.next(); event.accepted = true; }
+        else if (k === Qt.Key_P) { if (targetPlayer && targetPlayer.canGoPrevious) targetPlayer.previous(); event.accepted = true; }
+        else if (k === Qt.Key_S) { toggleShuffle(); event.accepted = true; }
+        else if (k === Qt.Key_G) { SmartShuffle.start(); event.accepted = true; }
+        else if (k === Qt.Key_R) { cycleRepeat(); event.accepted = true; }
+        else if (k === Qt.Key_L) { if (eqOpen) eqOpen = false; else lyricsHidden = !lyricsHidden; event.accepted = true; }
+        else if (k === Qt.Key_E) { eqOpen = !eqOpen; event.accepted = true; }
+        else if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
+            if (eqOpen) { eqOpen = false; lyricsHidden = false; } else eqOpen = true;
+            event.accepted = true;
+        }
+    }
+
+    // Shared colours
+    readonly property color chip: Qt.alpha(ThemeBackend.text, 0.08)
+    readonly property color chipHover: Qt.alpha(ThemeBackend.text, 0.16)
+    readonly property color dim: Qt.alpha(ThemeBackend.text, 0.6)
+
+    // ── Frame + blurred-cover backdrop ────────────────────────────────────────
+    Rectangle {
+        id: frame
+        anchors.fill: parent
+        radius: ThemeBackend.borderRadius
+        color: ThemeBackend.base
+    }
+
+    Item {
+        id: frameMask
+        anchors.fill: parent
+        visible: false
+        layer.enabled: true
+        Rectangle { anchors.fill: parent; radius: ThemeBackend.borderRadius; color: "black" }
+    }
+
+    Item {
+        id: backdrop
+        anchors.fill: parent
+        layer.enabled: true
+        layer.effect: MultiEffect {
+            maskEnabled: true
+            maskSource: frameMask
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 1.0
+        }
+
+        Item {
+            id: blurSource
+            anchors.fill: parent
+            anchors.margins: -root.s(40)
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                blurEnabled: true
+                blur: 1.0
+                blurMax: 64
+                saturation: 0.2
+                autoPaddingEnabled: false
+            }
+
+            property bool showA: true
+            property string current: ""
+            function swap(src) {
+                if (src === current) return;
+                current = src;
+                if (showA) { bgB.source = src; showA = false; }
+                else { bgA.source = src; showA = true; }
+            }
+            Connections {
+                target: root
+                function onArtSourceChanged() { blurSource.swap(root.artSource); }
+            }
+            Component.onCompleted: swap(root.artSource)
+
+            Image {
+                id: bgA
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                sourceSize: Qt.size(160, 160)
+                asynchronous: true
+                opacity: blurSource.showA && status === Image.Ready && source != "" ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 900; easing.type: Easing.InOutQuad } }
+            }
+            Image {
+                id: bgB
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                sourceSize: Qt.size(160, 160)
+                asynchronous: true
+                opacity: !blurSource.showA && status === Image.Ready && source != "" ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 900; easing.type: Easing.InOutQuad } }
+            }
+        }
+
+        // Scrim: keeps text readable on any cover and ties the panel to the theme.
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.alpha(ThemeBackend.base, 0.42) }
+                GradientStop { position: 0.55; color: Qt.alpha(ThemeBackend.base, 0.58) }
+                GradientStop { position: 1.0; color: Qt.alpha(ThemeBackend.base, 0.80) }
+            }
+        }
+    }
+
+    // Liquid-glass edge, the same as the bar islands: a hairline rim that is bright at
+    // the top-left and fades to the bottom-right, plus a soft sheen (bar/GlassPill.qml).
+    BarGlass.GlassPill {
+        anchors.fill: parent
+        radius: ThemeBackend.borderRadius
+        tintAlpha: 0.0
+        raised: false
+        lit: true
+    }
+
+    // ── Source chip (top right): which player; click to switch when several ──
+    Rectangle {
+        id: sourceChip
+        visible: root.hasPlayer
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: root.s(14)
+        anchors.rightMargin: root.s(14)
+        height: root.s(24)
+        width: sourceRow.implicitWidth + root.s(18)
+        radius: height / 2
+        color: sourceMouse.containsMouse && root.playerList.length > 1 ? root.chipHover : root.chip
+        z: 5
+        Behavior on color { ColorAnimation { duration: 180 } }
+
+        Row {
+            id: sourceRow
+            anchors.centerIn: parent
+            spacing: root.s(6)
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.isPlaying ? "󰝚" : "󰎊"
+                font.family: ThemeBackend.iconFont
+                font.pixelSize: root.s(12)
+                color: root.isPlaying ? ThemeBackend.mauve : root.dim
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.sourceName
+                font.family: ThemeBackend.fontFamily
+                font.pixelSize: root.s(11)
+                font.weight: Font.DemiBold
+                color: root.dim
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.playerList.length > 1
+                text: "󰁔"
+                font.family: ThemeBackend.iconFont
+                font.pixelSize: root.s(11)
+                color: root.dim
+            }
+        }
+        MouseArea {
+            id: sourceMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: root.playerList.length > 1 ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: root.cyclePlayer()
+        }
+    }
+
+    // ── Cover ─────────────────────────────────────────────────────────────────
+    Item {
+        id: cover
+        x: root.colX + (root.colW - root.coverSize) / 2
+        y: root.margin
+        width: root.coverSize
+        height: root.coverSize
+        readonly property real radius: Math.max(root.s(14), root.coverSize * 0.075)
+
+        scale: coverMouse.pressed ? 0.97 : (root.isPlaying || !root.hasTrack ? 1.0 : 0.94)
+        Behavior on scale { NumberAnimation { duration: 520; easing.type: Easing.OutQuint } }
+
+        RectangularShadow {
+            anchors.fill: parent
+            radius: cover.radius
+            blur: root.s(34)
+            spread: 0
+            offset.y: root.s(12)
+            color: Qt.rgba(0, 0, 0, 0.5)
+            opacity: root.hasTrack ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 400 } }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: cover.radius
+            color: Qt.alpha(ThemeBackend.text, 0.06)
+            border.width: 1
+            border.color: Qt.alpha(ThemeBackend.text, 0.06)
+
+            Text {
+                anchors.centerIn: parent
+                text: "󰝚"
+                font.family: ThemeBackend.iconFont
+                font.pixelSize: parent.width * 0.3
+                color: Qt.alpha(ThemeBackend.text, 0.25)
+                visible: !coverA.shown && !coverB.shown
+            }
+        }
+
+        Item {
+            id: coverMask
+            anchors.fill: parent
+            visible: false
+            layer.enabled: true
+            Rectangle { anchors.fill: parent; radius: cover.radius; color: "black"; antialiasing: true }
+        }
+
+        Item {
+            id: coverArt
+            anchors.fill: parent
+            layer.enabled: true
+            layer.smooth: true
+            layer.effect: MultiEffect {
+                maskEnabled: true
+                maskSource: coverMask
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
+            }
+
+            property bool showA: true
+            property string current: ""
+            function swap(src) {
+                if (src === current) return;
+                current = src;
+                if (showA) { coverB.source = src; showA = false; }
+                else { coverA.source = src; showA = true; }
+            }
+            Connections {
+                target: root
+                function onArtSourceChanged() { coverArt.swap(root.artSource); }
+            }
+            Component.onCompleted: swap(root.artSource)
+
+            Image {
+                id: coverA
+                readonly property bool shown: coverArt.showA && status === Image.Ready && source != ""
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                mipmap: true
+                opacity: shown ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 550; easing.type: Easing.InOutQuad } }
+            }
+            Image {
+                id: coverB
+                readonly property bool shown: !coverArt.showA && status === Image.Ready && source != ""
+                anchors.fill: parent
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                mipmap: true
+                opacity: shown ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 550; easing.type: Easing.InOutQuad } }
+            }
+
+            // Hover: a soft scrim with the play/pause glyph.
+            Rectangle {
+                anchors.fill: parent
+                color: "#000000"
+                opacity: coverMouse.containsMouse && root.hasPlayer ? 0.32 : 0
+                Behavior on opacity { NumberAnimation { duration: 220 } }
+            }
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text: root.isPlaying ? "󰏤" : "󰐊"
+            font.family: ThemeBackend.iconFont
+            font.pixelSize: root.coverSize * 0.2
+            color: "#ffffff"
+            opacity: coverMouse.containsMouse && root.hasPlayer ? 0.95 : 0
+            scale: opacity > 0.5 ? 1 : 0.8
+            Behavior on opacity { NumberAnimation { duration: 220 } }
+            Behavior on scale { NumberAnimation { duration: 320; easing.type: Easing.OutBack } }
+        }
+
+        // Volume bubble (wheel over the cover, ↑/↓).
+        Rectangle {
+            id: volumeBubble
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: root.s(12)
+            width: volumeBubbleRow.implicitWidth + root.s(20)
+            height: root.s(26)
+            radius: height / 2
+            color: Qt.rgba(0, 0, 0, 0.55)
+            opacity: volumeFlash.running ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 200 } }
+            Row {
+                id: volumeBubbleRow
+                anchors.centerIn: parent
+                spacing: root.s(6)
+                Text {
+                    text: "󰕾"
+                    font.family: ThemeBackend.iconFont
+                    font.pixelSize: root.s(13)
+                    color: "#ffffff"
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                    text: (root.targetPlayer ? Math.round(root.targetPlayer.volume * 100) : 0) + "%"
+                    font.family: ThemeBackend.fontFamily
+                    font.pixelSize: root.s(12)
+                    font.weight: Font.Bold
+                    font.features: { "tnum": 1 }
+                    color: "#ffffff"
+                    anchors.verticalCenter: parent.verticalCenter
                 }
             }
         }
-    }
+        Timer { id: volumeFlash; interval: 1200 }
 
-    function triggerLocalArtFetch() {
-        if (root.targetPlayer && root.targetPlayer !== MprisController.activePlayer) {
-            customArtFetchProc.running = false;
-            customArtFetchProc.running = true;
-        } else if (root.targetPlayer && root.targetPlayer === MprisController.activePlayer) {
-            if (!MprisController.artUrl) {
-                MprisController.queueFetch();
+        MouseArea {
+            id: coverMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: root.hasPlayer ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: root.hasPlayer ? root.togglePlay() : root.openLibrary()
+            onWheel: (wheel) => {
+                let d = wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.pixelDelta.y * 2;
+                if (d !== 0) root.changeVolume(d > 0 ? 0.05 : -0.05);
             }
         }
     }
 
-    property string activeArtUrl: (targetPlayer && targetPlayer === MprisController.activePlayer) ? MprisController.artUrl : localArtUrl
-    property string activeBlur: (targetPlayer && targetPlayer === MprisController.activePlayer) ? MprisController.blur : localBlur
-    property string activeGrad: (targetPlayer && targetPlayer === MprisController.activePlayer) ? MprisController.grad : localGrad
-    property string activeTextColor: (targetPlayer && targetPlayer === MprisController.activePlayer) ? MprisController.textColor : (localTextColor || "#cdd6f4")
-    property string activeDeviceIcon: (targetPlayer && targetPlayer === MprisController.activePlayer) ? MprisController.deviceIcon : localDeviceIcon
-    property string activeDeviceName: (targetPlayer && targetPlayer === MprisController.activePlayer) ? MprisController.deviceName : localDeviceName
+    // ── Title / artist / album ────────────────────────────────────────────────
+    Column {
+        id: info
+        x: root.colX
+        y: root.margin + root.coverSize + root.s(18)
+        width: root.colW
+        spacing: root.s(3)
 
-    property var eqData: {
-        "b1": 0, "b2": 0, "b3": 0, "b4": 0, "b5": 0,
-        "b6": 0, "b7": 0, "b8": 0, "b9": 0, "b10": 0,
-        "preset": "Flat", "pending": false
+        Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.hasTrack ? root.title : (typeof I18n !== "undefined" ? I18n.t("music.nothing_playing", "Nothing playing") : "Nothing playing")
+            font.family: ThemeBackend.fontFamily
+            font.pixelSize: root.s(19)
+            font.weight: Font.Bold
+            color: ThemeBackend.text
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
+            lineHeight: 1.05
+        }
+        Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            visible: text !== ""
+            text: root.hasTrack ? root.artist : (root.hasPlayer ? "" : "Open the library to pick something")
+            font.family: ThemeBackend.fontFamily
+            font.pixelSize: root.s(14)
+            font.weight: Font.DemiBold
+            color: root.hasTrack ? Qt.lighter(ThemeBackend.mauve, 1.05) : root.dim
+            elide: Text.ElideRight
+        }
+        Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            visible: text !== ""
+            text: root.album + (root.album !== "" && root.year !== "" ? "  ·  " : "") + root.year
+            font.family: ThemeBackend.fontFamily
+            font.pixelSize: root.s(12)
+            font.weight: Font.Medium
+            color: Qt.alpha(ThemeBackend.text, 0.5)
+            elide: Text.ElideRight
+        }
+        // Why smart shuffle picked this track.
+        Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            visible: SmartShuffle.shown && root.hasTrack && SmartShuffle.why !== ""
+            text: "󰒝  " + SmartShuffle.vibeLabel + " vibe  ·  " + SmartShuffle.why
+            font.family: ThemeBackend.fontFamily
+            font.pixelSize: root.s(11)
+            font.weight: Font.Medium
+            color: Qt.alpha(ThemeBackend.mauve, 0.85)
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
+            topPadding: root.s(3)
+        }
     }
 
-    property var savedEqData: ({
-        "b1": 0, "b2": 0, "b3": 0, "b4": 0, "b5": 0,
-        "b6": 0, "b7": 0, "b8": 0, "b9": 0, "b10": 0,
-        "preset": "Flat", "pending": false
-    })
+    // ── Bottom block: progress, transport, utilities ──────────────────────────
+    Item {
+        id: bottomRow
+        x: root.colX
+        width: root.colW
+        height: root.s(30)
+        y: root.height - root.margin - height
 
-    function restoreLastSavedEqualizer() {
-        if (!root.savedEqData) return;
-        var wasPending = root.eqData && root.eqData.pending;
-        var needsRestore = wasPending;
-        if (!needsRestore && root.eqData) {
-            for (var i = 1; i <= 10; i++) {
-                if (root.eqData["b" + i] !== root.savedEqData["b" + i]) {
-                    needsRestore = true;
-                    break;
+        // Volume
+        Row {
+            id: volumeRow
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: root.s(8)
+            visible: root.hasPlayer && root.targetPlayer.volumeSupported
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: {
+                    let v = root.targetPlayer ? root.targetPlayer.volume : 0;
+                    return v <= 0.001 ? "󰝟" : (v < 0.34 ? "󰕿" : (v < 0.67 ? "󰖀" : "󰕾"));
                 }
-            }
-        }
-        var restored = Object.assign({}, root.savedEqData);
-        restored.pending = false;
-        root.eqData = restored;
-        if (needsRestore) {
-            root.lastEqUpdate = Date.now();
-            if (root.savedEqData.preset && root.savedEqData.preset !== "Custom") {
-                root.execCmd(Caching.qsDir + `/media/equalizer.sh preset ${root.savedEqData.preset}`);
-            } else {
-                for (var b = 1; b <= 10; b++) {
-                    if (root.savedEqData["b" + b] !== undefined) {
-                        root.execCmd(Caching.qsDir + `/media/equalizer.sh set_band ${b} ${root.savedEqData["b" + b]}`);
+                font.family: ThemeBackend.iconFont
+                font.pixelSize: root.s(15)
+                color: root.dim
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (!root.targetPlayer) return;
+                        if (root.targetPlayer.volume > 0.001) { volumeRow.lastVolume = root.targetPlayer.volume; root.targetPlayer.volume = 0; }
+                        else root.targetPlayer.volume = volumeRow.lastVolume > 0 ? volumeRow.lastVolume : 0.3;
                     }
                 }
             }
-        }
-    }
-
-    property color eqAccentColor: ThemeBackend.mauve || "#cba6f7"
-    property string accumulatedEqOut: ""
-    property real lastEqUpdate: 0
-
-    property real globalOrbitAngle: 0
-    NumberAnimation on globalOrbitAngle {
-        from: 0; to: Math.PI * 2
-        duration: 90000
-        loops: Animation.Infinite
-        running: root.active
-    }
-
-    property real eqLightningProgress: 0.0
-    property real eqLightningFade: 1.0
-
-    SequentialAnimation {
-        id: eqLightningAnim
-        running: false
-        ScriptAction { script: { root.eqLightningFade = 0.0; root.eqLightningProgress = 0.0; } }
-        NumberAnimation { 
-            target: root; property: "eqLightningProgress"; 
-            from: 0.0; to: 10.0; 
-            duration: 650; 
-            easing.type: Easing.OutSine 
-        }
-        PauseAnimation { duration: 150 }
-        NumberAnimation { 
-            target: root; property: "eqLightningFade"; 
-            from: 0.0; to: 1.0; 
-            duration: 800; 
-            easing.type: Easing.OutQuad 
-        }
-        ScriptAction { script: { root.eqLightningProgress = 0.0; } }
-    }
-
-    function triggerEqLightning() {
-        Sounds.playSfx("musicpopup/swoosh.wav", 0.75);
-        eqLightningAnim.restart();
-    }
-
-    property real introMain: 0
-    property real introCover: 0
-    property real introText: 0
-    property real introControls: 0
-    property real introSeparator: 0
-    property real introEqHeader: 0
-    property real introEqSliders: 0
-    property real introPresets: 0
-
-    ParallelAnimation {
-        id: introAnim
-        running: false
-
-        NumberAnimation { target: root; property: "introMain"; from: 0; to: 1.0; duration: 760; easing.type: Easing.OutQuart }
-
-        SequentialAnimation {
-            PauseAnimation { duration: 70 }
-            NumberAnimation { target: root; property: "introCover"; from: 0; to: 1.0; duration: 810; easing.type: Easing.OutBack; easing.overshoot: 1.0 }
-        }
-
-        SequentialAnimation {
-            PauseAnimation { duration: 150 }
-            NumberAnimation { target: root; property: "introText"; from: 0; to: 1.0; duration: 760; easing.type: Easing.OutQuart }
-        }
-
-        SequentialAnimation {
-            PauseAnimation { duration: 230 }
-            NumberAnimation { target: root; property: "introControls"; from: 0; to: 1.0; duration: 760; easing.type: Easing.OutBack; easing.overshoot: 0.8 }
-        }
-
-        SequentialAnimation {
-            PauseAnimation { duration: 310 }
-            NumberAnimation { target: root; property: "introSeparator"; from: 0; to: 1.0; duration: 660; easing.type: Easing.OutQuart }
-        }
-
-        SequentialAnimation {
-            PauseAnimation { duration: 370 }
-            NumberAnimation { target: root; property: "introEqHeader"; from: 0; to: 1.0; duration: 710; easing.type: Easing.OutQuart }
-        }
-
-        SequentialAnimation {
-            PauseAnimation { duration: 430 }
-            NumberAnimation { target: root; property: "introEqSliders"; from: 0; to: 1.0; duration: 860; easing.type: Easing.OutExpo }
-        }
-
-        SequentialAnimation {
-            PauseAnimation { duration: 550 }
-            NumberAnimation { target: root; property: "introPresets"; from: 0; to: 1.0; duration: 810; easing.type: Easing.OutBack; easing.overshoot: 0.8 }
-        }
-    }
-
-    property var borderColors: {
-        var defaultColors = [ThemeBackend.mauve || "#cba6f7", ThemeBackend.blue || "#89b4fa", ThemeBackend.red || "#f38ba8", ThemeBackend.mauve || "#cba6f7"];
-        var gradSource = root.activeGrad || (typeof MprisController !== "undefined" ? MprisController.grad : "");
-        if (!gradSource) return defaultColors;
-        
-        var hexRegex = /#[0-9a-fA-F]{6}/g;
-        var matches = gradSource.match(hexRegex);
-        
-        if (matches && matches.length >= 3) {
-            return [matches[0], matches[1], matches[2], matches[0]];
-        }
-        return defaultColors;
-    }
-
-    property color bc1: borderColors[0] || ThemeBackend.mauve || "#cba6f7"
-    property color bc2: borderColors[1] || ThemeBackend.blue || "#89b4fa"
-    property color bc3: borderColors[2] || ThemeBackend.red || "#f38ba8"
-    property color bc4: borderColors[3] || ThemeBackend.mauve || "#cba6f7"
-
-    property color dynamicTextColor: {
-        var rawCol = root.activeTextColor || (typeof MprisController !== "undefined" ? MprisController.textColor : "");
-        if (rawCol) {
-            var c = String(rawCol).trim();
-            var match = c.match(/^(#[0-9a-fA-F]{6})/);
-            if (match) return match[1];
-        }
-        return ThemeBackend.text || "#cdd6f4";
-    }
-
-    function execCmd(cmdStr) {
-        var safeCmd = cmdStr.replace(/`/g, "\\`");
-        var p = Qt.createQmlObject(`
-            import Quickshell.Io
-            Process {
-                command: ["bash", "-c", \`${safeCmd}\`]
-                running: true
-                onExited: (exitCode) => destroy()
+            MusicSeekBar {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(root.s(60), Math.min(root.s(110), bottomRow.width - actionsRow.width - root.s(40)))
+                value: root.targetPlayer ? root.targetPlayer.volume : 0
+                from: 0
+                to: 1
+                trackHeight: root.s(3)
+                hoverTrackHeight: root.s(5)
+                knobSize: root.s(10)
+                fillColor: Qt.alpha(ThemeBackend.text, 0.75)
+                onMoved: (v) => { if (root.targetPlayer) root.targetPlayer.volume = Math.round(v * 100) / 100; }
+                onCommitted: (v) => { if (root.targetPlayer) root.targetPlayer.volume = Math.round(v * 100) / 100; }
             }
-        `, root);
-    }
-
-    function applyPresetOptimistically(presetName) {
-        var presets = {
-            "Flat": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            "Bass": [5, 7, 5, 2, 1, 0, 0, 0, 1, 2],
-            "Treble": [-2, -1, 0, 1, 2, 3, 4, 5, 6, 6],
-            "Vocal": [-2, -1, 1, 3, 5, 5, 4, 2, 1, 0],
-            "Pop": [2, 4, 2, 0, 1, 2, 4, 2, 1, 2],
-            "Rock": [5, 4, 2, -1, -2, -1, 2, 4, 5, 6],
-            "Jazz": [3, 3, 1, 1, 1, 1, 2, 1, 2, 3],
-            "Classic": [0, 1, 2, 2, 2, 2, 1, 2, 3, 4]
-        };
-        if (presets[presetName]) {
-            var temp = Object.assign({}, root.eqData);
-            for (var i = 0; i < 10; i++) {
-                temp["b" + (i + 1)] = presets[presetName][i];
-            }
-            temp.preset = presetName;
-            temp.pending = false;
-            root.eqData = temp;
-            root.savedEqData = Object.assign({}, temp);
-            
-            root.lastEqUpdate = Date.now();
-            
-            root.triggerEqLightning();
-            execCmd(Caching.qsDir + `/media/equalizer.sh preset ${presetName}`);
+            property real lastVolume: 0.5
         }
-    }
 
-    Timer {
-        interval: 1000
-        running: root.active
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            if (!eqProc.running) eqProc.running = true;
-        }
-    }
+        Row {
+            id: actionsRow
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: root.s(4)
 
-    Process {
-        id: eqProc
-        running: true
-        command: ["bash", "-c", Caching.qsDir + "/media/equalizer.sh get"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                if (this.text) {
-                    if (Date.now() - root.lastEqUpdate < 2000) return;
-
-                    var outStr = this.text.trim();
-                    if (outStr.length > 0) {
-                        try {
-                            var parsed = JSON.parse(outStr);
-                            root.eqData = parsed;
-                            if (!parsed.pending) {
-                                root.savedEqData = Object.assign({}, parsed);
-                            }
-                        } catch(e) {}
-                    }
+            IconButton {
+                readonly property bool on: SmartShuffle.shown
+                width: root.s(28)
+                height: root.s(28)
+                cornerRadius: Math.round(width / 2)
+                buttonIcon: "󰒝"
+                iconFontSize: root.s(14)
+                accentColor: on ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.4 : 0.28) : (isHoveredOrHighlighted ? root.chipHover : root.chip)
+                textColor: on ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dim)
+                opacity: SmartShuffle.busy ? 0.6 : 1
+                Behavior on opacity { NumberAnimation { duration: 180 } }
+                onClicked: SmartShuffle.start()
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton
+                    onClicked: SmartShuffle.stop()
                 }
             }
+            IconButton {
+                visible: root.lyricsAvailable
+                width: root.s(28)
+                height: root.s(28)
+                cornerRadius: Math.round(width / 2)
+                buttonIcon: "󰍰"
+                iconFontSize: root.s(14)
+                accentColor: root.paneMode === "lyrics" ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.4 : 0.28) : (isHoveredOrHighlighted ? root.chipHover : root.chip)
+                textColor: root.paneMode === "lyrics" ? ThemeBackend.text : root.dim
+                onClicked: { if (root.eqOpen) { root.eqOpen = false; root.lyricsHidden = false; } else root.lyricsHidden = !root.lyricsHidden; }
+            }
+            IconButton {
+                width: root.s(28)
+                height: root.s(28)
+                cornerRadius: Math.round(width / 2)
+                buttonIcon: "󰺢"
+                iconFontSize: root.s(14)
+                accentColor: root.eqOpen ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.4 : 0.28) : (isHoveredOrHighlighted ? root.chipHover : root.chip)
+                textColor: root.eqOpen ? ThemeBackend.text : root.dim
+                onClicked: root.eqOpen = !root.eqOpen
+            }
+            IconButton {
+                width: root.s(28)
+                height: root.s(28)
+                cornerRadius: Math.round(width / 2)
+                buttonIcon: "󰲸"
+                iconFontSize: root.s(14)
+                accentColor: isHoveredOrHighlighted ? root.chipHover : root.chip
+                textColor: isHoveredOrHighlighted ? ThemeBackend.text : root.dim
+                onClicked: root.openLibrary()
+            }
         }
     }
 
-    LyricsPicker {
-        id: lyricsPickerPopup
-        targetScreen: (root.Window && root.Window.window) ? root.Window.window.screen : null
-        onLyricsSelected: function(filePath, fileName) {
-            Lyrics.loadLocalLyricsFile(filePath);
+    Row {
+        id: transport
+        x: root.colX + (root.colW - width) / 2
+        y: bottomRow.y - root.s(14) - height
+        height: root.s(54)
+        spacing: root.s(10)
+
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            width: root.s(34)
+            height: root.s(34)
+            cornerRadius: Math.round(width / 2)
+            visible: root.hasPlayer && root.targetPlayer.shuffleSupported
+            readonly property bool isOn: root.hasPlayer && root.targetPlayer.shuffle
+            buttonIcon: isOn ? "󰒝" : "󰒞"
+            iconFontSize: root.s(15)
+            accentColor: isOn ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.34 : 0.22) : (isHoveredOrHighlighted ? root.chipHover : "transparent")
+            textColor: isOn ? ThemeBackend.mauve : root.dim
+            onClicked: root.toggleShuffle()
+        }
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            width: root.s(42)
+            height: root.s(42)
+            cornerRadius: Math.round(width / 2)
+            buttonIcon: "󰒮"
+            iconFontSize: root.s(16)
+            accentColor: isHoveredOrHighlighted ? root.chipHover : root.chip
+            textColor: ThemeBackend.text
+            enabled: root.hasPlayer && root.targetPlayer.canGoPrevious
+            onClicked: root.targetPlayer.previous()
+        }
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            width: root.s(54)
+            height: root.s(54)
+            cornerRadius: Math.round(width / 2)
+            buttonIcon: root.isPlaying ? "󰏤" : "󰐊"
+            iconFontSize: root.s(22)
+            accentColor: isHoveredOrHighlighted ? Qt.lighter(ThemeBackend.mauve, 1.08) : ThemeBackend.mauve
+            textColor: ThemeBackend.base
+            enabled: root.hasPlayer && root.targetPlayer.canTogglePlaying
+            onClicked: root.togglePlay()
+        }
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            width: root.s(42)
+            height: root.s(42)
+            cornerRadius: Math.round(width / 2)
+            buttonIcon: "󰒭"
+            iconFontSize: root.s(16)
+            accentColor: isHoveredOrHighlighted ? root.chipHover : root.chip
+            textColor: ThemeBackend.text
+            enabled: root.hasPlayer && root.targetPlayer.canGoNext
+            onClicked: root.targetPlayer.next()
+        }
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            width: root.s(34)
+            height: root.s(34)
+            cornerRadius: Math.round(width / 2)
+            visible: root.hasPlayer && root.targetPlayer.loopSupported
+            readonly property int mode: root.hasPlayer ? root.targetPlayer.loopState : MprisLoopState.None
+            readonly property bool isOn: mode !== MprisLoopState.None
+            buttonIcon: mode === MprisLoopState.Track ? "󰑘" : (isOn ? "󰑖" : "󰑗")
+            iconFontSize: root.s(15)
+            accentColor: isOn ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.34 : 0.22) : (isHoveredOrHighlighted ? root.chipHover : "transparent")
+            textColor: isOn ? ThemeBackend.mauve : root.dim
+            onClicked: root.cycleRepeat()
         }
     }
 
     Item {
-        id: mainWrapper
-        anchors.fill: parent
-        
-        scale: 0.92 + (0.08 * root.introMain)
-        opacity: root.introMain
-        transform: Translate { y: root.s(12) * (1 - root.introMain) }
-
-        Item {
-            anchors.fill: parent
-
-            Shape {
-                id: maskRectOuter
-                anchors.fill: parent
-                visible: false
-                layer.enabled: true
-                preferredRendererType: Shape.GeometryRenderer
-
-                property real sw: root.s(6)
-                property real inset: (sw / 2) + root.s(0.5)
-                property real w: width
-                property real h: height
-                property real r: ThemeBackend.borderRadius - inset
-                
-                property real straightLines: 2 * (w - 2 * inset - 2 * r) + 2 * (h - 2 * inset - 2 * r)
-                property real arcLines: 2 * Math.PI * r
-                property real perimeter: straightLines + arcLines
-
-                property real drawProgress: 0
-
-                NumberAnimation on drawProgress {
-                    id: chargeAnim
-                    from: 0
-                    to: maskRectOuter.perimeter
-                    duration: 1200
-                    easing.type: Easing.OutCubic
-                    running: false
-                }
-
-                ShapePath {
-                    strokeWidth: maskRectOuter.sw
-                    strokeColor: "black"
-                    fillColor: "transparent"
-                    capStyle: ShapePath.FlatCap
-
-                    dashPattern: [maskRectOuter.perimeter / maskRectOuter.sw, maskRectOuter.perimeter / maskRectOuter.sw]
-                    dashOffset: (maskRectOuter.perimeter - maskRectOuter.drawProgress) / maskRectOuter.sw
-
-                    startX: maskRectOuter.inset
-                    startY: maskRectOuter.h - maskRectOuter.inset - maskRectOuter.r
-
-                    PathLine { x: maskRectOuter.inset; y: maskRectOuter.inset + maskRectOuter.r }
-                    PathArc { 
-                        x: maskRectOuter.inset + maskRectOuter.r; y: maskRectOuter.inset 
-                        radiusX: maskRectOuter.r; radiusY: maskRectOuter.r; direction: PathArc.Clockwise 
-                    }
-                    PathLine { x: maskRectOuter.w - maskRectOuter.inset - maskRectOuter.r; y: maskRectOuter.inset }
-                    PathArc { 
-                        x: maskRectOuter.w - maskRectOuter.inset; y: maskRectOuter.inset + maskRectOuter.r 
-                        radiusX: maskRectOuter.r; radiusY: maskRectOuter.r; direction: PathArc.Clockwise 
-                    }
-                    PathLine { x: maskRectOuter.w - maskRectOuter.inset; y: maskRectOuter.h - maskRectOuter.inset - maskRectOuter.r }
-                    PathArc { 
-                        x: maskRectOuter.w - maskRectOuter.inset - maskRectOuter.r; y: maskRectOuter.h - maskRectOuter.inset 
-                        radiusX: maskRectOuter.r; radiusY: maskRectOuter.r; direction: PathArc.Clockwise 
-                    }
-                    PathLine { x: maskRectOuter.inset + maskRectOuter.r; y: maskRectOuter.h - maskRectOuter.inset }
-                    PathArc { 
-                        x: maskRectOuter.inset; y: maskRectOuter.h - maskRectOuter.inset - maskRectOuter.r 
-                        radiusX: maskRectOuter.r; radiusY: maskRectOuter.r; direction: PathArc.Clockwise 
-                    }
-                }
-            }
-
-            Item {
-                id: gradContainer
-                anchors.fill: parent
-                visible: false
-                clip: true
-
-                Rectangle {
-                    width: Math.max(parent.width, parent.height) * 2
-                    height: width
-                    anchors.centerIn: parent
-                    
-                    NumberAnimation on rotation {
-                        from: 0; to: 360; duration: 5000
-                        loops: Animation.Infinite
-                        running: root.active
-                    }
-
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: root.bc1; Behavior on color { ColorAnimation { duration: 800; easing.type: Easing.InOutQuad } } }
-                        GradientStop { position: 0.33; color: root.bc2; Behavior on color { ColorAnimation { duration: 800; easing.type: Easing.InOutQuad } } }
-                        GradientStop { position: 0.66; color: root.bc3; Behavior on color { ColorAnimation { duration: 800; easing.type: Easing.InOutQuad } } }
-                        GradientStop { position: 1.0; color: root.bc4; Behavior on color { ColorAnimation { duration: 800; easing.type: Easing.InOutQuad } } }
-                    }
-                }
-            }
-
-            MultiEffect {
-                source: gradContainer
-                anchors.fill: parent
-                maskEnabled: true
-                maskSource: maskRectOuter
-            }
+        id: timeRow
+        x: root.colX
+        width: root.colW
+        height: root.s(16)
+        y: transport.y - root.s(6) - height
+        Text {
+            anchors.left: parent.left
+            text: root.hasTrack ? root.formatTime(seekBar.shownValue) : "0:00"
+            font.family: ThemeBackend.fontFamily
+            font.pixelSize: root.s(11)
+            font.weight: Font.DemiBold
+            font.features: { "tnum": 1 }
+            color: root.dim
         }
-
-        Rectangle {
-            id: innerBg
-            anchors.fill: parent
-            anchors.margins: root.s(3)
-            color: ThemeBackend.base
-            radius: ThemeBackend.borderRadius
-
-            Rectangle {
-                id: innerBgMask
-                anchors.fill: parent
-                radius: ThemeBackend.borderRadius
-                visible: false
-                layer.enabled: true 
-            }
-
-            Item {
-                id: bgEffectsLayer
-                anchors.fill: parent
-                
-                layer.enabled: true
-                layer.effect: MultiEffect {
-                    maskEnabled: true
-                    maskSource: innerBgMask
-                }
-
-                Item {
-                    id: blurCrossfader
-                    anchors.fill: parent
-                    property string blurUrl: root.activeBlur ? (root.activeBlur.startsWith("file://") || root.activeBlur.startsWith("http") ? root.activeBlur : "file://" + root.activeBlur) : ""
-                    property bool showingA: true
-
-                    Image {
-                        id: blurA
-                        anchors.fill: parent
-                        fillMode: Image.PreserveAspectCrop
-                        opacity: blurCrossfader.showingA && status === Image.Ready && root.hasTargetPlayer ? 0.9 : 0.0
-                        Behavior on opacity { NumberAnimation { duration: 800; easing.type: Easing.InOutQuad } }
-                    }
-
-                    Image {
-                        id: blurB
-                        anchors.fill: parent
-                        fillMode: Image.PreserveAspectCrop
-                        opacity: !blurCrossfader.showingA && status === Image.Ready && root.hasTargetPlayer ? 0.9 : 0.0
-                        Behavior on opacity { NumberAnimation { duration: 800; easing.type: Easing.InOutQuad } }
-                    }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        opacity: (root.hasTargetPlayer && root.activeBlur) ? 1.0 : 0.0
-                        gradient: Gradient {
-                            GradientStop { position: 0.0; color: Qt.alpha(ThemeBackend.base, 0.55); Behavior on color { ColorAnimation { duration: 600 } } }
-                            GradientStop { position: 0.5; color: Qt.alpha(ThemeBackend.base, 0.72); Behavior on color { ColorAnimation { duration: 600 } } }
-                            GradientStop { position: 1.0; color: Qt.alpha(ThemeBackend.base, 0.90); Behavior on color { ColorAnimation { duration: 600 } } }
-                        }
-                        Behavior on opacity { NumberAnimation { duration: 800; easing.type: Easing.InOutQuad } }
-                    }
-
-                    onBlurUrlChanged: {
-                        if (!blurUrl) {
-                            blurA.source = "";
-                            blurB.source = "";
-                            return;
-                        }
-                        if (showingA) {
-                            blurB.source = blurUrl;
-                            showingA = false;
-                        } else {
-                            blurA.source = blurUrl;
-                            showingA = true;
-                        }
-                    }
-
-                    Component.onCompleted: {
-                        if (blurUrl) {
-                            blurA.source = blurUrl;
-                            showingA = true;
-                        }
-                    }
-                }
-
-                Rectangle {
-                    width: parent.width * 0.8; height: width; radius: width / 2
-                    x: (parent.width / 2 - width / 2) + Math.cos(root.globalOrbitAngle * 2) * root.s(150)
-                    y: (parent.height / 2 - height / 2) + Math.sin(root.globalOrbitAngle * 2) * root.s(100)
-                    
-                    opacity: (root.targetPlayer && root.targetPlayer.isPlaying) ? 0.025 : (root.hasTargetPlayer ? 0.01 : 0.0)
-                    color: (root.targetPlayer && root.targetPlayer.isPlaying) ? (ThemeBackend.mauve || "#cba6f7") : (ThemeBackend.surface2 || "#585b70")
-                    Behavior on color { ColorAnimation { duration: 1000 } }
-                    Behavior on opacity { NumberAnimation { duration: 1000 } }
-                }
-                
-                Rectangle {
-                    width: parent.width * 0.9; height: width; radius: width / 2
-                    x: (parent.width / 2 - width / 2) + Math.sin(root.globalOrbitAngle * 1.5) * root.s(-150)
-                    y: (parent.height / 2 - height / 2) + Math.cos(root.globalOrbitAngle * 1.5) * root.s(-100)
-                    
-                    opacity: (root.targetPlayer && root.targetPlayer.isPlaying) ? 0.025 : (root.hasTargetPlayer ? 0.01 : 0.0)
-                    color: (root.targetPlayer && root.targetPlayer.isPlaying) ? (ThemeBackend.blue || "#89b4fa") : (ThemeBackend.surface1 || "#45475a")
-                    Behavior on color { ColorAnimation { duration: 1000 } }
-                    Behavior on opacity { NumberAnimation { duration: 1000 } }
-                }
-            }
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: root.s(18)
-                spacing: 0
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: root.s(224)
-                    spacing: root.s(16)
-
-                    Item {
-                        id: coverHost
-                        Layout.preferredWidth: root.s(224)
-                        Layout.preferredHeight: root.s(224)
-                        Layout.alignment: Qt.AlignVCenter
-
-                        opacity: root.introCover
-                        transform: Translate { x: root.s(-35) * (1 - root.introCover); y: root.s(9) * (1 - root.introCover) }
-
-                        property real availableRadius: width / 2
-                        property real dynMargin: 0
-                        property real artRadius: availableRadius * 0.86
-                        property real maxBarHeight: availableRadius - artRadius
-                        property real barWidth: Math.max(root.s(2), (2 * Math.PI * artRadius) / root.barCount * 0.65)
-
-                        Item {
-                            id: discAndVisGroup
-                            anchors.centerIn: parent
-                            width: coverHost.artRadius * 2
-                            height: coverHost.artRadius * 2
-
-                            property real targetScale: (root.targetPlayer && root.targetPlayer.isPlaying) ? (1.0 + (root.bassLevel * 0.0135) + (root.kickLevel * 0.027)) : 0.90
-                            property real targetBounceY: (root.targetPlayer && root.targetPlayer.isPlaying) ? -(root.kickLevel * coverHost.artRadius * 0.02025) : 0
-                            property real targetTilt: (root.targetPlayer && root.targetPlayer.isPlaying) ? (root.bassLevel - 0.3) * 0.9 : 0
-
-                            anchors.verticalCenterOffset: targetBounceY
-                            rotation: targetTilt
-                            scale: targetScale
-
-                            Behavior on anchors.verticalCenterOffset {
-                                SpringAnimation {
-                                    spring: 4.8
-                                    damping: 0.38
-                                    mass: 0.85
-                                }
-                            }
-
-                            Behavior on rotation {
-                                SpringAnimation {
-                                    spring: 2.8
-                                    damping: 0.52
-                                    mass: 0.95
-                                }
-                            }
-
-                            Behavior on scale {
-                                SpringAnimation {
-                                    spring: 5.2
-                                    damping: 0.35
-                                    mass: 0.75
-                                }
-                            }
-
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: (coverHost.artRadius * 2) + (coverHost.maxBarHeight * 2.2)
-                                height: width
-                                radius: width / 2
-                                color: ThemeBackend.mauve || "#cba6f7"
-                                opacity: (root.targetPlayer && root.targetPlayer.isPlaying) ? (0.005 + (root.bassLevel * 0.035)) : 0.0
-                                scale: 0.985 + (root.bassLevel * 0.0375)
-
-                                Behavior on opacity {
-                                    NumberAnimation {
-                                        duration: 120
-                                        easing.type: Easing.OutQuad
-                                    }
-                                }
-                                Behavior on scale {
-                                    SpringAnimation {
-                                        spring: 4.2
-                                        damping: 0.38
-                                        mass: 0.8
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: (coverHost.artRadius * 2) + (coverHost.maxBarHeight * 1.5)
-                                height: width
-                                radius: width / 2
-                                color: ThemeBackend.mauve || "#cba6f7"
-                                opacity: (root.targetPlayer && root.targetPlayer.isPlaying) ? (0.01 + (root.kickLevel * 0.055)) : 0.0
-                                scale: 0.992 + (root.kickLevel * 0.02625)
-
-                                Behavior on opacity {
-                                    NumberAnimation {
-                                        duration: 40
-                                        easing.type: Easing.OutCubic
-                                    }
-                                }
-                                Behavior on scale {
-                                    SpringAnimation {
-                                        spring: 5.2
-                                        damping: 0.34
-                                        mass: 0.6
-                                    }
-                                }
-                            }
-
-                            Visualizer {
-                                anchors.centerIn: parent
-                                width: (coverHost.artRadius + coverHost.maxBarHeight * 1.4) * 2 + 2
-                                height: width
-                                active: root.cavaRegistered
-                                count: root.barCount
-                                color: ThemeBackend.mauve || "#cba6f7"
-                                mirrored: false
-                                curve: 1.15
-                                threshold: 0.0
-                                gamma: 1.08
-                                rise: 0.55
-                                fall: 0.55
-                                ringRadius: coverHost.artRadius
-                                ringBarWidth: coverHost.barWidth
-                                maxLength: coverHost.maxBarHeight * 1.4
-                                minLength: root.s(2)
-                                opacityBase: 0.4
-                                opacityRange: 0.6
-                                tintStrength: 0.45
-                            }
-
-                            Item {
-                                id: discContainer
-                                anchors.fill: parent
-
-                                property real borderWidth: 0
-
-                                Rectangle {
-                                    z: -1
-                                    anchors.centerIn: parent
-                                    width: parent.width + root.s(12)
-                                    height: parent.height + root.s(12)
-                                    radius: width / 2
-                                    color: ThemeBackend.mauve || "#cba6f7"
-                                    opacity: (root.targetPlayer && root.targetPlayer.isPlaying) ? (0.35 + root.kickLevel * 0.25) : 0.0
-                                    Behavior on opacity { NumberAnimation { duration: 500 } }
-                                    layer.enabled: true
-                                    layer.effect: MultiEffect {
-                                        blurEnabled: true
-                                        blurMax: 32
-                                        blur: 1.0
-                                    }
-                                }
-
-                                Rectangle {
-                                    id: vinylBase
-                                    anchors.fill: parent
-                                    radius: width / 2
-                                    color: ThemeBackend.surface1 || "#45475a"
-                                    border.width: discContainer.borderWidth
-                                    border.color: (root.targetPlayer && root.targetPlayer.isPlaying) ? (ThemeBackend.mauve || "#cba6f7") : (ThemeBackend.overlay0 || "#6c7086")
-                                    Behavior on border.color { ColorAnimation { duration: 500 } }
-
-                                    NumberAnimation on rotation {
-                                        from: 0; to: 360; duration: 25000
-                                        loops: Animation.Infinite
-                                        running: root.active
-                                        paused: root.active && !(root.targetPlayer && root.targetPlayer.isPlaying)
-                                    }
-
-                                    Item {
-                                        anchors.fill: parent
-                                        anchors.margins: vinylBase.border.width
-
-                                        Rectangle {
-                                            id: maskRect
-                                            anchors.fill: parent
-                                            radius: width / 2
-                                            visible: false
-                                            layer.enabled: true 
-                                        }
-
-                                        Item {
-                                            id: artMaskedContainer
-                                            anchors.fill: parent
-                                            layer.enabled: true
-                                            layer.effect: MultiEffect {
-                                                maskEnabled: true
-                                                maskSource: maskRect
-                                            }
-
-                                            Item {
-                                                id: artCrossfader
-                                                anchors.fill: parent
-                                                property string artSource: root.activeArtUrl ? (root.activeArtUrl.startsWith("file://") || root.activeArtUrl.startsWith("http") ? root.activeArtUrl : "file://" + root.activeArtUrl) : ""
-                                                property bool showingA: true
-
-                                                Image {
-                                                    id: artImgA
-                                                    anchors.fill: parent
-                                                    fillMode: Image.PreserveAspectCrop
-                                                    opacity: artCrossfader.showingA && status === Image.Ready ? 1.0 : 0.0
-                                                    Behavior on opacity { NumberAnimation { duration: 650; easing.type: Easing.InOutQuad } }
-                                                }
-
-                                                Image {
-                                                    id: artImgB
-                                                    anchors.fill: parent
-                                                    fillMode: Image.PreserveAspectCrop
-                                                    opacity: !artCrossfader.showingA && status === Image.Ready ? 1.0 : 0.0
-                                                    Behavior on opacity { NumberAnimation { duration: 650; easing.type: Easing.InOutQuad } }
-                                                }
-
-                                                onArtSourceChanged: {
-                                                    if (!artSource) {
-                                                        artImgA.source = "";
-                                                        artImgB.source = "";
-                                                        return;
-                                                    }
-                                                    if (showingA) {
-                                                        artImgB.source = artSource;
-                                                        showingA = false;
-                                                    } else {
-                                                        artImgA.source = artSource;
-                                                        showingA = true;
-                                                    }
-                                                }
-
-                                                Component.onCompleted: {
-                                                    if (artSource) {
-                                                        artImgA.source = artSource;
-                                                        showingA = true;
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            id: fallbackPlaceholder
-                                            anchors.fill: parent
-                                            radius: width / 2
-                                            color: ThemeBackend.mantle || "#1e1e2e"
-                                            opacity: (root.hasTargetPlayer && root.activeArtUrl) ? 0.0 : 1.0
-                                            Behavior on opacity { NumberAnimation { duration: 400 } }
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: "󰝚"
-                                                font.pixelSize: parent.width * 0.26
-                                                color: ThemeBackend.overlay1 || "#7f849c"
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            id: discTinter
-                                            anchors.fill: parent
-                                            radius: width / 2
-                                            color: {
-                                                let m = ThemeBackend.mauve || Qt.rgba(0.8, 0.6, 0.9, 1);
-                                                return Qt.rgba(m.r, m.g, m.b, 0.08 + (root.kickLevel * 0.08));
-                                            }
-                                            opacity: (root.hasTargetPlayer && root.activeArtUrl) ? 1.0 : 0.0
-                                            Behavior on opacity { NumberAnimation { duration: 600 } }
-                                        }
-
-                                        Repeater {
-                                            model: [0.92, 0.84, 0.76, 0.68, 0.60, 0.52, 0.44]
-                                            delegate: Rectangle {
-                                                anchors.centerIn: parent
-                                                width: parent.width * modelData
-                                                height: width
-                                                radius: width / 2
-                                                color: "transparent"
-                                                border.color: index % 2 === 0 ? "#ffffff" : "#000000"
-                                                border.width: 1
-                                                opacity: (index % 2 === 0 ? 0.035 : 0.06) + (root.bassLevel * 0.02)
-                                                antialiasing: true
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            anchors.centerIn: parent
-                                            width: parent.width * 0.28
-                                            height: width
-                                            radius: width / 2
-                                            color: ThemeBackend.crust || "#11111b"
-                                            opacity: 0.96
-                                            scale: 1.0 + (root.kickLevel * 0.0135)
-                                            border.width: 1.5
-                                            border.color: {
-                                                let m = ThemeBackend.mauve || Qt.rgba(0.8, 0.6, 0.9, 1);
-                                                return Qt.rgba(m.r, m.g, m.b, 0.45 + (root.kickLevel * 0.4));
-                                            }
-
-                                            Behavior on scale {
-                                                SpringAnimation {
-                                                    spring: 6.0
-                                                    damping: 0.32
-                                                    mass: 0.5
-                                                }
-                                            }
-
-                                            Rectangle {
-                                                anchors.centerIn: parent
-                                                width: parent.width * 0.68
-                                                height: width
-                                                radius: width / 2
-                                                color: ThemeBackend.surface2 || "#585b70"
-                                                border.width: 1
-                                                border.color: Qt.rgba(1, 1, 1, 0.18)
-
-                                                Rectangle {
-                                                    anchors.centerIn: parent
-                                                    width: parent.width * 0.38
-                                                    height: width
-                                                    radius: width / 2
-                                                    color: "#0d0e15"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.topMargin: -root.s(14)
-                        spacing: root.s(12)
-
-                        ColumnLayout {
-                            z: 1
-                            spacing: root.s(6)
-                            opacity: root.introText
-                            transform: Translate { x: root.s(25) * (1 - root.introText) }
-                            
-                            Item {
-                                id: titleClipRect
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: root.s(25) 
-                                clip: true
-
-                                property int marqueeSpacing: root.s(50)
-
-                                Item {
-                                    id: marqueeContainer
-                                    height: parent.height
-
-                                    Row {
-                                        spacing: titleClipRect.marqueeSpacing
-                                        Text {
-                                            id: titleTextMain
-                                            text: (root.targetPlayer && root.targetPlayer.trackTitle !== "") ? root.targetPlayer.trackTitle : I18n.t("music.nothing_playing")
-                                            color: root.dynamicTextColor
-                                            font.family: ThemeBackend.fontFamily
-                                            font.pixelSize: root.s(19)
-                                            font.bold: true
-                                            Behavior on color { ColorAnimation { duration: 600 } }
-
-                                            onTextChanged: {
-                                                marqueeContainer.x = 0;
-                                                if (implicitWidth > titleClipRect.width && root.active) {
-                                                    titleAnim.restart();
-                                                } else {
-                                                    titleAnim.stop();
-                                                }
-                                            }
-                                        }
-                                        Text {
-                                            id: titleTextClone
-                                            text: titleTextMain.text
-                                            color: root.dynamicTextColor
-                                            font.family: ThemeBackend.fontFamily
-                                            font.pixelSize: root.s(19)
-                                            font.bold: true
-                                            visible: titleTextMain.implicitWidth > titleClipRect.width
-                                        }
-                                    }
-
-                                    SequentialAnimation on x {
-                                        id: titleAnim
-                                        loops: Animation.Infinite
-                                        running: root.active && titleTextMain.implicitWidth > titleClipRect.width
-
-                                        PauseAnimation { duration: 3000 }
-                                        
-                                        NumberAnimation {
-                                            from: 0
-                                            to: -(titleTextMain.implicitWidth + titleClipRect.marqueeSpacing)
-                                            duration: (titleTextMain.implicitWidth + titleClipRect.marqueeSpacing) * 25
-                                        }
-                                        
-                                        PropertyAction { target: marqueeContainer; property: "x"; value: 0 }
-                                    }
-                                }
-                            }
-
-                            Text {
-                                text: root.targetPlayer && root.targetPlayer.trackArtist ? I18n.t("music.by_artist", { "artist": root.targetPlayer.trackArtist }) : I18n.t("music.by_artist", { "artist": I18n.t("music.unknown_artist") })
-                                color: root.dynamicTextColor
-                                font.family: ThemeBackend.fontFamily
-                                font.pixelSize: root.s(13.5)
-                                font.bold: true
-                                elide: Text.ElideRight
-                                maximumLineCount: 1
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: root.s(18)
-                            }
-                            RowLayout {
-                                spacing: root.s(9)
-                                ClickButton {
-                                    id: devicePill
-                                    Layout.preferredHeight: root.s(22)
-                                    cornerRadius: ThemeBackend.borderRadius
-                                    horizontalPadding: root.s(10)
-                                    buttonText: (root.activeDeviceIcon || "󰓃") + " " + (root.activeDeviceName || I18n.t("music.speaker"))
-                                    textFontSize: root.s(11.5)
-                                    accentColor: ThemeBackend.surface0 || "#313244"
-                                    textColor: ThemeBackend.text || "#cdd6f4"
-                                }
-                                Dropdown {
-                                    id: sourceDropdown
-                                    visible: root.playerList.length >= 2
-                                    Layout.preferredHeight: root.s(22)
-                                    implicitHeight: root.s(22)
-                                    implicitWidth: root.s(140)
-                                    cornerRadius: ThemeBackend.borderRadius
-                                    options: root.playerOptions
-                                    currentIndex: root.currentPlayerIndex
-                                    fontPixelSize: root.s(11.5)
-                                    iconSize: root.s(12)
-                                    accentColor: ThemeBackend.mauve || "#cba6f7"
-                                    baseColor: ThemeBackend.surface0 || "#313244"
-                                    hoverColor: ThemeBackend.surface1 || "#45475a"
-                                    dropdownColor: ThemeBackend.surface0
-                                    borderColor: Qt.alpha(ThemeBackend.surface2 || "#585b70", 0.6)
-                                    textColor: ThemeBackend.text || "#cdd6f4"
-                                    activeTextColor: ThemeBackend.crust || "#11111b"
-                                    onValueChanged: (index, value) => {
-                                        root.selectPlayerByIndex(index);
-                                    }
-                                }
-                                ClickButton {
-                                    id: sourcePill
-                                    visible: root.playerList.length < 2
-                                    Layout.preferredHeight: root.s(22)
-                                    cornerRadius: ThemeBackend.borderRadius
-                                    horizontalPadding: root.s(10)
-                                    buttonText: I18n.t("music.via_source", { "source": root.targetPlayer ? (root.targetPlayer.identity || root.targetPlayer.desktopEntry || "Media") : I18n.t("music.offline") })
-                                    textFontSize: root.s(11.5)
-                                    accentColor: ThemeBackend.surface0 || "#313244"
-                                    textColor: ThemeBackend.subtext0 || "#9399b2"
-                                }
-                            }
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.topMargin: -root.s(6)
-                            spacing: root.s(2)
-                            opacity: root.introControls
-                            transform: Translate { x: root.s(18) * (1 - root.introControls); y: root.s(9) * (1 - root.introControls) }
-
-                            WavySeekBar {
-                                id: progBar
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: root.s(50)
-                                Layout.topMargin: -root.s(16)
-                                Layout.bottomMargin: -root.s(2)
-                                Layout.alignment: Qt.AlignVCenter
-                                from: 0.0
-                                to: root.targetPlayer ? root.targetPlayer.length : 100.0
-                                value: root.currentLivePosition
-                                playing: root.targetPlayer ? root.targetPlayer.isPlaying : false
-                                waveColor: ThemeBackend.mauve || "#cba6f7"
-
-                                property bool seekPending: false
-
-                                Timer {
-                                    id: seekTimer
-                                    interval: 1000
-                                    onTriggered: progBar.seekPending = false
-                                }
-
-                                Connections {
-                                    target: root.targetPlayer
-                                    function onPositionChanged() {
-                                        if (!root.active) return;
-                                        if (!progBar.isDragging && !progBar.seekPending && root.targetPlayer) {
-                                            progBar.value = root.targetPlayer.position;
-                                        }
-                                    }
-                                }
-
-                                onMoved: val => {
-                                    if (root.targetPlayer && root.targetPlayer.canSeek) {
-                                        progBar.seekPending = true;
-                                        seekTimer.restart();
-                                        progBar.value = val;
-                                        root.targetPlayer.position = val;
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { 
-                                    text: root.formatTime(root.currentLivePosition); 
-                                    color: root.dynamicTextColor; 
-                                    font.family: ThemeBackend.fontFamily; 
-                                    font.bold: true; 
-                                    font.pixelSize: root.s(12); 
-                                    Behavior on color { ColorAnimation { duration: 600 } }
-                                }
-                                Item { Layout.fillWidth: true }
-                                Text { 
-                                    text: root.formatTime(root.targetPlayer ? root.targetPlayer.length : 0); 
-                                    color: root.dynamicTextColor; 
-                                    font.family: ThemeBackend.fontFamily; 
-                                    font.bold: true; 
-                                    font.pixelSize: root.s(12); 
-                                    Behavior on color { ColorAnimation { duration: 600 } }
-                                }
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.alignment: Qt.AlignHCenter
-                            spacing: root.s(18)
-                            opacity: root.introControls
-                            transform: Translate { y: root.s(18) * (1 - root.introControls) }
-
-                            IconButton {
-                                id: prevMediaBtn
-                                Layout.preferredWidth: root.s(32)
-                                Layout.preferredHeight: root.s(32)
-                                cornerRadius: ThemeBackend.borderRadius
-                                buttonIcon: "󰒮"
-                                iconFontSize: root.s(11)
-                                accentColor: ThemeBackend.surface0 || "#313244"
-                                textColor: isHoveredOrHighlighted ? (ThemeBackend.text || "#cdd6f4") : (ThemeBackend.subtext0 || "#a6adc8")
-                                Layout.alignment: Qt.AlignVCenter
-                                onClicked: if (root.targetPlayer && root.targetPlayer.canGoPrevious) root.targetPlayer.previous()
-                            }
-
-                            IconButton {
-                                id: playPauseBtn
-                                iconOffsetY: -2
-                                Layout.preferredWidth: root.s(43)
-                                Layout.preferredHeight: root.s(43)
-                                cornerRadius: ThemeBackend.borderRadius
-                                buttonIcon: (root.targetPlayer && root.targetPlayer.isPlaying) ? "󰏤" : "󰐊"
-                                iconFontSize: root.s(15)
-                                accentColor: ThemeBackend.surface0 || "#313244"
-                                textColor: isHoveredOrHighlighted ? (ThemeBackend.mauve || "#cba6f7") : (ThemeBackend.text || "#cdd6f4")
-                                Layout.alignment: Qt.AlignVCenter
-                                onClicked: if (root.targetPlayer && root.targetPlayer.canTogglePlaying) root.targetPlayer.togglePlaying()
-                            }
-
-                            IconButton {
-                                id: nextMediaBtn
-                                Layout.preferredWidth: root.s(32)
-                                Layout.preferredHeight: root.s(32)
-                                cornerRadius: ThemeBackend.borderRadius
-                                buttonIcon: "󰒭"
-                                iconFontSize: root.s(11)
-                                accentColor: ThemeBackend.surface0 || "#313244"
-                                textColor: isHoveredOrHighlighted ? (ThemeBackend.text || "#cdd6f4") : (ThemeBackend.subtext0 || "#a6adc8")
-                                Layout.alignment: Qt.AlignVCenter
-                                onClicked: if (root.targetPlayer && root.targetPlayer.canGoNext) root.targetPlayer.next()
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: root.s(2)
-                    Layout.topMargin: root.s(16)
-                    Layout.bottomMargin: root.s(16)
-                    color: "#1AFFFFFF"
-                    radius: root.s(1)
-
-                    opacity: root.introSeparator
-                    transform: Translate { y: root.s(12) * (1 - root.introSeparator) }
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: root.s(12)
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        opacity: root.introEqHeader
-                        transform: Translate { y: root.s(12) * (1 - root.introEqHeader) }
-
-                        Switch {
-                            id: bottomSectionSwitch
-                            Layout.preferredHeight: root.s(26)
-                            Layout.preferredWidth: root.s(180)
-                            implicitHeight: root.s(26)
-                            implicitWidth: root.s(180)
-                            options: [
-                                typeof I18n !== "undefined" ? I18n.t("music.equalizer", "Equalizer") : "Equalizer",
-                                typeof I18n !== "undefined" ? I18n.t("music.lyrics", "Lyrics") : "Lyrics"
-                            ]
-                            currentIndex: 0
-                            accentColor: ThemeBackend.mauve || "#cba6f7"
-                            baseColor: ThemeBackend.surface0 || "#313244"
-                            textColor: ThemeBackend.subtext0 || "#a6adc8"
-                            activeTextColor: ThemeBackend.base || "#1e1e2e"
-                            cornerRadius: ThemeBackend.borderRadius
-                            fontPixelSize: root.s(11.5)
-                            onCurrentIndexChanged: {
-                                root.updateLyricsSubscription();
-                                if (currentIndex === 1) {
-                                    toEqAnim.stop();
-                                    toLyricsAnim.restart();
-                                    root.restoreLastSavedEqualizer();
-                                } else {
-                                    toLyricsAnim.stop();
-                                    root.restoreLastSavedEqualizer();
-                                    toEqAnim.restart();
-                                }
-                            }
-                            onValueChanged: (index, val) => {
-                                currentIndex = index;
-                            }
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        ClickButton {
-                            id: actionBtn
-                            Layout.preferredHeight: root.s(26)
-                            Layout.preferredWidth: root.actionBtnCurrentWidth
-                            implicitWidth: root.actionBtnCurrentWidth
-                            cornerRadius: ThemeBackend.borderRadius
-                            horizontalPadding: root.s(12)
-                            buttonIcon: bottomSectionSwitch.currentIndex === 1 && root.actionBtnMorph > 0.45 ? "󰈔" : ""
-                            buttonText: {
-                                if (bottomSectionSwitch.currentIndex === 1 && root.actionBtnMorph > 0.35) {
-                                    return typeof I18n !== "undefined" ? I18n.t("music.select_local_file", "Select file") : "Select file";
-                                }
-                                return root.eqData && root.eqData.pending ? I18n.t("music.eq.apply") : I18n.t("music.eq.saved");
-                            }
-                            textFontSize: root.s(11.5)
-                            iconFontSize: root.s(13)
-                            accentColor: {
-                                if (root.actionBtnMorph >= 0.5) {
-                                    return ThemeBackend.surface0 || "#313244";
-                                }
-                                return root.eqData && root.eqData.pending ? (ThemeBackend.mauve || "#cba6f7") : (ThemeBackend.surface0 || "#313244");
-                            }
-                            textColor: {
-                                if (root.actionBtnMorph >= 0.5) {
-                                    return ThemeBackend.text || "#cdd6f4";
-                                }
-                                return root.eqData && root.eqData.pending ? (ThemeBackend.base || "#1e1e2e") : (ThemeBackend.text || "#cdd6f4");
-                            }
-                            enabled: bottomSectionSwitch.currentIndex === 1 ? (root.hasTargetPlayer && !Lyrics.loading) : true
-                            opacity: bottomSectionSwitch.currentIndex === 1 ? (root.hasTargetPlayer && !Lyrics.loading ? 1.0 : 0.45) : 1.0
-                            Behavior on opacity { NumberAnimation { duration: 300 } }
-                            Behavior on accentColor { ColorAnimation { duration: 320 } }
-                            Behavior on textColor { ColorAnimation { duration: 320 } }
-                            onClicked: {
-                                if (bottomSectionSwitch.currentIndex === 1) {
-                                    lyricsPickerPopup.targetScreen = (root.Window && root.Window.window) ? root.Window.window.screen : null;
-                                    lyricsPickerPopup.openPicker();
-                                } else if (root.eqData && root.eqData.pending) {
-                                    var temp = Object.assign({}, root.eqData);
-                                    temp.pending = false;
-                                    root.eqData = temp;
-                                    root.savedEqData = Object.assign({}, temp);
-                                    root.lastEqUpdate = Date.now();
-                                    root.triggerEqLightning();
-                                    root.execCmd(Caching.qsDir + "/media/equalizer.sh apply");
-                                }
-                            }
-                        }
-
-                        Item {
-                            id: presetTextContainer
-                            Layout.preferredHeight: root.s(26)
-                            Layout.preferredWidth: (presetLabelText.implicitWidth + root.s(12)) * Math.max(0.0, 1.0 - root.presetSlideProgress)
-                            implicitWidth: Layout.preferredWidth
-                            visible: root.presetSlideProgress < 0.99
-                            opacity: Math.max(0.0, 1.0 - root.presetSlideProgress)
-                            clip: true
-
-                            Text {
-                                id: presetLabelText
-                                anchors.verticalCenter: parent.verticalCenter
-                                x: root.s(12) + (root.s(24) * root.presetSlideProgress)
-                                text: root.eqData && root.eqData.preset ? I18n.t("music.presets." + root.eqData.preset.toLowerCase()) : I18n.t("music.presets.flat")
-                                color: ThemeBackend.subtext0 || "#a6adc8"
-                                font.family: ThemeBackend.fontFamily
-                                font.pixelSize: root.s(13)
-                                font.bold: true
-                            }
-                        }
-                    }
-
-                    Item {
-                        id: bottomViewsContainer
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: root.s(235)
-
-                        Item {
-                            id: eqView
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: parent.width
-                            x: bottomSectionSwitch.currentIndex === 0 ? 0 : -parent.width - root.s(24)
-                            opacity: bottomSectionSwitch.currentIndex === 0 ? 1.0 : 0.0
-                            visible: opacity > 0.0
-
-                            Behavior on x { NumberAnimation { duration: 420; easing.type: Easing.OutQuart } }
-                            Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                spacing: root.s(12)
-
-                                Item {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: root.s(155)
-
-                                    Row {
-                                        id: eqSliderRow
-                                        anchors.fill: parent
-                                        z: 1
-
-                                        Repeater {
-                                            model: [
-                                                {"idx": 1, "lbl": "31"}, {"idx": 2, "lbl": "63"}, {"idx": 3, "lbl": "125"},
-                                                {"idx": 4, "lbl": "250"}, {"idx": 5, "lbl": "500"}, {"idx": 6, "lbl": "1k"},
-                                                {"idx": 7, "lbl": "2k"}, {"idx": 8, "lbl": "4k"}, {"idx": 9, "lbl": "8k"},
-                                                {"idx": 10, "lbl": "16k"}
-                                            ]
-                                            delegate: Item {
-                                                id: sliderDelegate
-                                                width: eqSliderRow.width / 10
-                                                height: eqSliderRow.height
-
-                                                opacity: root.introEqSliders
-                                                transform: Translate {
-                                                    y: root.s(25) * (1 - root.introEqSliders) + (index * root.s(7) * (1 - root.introEqSliders))
-                                                }
-
-                                                property real dist: root.eqLightningProgress - (modelData.idx - 1)
-                                                property real hitPulse: dist >= 0 && dist < 1.0 ? Math.sin((dist) * Math.PI) : 0.0
-                                                
-                                                property real trackPulse: 0.0
-                                                property real ringPulse: 0.0
-                                                property real flashFade: 0.0
-                                                property bool hasFired: false
-
-                                                onDistChanged: {
-                                                    if (dist <= 0.05) {
-                                                        hasFired = false;
-                                                    } else if (dist > 0.4 && !hasFired) {
-                                                        hasFired = true;
-                                                        trackPulseAnim.restart();
-                                                        ringPulseAnim.restart();
-                                                        flashFadeAnim.restart();
-                                                    }
-                                                }
-
-                                                SequentialAnimation {
-                                                    id: trackPulseAnim
-                                                    NumberAnimation { target: sliderDelegate; property: "trackPulse"; from: 0.0; to: 1.0; duration: 1000; easing.type: Easing.OutQuart }
-                                                }
-                                                SequentialAnimation {
-                                                    id: ringPulseAnim
-                                                    NumberAnimation { target: sliderDelegate; property: "ringPulse"; from: 1.0; to: 0.0; duration: 1500; easing.type: Easing.OutExpo }
-                                                }
-                                                SequentialAnimation {
-                                                    id: flashFadeAnim
-                                                    NumberAnimation { target: sliderDelegate; property: "flashFade"; from: 1.0; to: 0.0; duration: 1500; easing.type: Easing.OutSine }
-                                                }
-
-                                                ColumnLayout {
-                                                    anchors.fill: parent
-                                                    spacing: root.s(4)
-                                                    Slider {
-                                                        id: eqSlider
-                                                        Layout.fillHeight: true
-                                                        Layout.alignment: Qt.AlignHCenter
-                                                        orientation: Qt.Vertical
-                                                        from: -12; to: 12
-                                                        stepSize: 1
-                                                        hoverEnabled: true
-
-                                                        Connections {
-                                                            target: root
-                                                            function onEqDataChanged() {
-                                                                if (!eqSlider.pressed) {
-                                                                    if (root.eqData && root.eqData["b" + modelData.idx] !== undefined) {
-                                                                        var p = Number(root.eqData["b" + modelData.idx]);
-                                                                        if (!isNaN(p)) eqSlider.value = p;
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-
-                                                        Behavior on value {
-                                                            enabled: !eqSlider.pressed
-                                                            NumberAnimation {
-                                                                duration: 350
-                                                                easing.type: Easing.OutQuart
-                                                            }
-                                                        }
-
-                                                        onPressedChanged: {
-                                                            if (!pressed) {
-                                                                var temp = Object.assign({}, root.eqData);
-                                                                temp["b" + modelData.idx] = Math.round(value);
-                                                                temp.preset = "Custom";
-                                                                temp.pending = true;
-                                                                root.eqData = temp;
-                                                                
-                                                                root.lastEqUpdate = Date.now();
-                                                                
-                                                                root.execCmd(Caching.qsDir + `/media/equalizer.sh set_band ${modelData.idx} ${Math.round(value)}`);
-                                                            }
-                                                        }
-
-                                                        background: Rectangle {
-                                                            id: trackBg
-                                                            x: eqSlider.leftPadding + (eqSlider.availableWidth - width) / 2
-                                                            y: eqSlider.topPadding
-                                                            implicitWidth: root.s(12)
-                                                            implicitHeight: root.s(130)
-                                                            width: root.s(12); height: eqSlider.availableHeight
-                                                            radius: ThemeBackend.borderRadius
-                                                            
-                                                            color: Qt.rgba((ThemeBackend.surface0 ? ThemeBackend.surface0.r : 0.2), (ThemeBackend.surface0 ? ThemeBackend.surface0.g : 0.2), (ThemeBackend.surface0 ? ThemeBackend.surface0.b : 0.3), 0.7)
-
-                                                            layer.enabled: true
-                                                            layer.effect: MultiEffect {
-                                                                id: trackEffect
-                                                                shadowEnabled: true
-                                                                shadowColor: "#000000"
-                                                                shadowOpacity: 0.9
-                                                                shadowBlur: 0.5
-                                                                shadowVerticalOffset: 1
-                                                            }
-
-                                                            Rectangle {
-                                                                z: -1
-                                                                anchors.centerIn: parent
-                                                                width: parent.width + root.s(17) + sliderDelegate.ringPulse * root.s(34)
-                                                                height: parent.height + root.s(17) + sliderDelegate.ringPulse * root.s(51)
-                                                                radius: parent.radius + root.s(8) + sliderDelegate.ringPulse * root.s(17)
-                                                                color: "transparent"
-                                                                border.color: root.eqAccentColor
-                                                                border.width: root.s(2) + sliderDelegate.ringPulse * root.s(4)
-                                                                opacity: sliderDelegate.ringPulse * 0.8 * (1.0 - root.eqLightningFade)
-                                                                
-                                                                layer.enabled: true
-                                                                layer.effect: MultiEffect { blurEnabled: true; blurMax: 32; blur: 1.0 }
-                                                            }
-
-                                                            Item {
-                                                                width: parent.width
-                                                                height: (1 - eqSlider.visualPosition) * parent.height
-                                                                y: eqSlider.visualPosition * parent.height
-                                                                
-                                                                layer.enabled: true
-                                                                layer.effect: MultiEffect {
-                                                                    maskEnabled: true
-                                                                    maskSource: eqFillMask
-                                                                }
-
-                                                                Rectangle {
-                                                                    id: eqFillMask
-                                                                    anchors.fill: parent
-                                                                    radius: ThemeBackend.borderRadius
-                                                                    visible: false
-                                                                    layer.enabled: true 
-                                                                }
-
-                                                                Rectangle {
-                                                                    anchors.fill: parent
-                                                                    color: root.eqAccentColor
-
-                                                                    Rectangle {
-                                                                        anchors.fill: parent
-                                                                        opacity: sliderDelegate.flashFade
-                                                                        gradient: Gradient {
-                                                                            orientation: Gradient.Vertical
-                                                                            GradientStop { position: 0.0; color: Qt.lighter(root.eqAccentColor, 1.3) }
-                                                                            GradientStop { position: 0.5; color: root.eqAccentColor }
-                                                                            GradientStop { position: 1.0; color: "transparent" }
-                                                                        }
-                                                                    }
-
-                                                                    Rectangle {
-                                                                        width: parent.width
-                                                                        height: root.s(70)
-                                                                        y: (sliderDelegate.trackPulse * (parent.height + height)) - height
-                                                                        opacity: Math.sin(sliderDelegate.trackPulse * Math.PI) * 2.0 * (1.0 - root.eqLightningFade)
-                                                                        
-                                                                        gradient: Gradient {
-                                                                            orientation: Gradient.Vertical
-                                                                            GradientStop { position: 0.0; color: "transparent" }
-                                                                            GradientStop { position: 0.2; color: root.eqAccentColor }
-                                                                            GradientStop { position: 0.5; color: ThemeBackend.text || "#ffffff" }
-                                                                            GradientStop { position: 0.8; color: Qt.lighter(root.eqAccentColor, 1.2) }
-                                                                            GradientStop { position: 1.0; color: "transparent" }
-                                                                        }
-                                                                        
-                                                                        layer.enabled: true
-                                                                        layer.effect: MultiEffect {
-                                                                            shadowEnabled: true; shadowColor: root.eqAccentColor; shadowBlur: 1.0; shadowOpacity: 1.0
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-
-                                                        handle: Rectangle {
-                                                            id: eqHandle
-                                                            x: eqSlider.leftPadding + (eqSlider.availableWidth - width) / 2
-                                                            y: eqSlider.topPadding + eqSlider.visualPosition * (eqSlider.availableHeight - height)
-                                                            implicitWidth: root.s(16)
-                                                            implicitHeight: root.s(16)
-                                                            width: root.s(16); height: root.s(16)
-                                                            radius: root.s(8)
-
-                                                            property color handleColor: ThemeBackend.text || "#cdd6f4"
-                                                            property color handleHoverColor: Qt.lighter(root.eqAccentColor, 1.15)
-                                                            property color handleDragColor: Qt.lighter(root.eqAccentColor, 1.30)
-
-                                                            color: eqSlider.pressed ? handleDragColor : (eqSlider.hovered ? handleHoverColor : handleColor)
-                                                            Behavior on color { ColorAnimation { duration: 150 } }
-
-                                                            property real targetScale: {
-                                                                if (eqSlider.pressed) return 1.25;
-                                                                if (eqSlider.hovered) return 1.08;
-                                                                return 1.0;
-                                                            }
-
-                                                            Behavior on targetScale {
-                                                                NumberAnimation {
-                                                                    duration: 150
-                                                                    easing.type: Easing.OutBack
-                                                                }
-                                                            }
-
-                                                            property real popScale: 1.0
-                                                            property real flashOpacity: 0.0
-
-                                                            SequentialAnimation {
-                                                                id: eqHandlePopAnim
-                                                                NumberAnimation { target: eqHandle; property: "popScale"; to: 1.12; duration: 100; easing.type: Easing.OutQuad }
-                                                                NumberAnimation { target: eqHandle; property: "popScale"; to: 1.0; duration: 200; easing.type: Easing.OutCubic }
-                                                            }
-
-                                                            Connections {
-                                                                target: eqSlider
-                                                                function onMoved() {
-                                                                    eqHandlePopAnim.restart();
-                                                                }
-                                                                function onPressedChanged() {
-                                                                    if (!eqSlider.pressed) {
-                                                                        eqHandle.flashOpacity = 0.35;
-                                                                        eqHandleFlashAnim.restart();
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            property var catColors: [
-                                                                root.eqAccentColor,
-                                                                ThemeBackend.pink || "#f5c2e7",
-                                                                ThemeBackend.lavender || "#b4befe",
-                                                                root.eqAccentColor,
-                                                                ThemeBackend.blue || "#89b4fa"
-                                                            ]
-
-                                                            Rectangle {
-                                                                anchors.centerIn: parent
-                                                                width: parent.width + root.s(31) * sliderDelegate.hitPulse
-                                                                height: width
-                                                                radius: width / 2
-                                                                color: (parent.catColors && parent.catColors.length > 0) ? (parent.catColors[(typeof index !== "undefined" ? index : 0) % parent.catColors.length] || root.eqAccentColor) : root.eqAccentColor
-                                                                opacity: sliderDelegate.hitPulse * (1.0 - root.eqLightningFade)
-                                                                layer.enabled: true
-                                                                layer.effect: MultiEffect { blurEnabled: true; blurMax: 32; blur: 1.0 }
-                                                            }
-
-                                                            Rectangle {
-                                                                anchors.fill: parent
-                                                                radius: parent.radius
-                                                                color: "#ffffff"
-                                                                opacity: eqHandle.flashOpacity
-                                                                PropertyAnimation on opacity { id: eqHandleFlashAnim; to: 0; duration: 300; easing.type: Easing.OutCubic }
-                                                            }
-
-                                                            scale: (targetScale * popScale) + (sliderDelegate.hitPulse * 0.4 * (1.0 - root.eqLightningFade))
-                                                        }
-                                                    }
-                                                    Text {
-                                                        text: modelData.lbl
-                                                        color: ThemeBackend.overlay1 || "#7f849c"
-                                                        font.family: ThemeBackend.fontFamily
-                                                        font.pixelSize: root.s(9.5)
-                                                        font.bold: true
-                                                        Layout.alignment: Qt.AlignHCenter
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Canvas {
-                                        id: lightningCanvas
-                                        anchors.fill: parent
-                                        opacity: 1.0 - root.eqLightningFade
-                                        z: 0
-
-                                        renderTarget: Canvas.FramebufferObject
-
-                                        layer.enabled: true
-                                        layer.effect: MultiEffect {
-                                            shadowEnabled: true
-                                            shadowColor: root.eqAccentColor
-                                            shadowBlur: 1.0
-                                            shadowOpacity: 0.8
-                                            shadowVerticalOffset: 0
-                                            shadowHorizontalOffset: 0
-                                        }
-
-                                        Timer {
-                                            interval: 16
-                                            running: root.active && root.eqLightningFade < 1.0 && root.eqLightningProgress > 0.0
-                                            repeat: true
-                                            onTriggered: lightningCanvas.requestPaint()
-                                        }
-
-                                        onPaint: {
-                                            if (!root.active) return;
-                                            var ctx = getContext("2d");
-                                            ctx.clearRect(0, 0, width, height);
-
-                                            if (root.eqLightningProgress <= 0.0 || root.eqLightningFade >= 1.0) return;
-
-                                            var time = Date.now() / 1000;
-                                            var maxIdx = root.eqLightningProgress;
-
-                                            ctx.lineJoin = "round";
-                                            ctx.lineCap = "round";
-
-                                            var pts = [];
-                                            for (var i = 1; i <= 10; i++) {
-                                                var val = root.eqData["b" + i] !== undefined ? Number(root.eqData["b" + i]) : 0;
-                                                var norm = 1.0 - ((val + 12) / 24);
-                                                
-                                                var py = root.s(10) + norm * (height - root.s(30));
-                                                var px = (i - 0.5) * (width / 10);
-                                                pts.push({ x: px, y: py });
-                                            }
-
-                                            for (var s = 0; s < 4; s++) {
-                                                ctx.beginPath();
-                                                ctx.moveTo(pts[0].x, pts[0].y);
-
-                                                for (var i = 0; i < pts.length - 1; i++) {
-                                                    if (i > maxIdx) break;
-
-                                                    var p1 = pts[i];
-                                                    var p2 = pts[i+1];
-
-                                                    var fraction = 1.0;
-                                                    if (maxIdx < i + 1) {
-                                                        fraction = maxIdx - i;
-                                                    }
-
-                                                    var steps = s === 3 ? 6 : 8;
-                                                    for (var j = 1; j <= steps; j++) {
-                                                        var t = j / steps;
-                                                        if (t > fraction) t = fraction;
-
-                                                        var cx = p1.x + (p2.x - p1.x) * t;
-                                                        var cy = p1.y + (p2.y - p1.y) * t;
-
-                                                        var envelope = Math.sin(t * Math.PI);
-
-                                                        var noiseAmpX = s === 3 ? 1.0 : (4 - s) * 4;
-                                                        var noiseAmpY = s === 3 ? 1.0 : (4 - s) * 5;
-                                                        
-                                                        var sepWaveX = (s < 2) ? Math.sin(time * 3 + i + j + s) * root.s(9) * envelope : 0;
-                                                        var sepWaveY = (s < 2) ? Math.cos(time * 2.5 + i - j - s) * root.s(13.5) * envelope : 0;
-
-                                                        var noiseX = Math.sin(time * (10+s) + i + j) * Math.cos(time * 8 - i + j) * noiseAmpX * envelope * (1 - root.eqLightningFade);
-                                                        var noiseY = Math.cos(time * (9-s) + i - j) * Math.sin(time * 7 + i - j) * noiseAmpY * envelope * (1 - root.eqLightningFade);
-
-                                                        ctx.lineTo(cx + sepWaveX + noiseX, cy + sepWaveY + noiseY);
-
-                                                        if (t === fraction) break;
-                                                    }
-                                                }
-
-                                                if (s === 0) {
-                                                    ctx.lineWidth = root.s(18);
-                                                    ctx.strokeStyle = root.eqAccentColor;
-                                                    ctx.globalAlpha = 0.35;
-                                                } else if (s === 1) {
-                                                    ctx.lineWidth = root.s(9);
-                                                    ctx.strokeStyle = Qt.lighter(root.eqAccentColor, 1.25);
-                                                    ctx.globalAlpha = 0.65;
-                                                } else if (s === 2) {
-                                                    ctx.lineWidth = root.s(4.5);
-                                                    ctx.strokeStyle = Qt.lighter(root.eqAccentColor, 1.5);
-                                                    ctx.globalAlpha = 0.9;
-                                                } else if (s === 3) {
-                                                    ctx.lineWidth = root.s(2.2);
-                                                    ctx.strokeStyle = "#ffffff";
-                                                    ctx.globalAlpha = 1.0;
-                                                }
-
-                                                ctx.stroke();
-                                            }
-                                        }
-                                    }
-                                }
-
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: root.s(7)
-                                    
-                                    opacity: root.introPresets
-                                    transform: Translate { y: root.s(18) * (1 - root.introPresets) }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: root.s(8)
-                                        Repeater {
-                                            model: ["Flat", "Bass", "Treble", "Vocal"]
-                                            delegate: PresetButton { name: modelData }
-                                        }
-                                    }
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: root.s(8)
-                                        Repeater {
-                                            model: ["Pop", "Rock", "Jazz", "Classic"]
-                                            delegate: PresetButton { name: modelData }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Item {
-                            id: lyricsView
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: parent.width
-                            x: bottomSectionSwitch.currentIndex === 1 ? 0 : parent.width + root.s(24)
-                            opacity: bottomSectionSwitch.currentIndex === 1 ? 1.0 : 0.0
-                            visible: opacity > 0.0
-                            clip: true
-
-                            Behavior on x { NumberAnimation { duration: 420; easing.type: Easing.OutQuart } }
-                            Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-
-                            LyricsView {
-                                id: popupLyricsViewport
-                                anchors.fill: parent
-                                visible: Lyrics.hasLyrics
-                                sideMargin: root.s(4)
-                                baseActiveFont: root.s(18)
-                                lineHeight: Math.max(root.s(30), baseActiveFont * 1.4)
-                                lineSpacing: Math.max(root.s(6), baseActiveFont * 0.25)
-                                activeLineColor: ThemeBackend.mauve || root.dynamicTextColor
-                                inactiveLineColor: ThemeBackend.text || "#cdd6f4"
-                                fontFamily: ThemeBackend.fontFamily
-                            }
-
-                            ColumnLayout {
-                                anchors.centerIn: parent
-                                spacing: root.s(6)
-                                visible: !Lyrics.hasLyrics
-                                z: 5
-
-                                Text {
-                                    Layout.alignment: Qt.AlignHCenter
-                                    text: "󰎈"
-                                    font.family: "Iosevka Nerd Font"
-                                    font.pixelSize: root.s(28)
-                                    color: root.dynamicTextColor
-                                    opacity: 0.75
-                                }
-
-                                Text {
-                                    Layout.alignment: Qt.AlignHCenter
-                                    text: {
-                                        if (!root.hasTargetPlayer || !root.targetPlayer.trackTitle) return I18n.t("music.nothing_playing");
-                                        if (Lyrics.loading) return I18n.t("music.searching_lyrics");
-                                        return I18n.t("music.no_lyrics");
-                                    }
-                                    font.family: ThemeBackend.fontFamily
-                                    font.weight: Font.DemiBold
-                                    font.pixelSize: root.s(12)
-                                    color: ThemeBackend.subtext0 || "#a6adc8"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        Text {
+            anchors.right: parent.right
+            text: root.trackLength > 0 ? "-" + root.formatTime(root.trackLength - seekBar.shownValue) : "0:00"
+            font.family: ThemeBackend.fontFamily
+            font.pixelSize: root.s(11)
+            font.weight: Font.DemiBold
+            font.features: { "tnum": 1 }
+            color: root.dim
         }
     }
 
-    component PresetButton : ClickButton {
-        property string name: ""
-        Layout.fillWidth: true
-        Layout.preferredWidth: 1
-        implicitHeight: root.s(28)
-        cornerRadius: ThemeBackend.borderRadius
-        buttonText: I18n.t("music.presets." + name.toLowerCase())
-        textFontSize: root.s(11.5)
-        horizontalPadding: 0
-        property bool isActivePreset: root.eqData && root.eqData.preset === name
-        accentColor: isActivePreset ? (ThemeBackend.mauve || "#cba6f7") : (ThemeBackend.surface0 || "#313244")
-        textColor: isActivePreset ? (ThemeBackend.base || "#1e1e2e") : (ThemeBackend.subtext0 || "#a6adc8")
-        onClicked: root.applyPresetOptimistically(name)
+    MusicSeekBar {
+        id: seekBar
+        x: root.colX
+        width: root.colW
+        y: timeRow.y - root.s(4) - height
+        height: root.s(16)
+        from: 0
+        to: Math.max(1, root.trackLength)
+        value: root.livePos
+        interactive: root.hasTrack && root.targetPlayer.canSeek
+        trackHeight: root.s(4)
+        hoverTrackHeight: root.s(6)
+        knobSize: root.s(13)
+        fillColor: root.isPlaying ? ThemeBackend.mauve : Qt.alpha(ThemeBackend.text, 0.6)
+        onCommitted: (v) => { if (root.targetPlayer && root.targetPlayer.canSeek) root.targetPlayer.position = v; }
+    }
+
+    // ── Right pane: synced lyrics or the equalizer ────────────────────────────
+    Item {
+        id: pane
+        x: root.paneX + root.s(36) * (1 - root.split)
+        y: root.margin + root.s(18)
+        width: root.paneW
+        height: root.height - root.margin * 2 - root.s(18)
+        opacity: root.split
+        visible: opacity > 0.01
+
+        SyncedLyrics {
+            id: lyricsView
+            anchors.fill: parent
+            player: root.targetPlayer
+            fontSize: root.s(19)
+            lineSpacing: root.s(13)
+            anchorRatio: 0.34
+            activeColor: ThemeBackend.text
+            inactiveColor: ThemeBackend.text
+            accentColor: ThemeBackend.mauve
+            opacity: root.paneContent === "lyrics" ? 1 : 0
+            visible: opacity > 0.01 && root.lyricsAvailable
+            Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+        }
+
+        MusicEqPane {
+            id: eqPane
+            anchors.fill: parent
+            anchors.topMargin: root.s(10)
+            anchors.bottomMargin: root.s(6)
+            active: root.active && root.paneContent === "eq"
+            chipColor: root.chip
+            chipHoverColor: root.chipHover
+            opacity: root.paneContent === "eq" ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+        }
     }
 }
