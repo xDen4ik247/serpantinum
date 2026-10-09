@@ -75,7 +75,7 @@ for s in niri-autofit niri-dwt-toggle fcitx-layout ime-fix serp-tweaks niri-keys
          music-ctl music-player music-smart \
          gcal-setup gcal-sync \
          ai ai-chat aidict aipanel ai-notes ai-notes-panel anki-add jocr \
-         greeter-sync jp-quiz glass-music power-mode; do
+         greeter-sync jp-quiz glass-music power-mode niri-focus-or-run; do
     copy ".local/bin/$s"
 done
 
@@ -87,6 +87,14 @@ copy .local/share/gcal-sync/gcal_sync.py
 copy .local/share/gcal-sync/gcal_parse.py
 copy .local/share/npu-ocr/jocr
 copy .local/share/npu-ocr/ui
+
+echo ":: apps (committed files of ~/Projects/<app> only)"
+for app in jp-quiz glass-music; do
+    if git -C "$H/Projects/$app" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+        rm -rf "$R/apps/$app" && mkdir -p "$R/apps/$app"
+        git -C "$H/Projects/$app" archive HEAD | tar -x -C "$R/apps/$app"
+    fi
+done
 
 echo ":: SDDM greeter theme -> system/"
 if [ -d /usr/share/sddm/themes/serp-glass ]; then
