@@ -157,7 +157,7 @@ Item {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     if (!root.isMediaActive) {
-                        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/music-player\""]);
+                        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/glass-music\""]);
                     } else if (Caching.serpantinumDir) {
                         Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"]);
                     }

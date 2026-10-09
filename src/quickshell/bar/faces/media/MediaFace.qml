@@ -10,7 +10,7 @@ import "../../../media" as Music
 //   playing/paused: round cover · "Title — Artist" (marquee when long) · thin progress line;
 //                   hovering reveals prev / play / next and the pill grows to fit them.
 //   nothing playing: collapses to a small music button that opens the library player.
-// Mouse: left = music panel, middle = play/pause, right = library player (rmpc),
+// Mouse: left = music panel, middle = play/pause, right = music library (Glass Music),
 //        wheel = player volume (shown on the progress line for a moment).
 // Smart shuffle (music-smart): a 󰒝 chip leads the hover controls (and appears next to the
 //   idle music button); click = start / re-roll, right-click = leave smart mode. While a smart
@@ -91,7 +91,7 @@ Item {
         Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"]);
     }
     function openPlayer() {
-        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/music-player\""]);
+        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/glass-music\""]);
     }
 
     HoverHandler { id: faceHover }

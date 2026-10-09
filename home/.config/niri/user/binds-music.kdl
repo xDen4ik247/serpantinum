@@ -1,9 +1,10 @@
 // Keybinds owned by the music feature (see config.kdl include order).
-// Player: MPD user service + rmpc (TUI) + mpd-mpris (MPRIS for the bar/panel/playerctl).
+// Player: MPD user service + Glass Music (library app, Mod+Shift+M) + mpd-mpris (MPRIS for the
+// bar/panel/playerctl). The rmpc TUI stays available as `music-player` (Glass Music menu → Open terminal player).
 // music-ctl acts on the player the bar shows: the one playing, else MPD.
 binds {
     Mod+M hotkey-overlay-title="Music: now-playing panel" { spawn "serpantinum" "msg" "toggle" "music"; }
-    Mod+Shift+M hotkey-overlay-title="Music: open library player (rmpc)" { spawn "/home/user/.local/bin/music-player"; }
+    Mod+Shift+M hotkey-overlay-title="Music: open Glass Music library (or focus it)" { spawn "/home/user/.local/bin/glass-music"; }
     Mod+Comma hotkey-overlay-title="Music: previous track" { spawn "/home/user/.local/bin/music-ctl" "previous"; }
     Mod+Period hotkey-overlay-title="Music: next track" { spawn "/home/user/.local/bin/music-ctl" "next"; }
     Mod+S hotkey-overlay-title="Music: smart shuffle (start / re-roll)" { spawn "/home/user/.local/bin/music-smart" "start"; }

@@ -259,7 +259,7 @@ Item {
             : (l === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None);
     }
     function openLibrary() {
-        Quickshell.execDetached(["bash", "-c", "\"" + Caching.serpantinumDir + "/scripts/qs_manager.sh\" close; exec \"$HOME/.local/bin/music-player\""]);
+        Quickshell.execDetached(["bash", "-c", "\"" + Caching.serpantinumDir + "/scripts/qs_manager.sh\" close; exec \"$HOME/.local/bin/glass-music\""]);
     }
 
     Keys.onPressed: (event) => {
