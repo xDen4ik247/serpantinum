@@ -11,7 +11,9 @@ case "$COMPOSITOR" in
         niri msg -j event-stream 2>/dev/null | jq --unbuffered -c 'select(has("KeyboardLayoutSwitched"))' > "$PIPE" &
         if command -v fcitx-layout >/dev/null; then
             fcitx-layout watch > "$PIPE" &
-            (sleep 30; echo tick) > "$PIPE" &
+            # wake every 30 s anyway via read's own timeout (a `(sleep 30; echo tick)` subshell left
+            # its sleep orphaned whenever the watcher was killed)
+            READ_TIMEOUT=30
         fi
         ;;
     sway)
@@ -26,5 +28,9 @@ case "$COMPOSITOR" in
         ;;
 esac
 
-read -r _ < "$PIPE"
+if [ -n "${READ_TIMEOUT:-}" ]; then
+    read -r -t "$READ_TIMEOUT" _ <> "$PIPE"   # read-write open: never blocks, no EOF needed
+else
+    read -r _ < "$PIPE"
+fi
 sleep 0.05

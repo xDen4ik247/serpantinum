@@ -434,7 +434,8 @@ def stale_files(c, full=False):
         old = have.get(f)
         if full or not old or old[0] != st.st_mtime or old[1] != st.st_size:
             todo.append(f)
-    gone = [p for p in have if p not in set(files)]
+    present = set(files)   # built once (it was rebuilt for every indexed path: O(n^2))
+    gone = [p for p in have if p not in present]
     return todo, gone
 
 
