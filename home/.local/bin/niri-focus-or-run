@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# niri-focus-or-run — focus an app's existing niri window, or launch it.
+#
+#   niri-focus-or-run [--title TITLE] APP_ID -- COMMAND [ARGS...]
+#       focus the first window with this app-id (and exact title, if given); otherwise exec COMMAND
+#   niri-focus-or-run [--title TITLE] APP_ID
+#       focus only: exit 0 if a window was focused, 1 if none was found (so a launcher can do its own
+#       pre-launch work:  niri-focus-or-run my-app && exit 0)
+#
+# Used by glass-music, jp-quiz, ai-chat and music-player. If niri is not reachable, no window is
+# found and the command is launched.
+set -u
+title= has_title=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --title) title=${2-}; has_title=1; shift 2 ;;
+        --title=*) title=${1#--title=}; has_title=1; shift ;;
+        -h|--help) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 0 ;;
+        *) break ;;
+    esac
+done
+[ $# -ge 1 ] || { echo "usage: niri-focus-or-run [--title TITLE] APP_ID [-- COMMAND ...]" >&2; exit 2; }
+app_id=$1; shift
+if [ $# -gt 0 ]; then
+    [ "$1" = "--" ] || { echo "niri-focus-or-run: expected -- before the command" >&2; exit 2; }
+    shift
+fi
+
+id=$(niri msg --json windows 2>/dev/null |
+    jq -r --arg a "$app_id" --arg t "$title" --argjson ht "$has_title" \
+        'first(.[] | select(.app_id == $a and ($ht == 0 or .title == $t)) | .id) // empty' 2>/dev/null)
+
+if [ -n "$id" ]; then
+    if [ $# -gt 0 ]; then
+        exec niri msg action focus-window --id "$id"
+    fi
+    niri msg action focus-window --id "$id" >/dev/null
+    exit $?
+fi
+[ $# -gt 0 ] || exit 1
+exec "$@"

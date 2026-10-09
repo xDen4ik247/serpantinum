@@ -1,7 +1,6 @@
 #!/bin/bash
 # ai-chat — Mod+A: floating liquid-glass assistant (kitty, app-id "ai-chat").
-# If it is already open, focus it instead of starting a second one.
-id=$(niri msg -j windows 2>/dev/null | python3 -c 'import json,sys; print(next((w["id"] for w in json.load(sys.stdin) if w.get("app_id")=="ai-chat"), ""))')
-if [ -n "$id" ]; then exec niri msg action focus-window --id "$id"; fi
-exec kitty --class ai-chat --title "Assistant" -o window_padding_width=14 -o remember_window_size=no \
+# If it is already open, focus it instead of starting a second one (~/.local/bin/niri-focus-or-run).
+exec "$HOME/.local/bin/niri-focus-or-run" ai-chat -- \
+    kitty --class ai-chat --title "Assistant" -o window_padding_width=14 -o remember_window_size=no \
     "$HOME/.venvs/default/bin/python" "$HOME/.local/share/aifeat/chat.py"

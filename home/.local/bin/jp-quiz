@@ -4,14 +4,10 @@
 APP="${JPQUIZ_APP:-$HOME/.local/share/jp-quiz/app}"
 TITLE="${JPQUIZ_TITLE:-JP Quiz}"
 APP_ID="${JPQUIZ_APP_ID:-jp-quiz}"
-id=$(niri msg --json windows 2>/dev/null | python3 -c '
-import json, sys
-a, t = sys.argv[1], sys.argv[2]
-for w in json.load(sys.stdin):
-    if w.get("app_id") == a and w.get("title") == t:
-        print(w["id"]); break' "$APP_ID" "$TITLE")
-if [ -n "$id" ]; then
-    exec niri msg action focus-window --id "$id"
+# Already open? Focus it (shared helper ~/.local/bin/niri-focus-or-run: app-id + exact title).
+FOCUS=$(command -v niri-focus-or-run || echo "$HOME/.local/bin/niri-focus-or-run")
+if [ -x "$FOCUS" ] && "$FOCUS" --title "$TITLE" "$APP_ID"; then
+    exit 0
 fi
 # QS_APP_ID makes quickshell use this as the Wayland xdg-toplevel app-id (default org.quickshell).
 export JPQUIZ_APP="$APP" JPQUIZ_TITLE="$TITLE" QS_APP_ID="$APP_ID"

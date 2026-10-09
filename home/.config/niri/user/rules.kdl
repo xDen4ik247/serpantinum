@@ -20,8 +20,15 @@ window-rule {
 // kitty draws a see-through background (kitty/user.conf); niri blurs and boosts
 // the wallpaper behind it, adds a bright hairline rim and a soft drop shadow.
 // The rim is brighter on the focused terminal, so it replaces the focus ring.
+// The same glass is shared by the feature windows below (one rule, one match per app);
+// their own sizes / floating / corner radius stay in the per-feature rules-*.kdl.
 window-rule {
     match app-id="^(kitty|claude)$"
+    match app-id="^ai-chat$"            // Mod+A assistant (rules-ai.kdl)
+    match app-id="^gcal-setup$"         // Connect Google Calendar (rules-calendar.kdl)
+    match app-id="^music-player$"       // rmpc library player (rules-music.kdl)
+    match app-id="^glass-music$"        // Glass Music app (rules-music.kdl)
+    match app-id="^jp-quiz$"            // JP Quiz (rules-quiz.kdl)
     background-effect {
         blur true
         saturation 1.9

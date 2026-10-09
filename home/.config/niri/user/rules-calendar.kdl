@@ -17,25 +17,5 @@ window-rule {
     open-floating true
     default-column-width { fixed 900; }
     default-window-height { fixed 620; }
-
-    background-effect {
-        blur true
-        saturation 1.9
-        noise 0.03
-    }
-    draw-border-with-background false
-    focus-ring { off; }
-    border {
-        on
-        width 1.5
-        active-gradient from="#ffffffb0" to="#ffffff26" angle=150
-        inactive-gradient from="#ffffff4d" to="#ffffff10" angle=150
-    }
-    shadow {
-        on
-        softness 36
-        spread 2
-        offset x=0 y=6
-        color "#0000006a"
-    }
+    // liquid-glass look (blur, rim, shadow): the shared glass rule in rules.kdl
 }
