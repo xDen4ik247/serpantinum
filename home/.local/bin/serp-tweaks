@@ -168,13 +168,17 @@ restore_files() {
 
 save_cmd() {
     local commit tmp rel name n=0
+    local -A keep=()   # rel paths saved by this run (as a patch or as a whole file)
     commit=$(installed_commit)
     have_commit "$commit" || { warn "commit $commit isn't in $CACHE"; return 1; }
     tmp=$(mktemp -d)
-    git -C "$CACHE" archive "$commit" src bin | tar -x -C "$tmp"
+    if ! git -C "$CACHE" archive "$commit" src bin | tar -x -C "$tmp" || [ ! -d "$tmp/src" ]; then
+        warn "can't extract upstream src/bin at $commit — nothing saved"; rm -rf "$tmp"; return 1
+    fi
     mkdir -p "$PATCHES"
     # Edited upstream files: a normal diff against upstream.
     while IFS= read -r rel; do
+        keep[$rel]=1
         is_binary "$TARGET/$rel" && { store_binary "$rel"; n=$((n + 1)); continue; }
         name="${rel//\//__}.patch"
         (cd "$tmp" && diff -u --label "a/$rel" --label "b/$rel" "$rel" "$TARGET/$rel") > "$PATCHES/$name"
@@ -187,6 +191,7 @@ save_cmd() {
     )
     # Files you added: a patch that creates them, so a full redeploy can't lose them.
     while IFS= read -r rel; do
+        keep[$rel]=1
         is_binary "$TARGET/$rel" && { store_binary "$rel"; n=$((n + 1)); continue; }
         name="${rel//\//__}.patch"
         diff -u --label /dev/null --label "b/$rel" /dev/null "$TARGET/$rel" > "$PATCHES/$name"
@@ -205,7 +210,32 @@ save_cmd() {
             done
     )
     rm -rf "$tmp"
+    prune_saved keep
     [ "$n" -gt 0 ] || say "no edits found in $TARGET (compared with upstream $commit)"
+}
+
+# Drop patches / kept files for paths that no longer differ from upstream (edit reverted or
+# adopted upstream), so a later sync can't re-apply a stale change. Only src/ and bin/ entries
+# (the ones save creates) are considered; a binary file's stale text patch was already dropped.
+prune_saved() {
+    local -n _keep=$1
+    local p f rel
+    shopt -s nullglob
+    for p in "$PATCHES"/*.patch; do
+        rel=$(sed -n '2{s|^+++ b/||p;q}' "$p")
+        case "$rel" in src/*|bin/*) ;; *) continue ;; esac
+        [ -n "${_keep[$rel]:-}" ] && continue
+        rm -f "$p" && say "dropped     $rel (no longer differs from upstream) → removed patches/$(basename "$p")"
+    done
+    shopt -u nullglob
+    [ -d "$FILES" ] || return 0
+    while IFS= read -r f; do
+        rel=${f#"$FILES"/}
+        case "$rel" in src/*|bin/*) ;; *) continue ;; esac
+        [ -n "${_keep[$rel]:-}" ] && continue
+        rm -f "$f" && say "dropped     $rel (no longer differs from upstream) → removed files/$rel"
+    done < <(find "$FILES" -type f)
+    find "$FILES" -mindepth 1 -type d -empty -delete 2>/dev/null
 }
 
 case "${1:-}" in
