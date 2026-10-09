@@ -59,7 +59,9 @@ Item {
     }
 
     property real baseHeight: barWindow ? barWindow.s(isCompact ? 118 : 130) : (isCompact ? 118 : 130)
-    property real targetHeight: (module && !module.moduleActive) ? 0 : baseHeight
+    // Nothing playing: collapse to the music button alone (it opens the library player).
+    property real idleHeight: barWindow ? barWindow.s(isCompact ? 34 : 40) : (isCompact ? 34 : 40)
+    property real targetHeight: (module && !module.moduleActive) ? 0 : (isMediaActive ? baseHeight : idleHeight)
 
     implicitHeight: targetHeight
     implicitWidth: parent ? parent.width : 0
@@ -98,7 +100,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             width: barWindow ? barWindow.s(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
             height: barWindow ? barWindow.s(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
-            radius: barWindow ? barWindow.s(root.isCompact ? 7 : 8) : (root.isCompact ? 7 : 8)
+            radius: width / 2
             color: root.isCompact ? Qt.lighter(ThemeBackend.surface1, 1.1) : ThemeBackend.surface1
             border.width: 1
             border.color: (isMediaActive && isPlaying) ? ThemeBackend.mauve : (root.isCompact ? ThemeBackend.surface2 : ThemeBackend.surface1)
@@ -154,7 +156,9 @@ Item {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (Caching.serpantinumDir) {
+                    if (!root.isMediaActive) {
+                        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/music-player\""]);
+                    } else if (Caching.serpantinumDir) {
                         Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"]);
                     }
                 }
@@ -164,6 +168,7 @@ Item {
         Column {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: barWindow ? barWindow.s(root.isCompact ? 3 : 4) : (root.isCompact ? 3 : 4)
+            visible: root.isMediaActive
 
             IconButton {
                 width: barWindow ? barWindow.s(root.isCompact ? 24 : 26) : (root.isCompact ? 24 : 26)

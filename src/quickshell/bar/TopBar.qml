@@ -30,6 +30,27 @@ Item {
     property bool isSolid: barStyle === "solid" || barStyle === "fill"
     property bool distinctPills: barWindow ? (barWindow.distinctPills !== undefined ? barWindow.distinctPills : false) : false
     property real cornerRadius: barWindow ? barWindow.cornerRadius : 12
+    property bool glassActive: barWindow ? !!barWindow.glassActive : false
+    property real glassTint: barWindow && barWindow.glassTint !== undefined ? barWindow.glassTint : 0.6
+
+    // Every glass island (standalone modules first, then groups), for the blur region in Bar.qml.
+    property var islandItems: []
+    function rebuildIslands() {
+        let out = [];
+        for (let i = 0; i < islandRepeater.count; i++) {
+            let it = islandRepeater.itemAt(i);
+            if (it) out.push(it);
+        }
+        for (let j = 0; j < groupBgRepeater.count; j++) {
+            let g = groupBgRepeater.itemAt(j);
+            if (g) out.push(g);
+        }
+        islandItems = out;
+    }
+    function islandAt(i) {
+        let arr = islandItems;
+        return (i >= 0 && i < arr.length) ? arr[i] : null;
+    }
 
     property bool suppressAnimation: false
     property bool layoutAnimationsEnabled: barWindow && barWindow.startupCascadeFinished && !barWindow.positionChanging && !contentWrapper.suppressAnimation
@@ -272,7 +293,7 @@ Item {
         return (w && isModuleActive(norm)) ? (w.targetWidth !== undefined ? w.targetWidth : w.width) : 0;
     }
 
-    property real gap: barWindow ? barWindow.s(2) : 2
+    property real gap: barWindow ? barWindow.s(glassActive ? 6 : 2) : 2
     property real groupGap: barWindow ? -barWindow.s(4) : -4
     property real gap8: barWindow ? barWindow.s(10) : 10
     property real groupPad: (!isSolid || distinctPills) ? (barWindow ? barWindow.s(4) : 4) : 0
@@ -314,11 +335,13 @@ Item {
     property real distinctEdgePadding: (isSolid && distinctPills) ? (barWindow ? barWindow.s(4) : 4) : 4
     property real fillInset: distinctEdgePadding
 
-    property real baseMinLeft: isFill ? fillInset : (barWindow ? (barWindow.horizontalOffset + barWindow.s(1) + distinctEdgePadding) : distinctEdgePadding)
-    property real baseMaxRight: isFill ? (contentWrapper.width - fillInset) : (barWindow ? (contentWrapper.width - barWindow.horizontalOffset - barWindow.s(1) - distinctEdgePadding) : (contentWrapper.width - distinctEdgePadding))
+    // glass islands line up with niri's 4px window gaps (Bar.qml drops the side margins)
+    property real glassEdge: barWindow ? barWindow.s(4) : 4
+    property real baseMinLeft: glassActive ? glassEdge : isFill ? fillInset : (barWindow ? (barWindow.horizontalOffset + barWindow.s(1) + distinctEdgePadding) : distinctEdgePadding)
+    property real baseMaxRight: glassActive ? (contentWrapper.width - glassEdge) : isFill ? (contentWrapper.width - fillInset) : (barWindow ? (contentWrapper.width - barWindow.horizontalOffset - barWindow.s(1) - distinctEdgePadding) : (contentWrapper.width - distinctEdgePadding))
 
-    property real screenMinLeft: isFill ? fillInset : (barWindow ? (barWindow.s(1) + distinctEdgePadding) : distinctEdgePadding)
-    property real screenMaxRight: isFill ? (contentWrapper.width - fillInset) : (barWindow ? (contentWrapper.width - barWindow.s(1) - distinctEdgePadding) : (contentWrapper.width - distinctEdgePadding))
+    property real screenMinLeft: glassActive ? glassEdge : isFill ? fillInset : (barWindow ? (barWindow.s(1) + distinctEdgePadding) : distinctEdgePadding)
+    property real screenMaxRight: glassActive ? (contentWrapper.width - glassEdge) : isFill ? (contentWrapper.width - fillInset) : (barWindow ? (contentWrapper.width - barWindow.s(1) - distinctEdgePadding) : (contentWrapper.width - distinctEdgePadding))
 
     property real rawCNaturalX: {
         if (layoutState === "settings") return screenMaxRight - rWidthTarget - crGap - cWidthTarget;
@@ -638,8 +661,40 @@ Item {
         }
     }
 
+    // Glass islands behind standalone (ungrouped) modules.
+    Repeater {
+        id: islandRepeater
+        model: BarModuleRegistry.moduleIds()
+        onItemAdded: Qt.callLater(contentWrapper.rebuildIslands)
+        onItemRemoved: Qt.callLater(contentWrapper.rebuildIslands)
+        delegate: Item {
+            id: isle
+            required property string modelData
+            readonly property var mod: contentWrapper.getModuleItem(modelData)
+            readonly property bool islandShown: contentWrapper.glassActive && !!mod && mod.moduleActive && !mod.isGrouped && mod.visible && mod.width > 0
+            readonly property real islandRadius: ThemeBackend.borderRadius
+            readonly property real islandOffsetY: contentWrapper.hideOffsetY
+            z: 0
+            x: mod ? mod.x : 0
+            y: mod ? mod.y : 0
+            width: mod ? mod.width : 0
+            height: mod ? mod.height : 0
+            visible: islandShown
+            opacity: mod ? mod.opacity : 0
+
+            GlassPill {
+                anchors.fill: parent
+                radius: isle.islandRadius
+                tintAlpha: contentWrapper.glassTint
+                lit: !!isle.mod && isle.mod.hovered
+            }
+        }
+    }
+
     Repeater {
         id: groupBgRepeater
+        onItemAdded: Qt.callLater(contentWrapper.rebuildIslands)
+        onItemRemoved: Qt.callLater(contentWrapper.rebuildIslands)
         model: contentWrapper.groupDefs
         delegate: Rectangle {
             id: groupBgRect
@@ -679,11 +734,30 @@ Item {
             visible: metrics.v && (barWindow ? !barWindow.positionChanging : true) && width > 0 && (!contentWrapper.isSolid || contentWrapper.distinctPills)
             opacity: visible ? 1.0 : 0.0
 
-            color: (contentWrapper.isSolid && contentWrapper.distinctPills)
+            color: contentWrapper.glassActive ? "transparent" : ((contentWrapper.isSolid && contentWrapper.distinctPills)
                 ? Qt.alpha(Qt.darker(ThemeBackend.surface0, 1.15), (barWindow && barWindow.barOpacity !== undefined) ? barWindow.barOpacity : 1.0)
-                : Qt.alpha(ThemeBackend.base, (barWindow && barWindow.barOpacity !== undefined) ? barWindow.barOpacity : 1.0)
+                : Qt.alpha(ThemeBackend.base, (barWindow && barWindow.barOpacity !== undefined) ? barWindow.barOpacity : 1.0))
             radius: ThemeBackend.borderRadius
             border.width: 0
+
+            readonly property bool islandShown: contentWrapper.glassActive && visible
+            readonly property real islandRadius: radius
+            readonly property real islandOffsetY: contentWrapper.hideOffsetY
+            readonly property bool groupHovered: {
+                for (let i = 0; i < groupIds.length; i++) {
+                    let w = contentWrapper.getPositionedWidget(groupIds[i]);
+                    if (w && w.hovered) return true;
+                }
+                return false;
+            }
+
+            GlassPill {
+                anchors.fill: parent
+                visible: contentWrapper.glassActive
+                radius: groupBgRect.radius
+                tintAlpha: contentWrapper.glassTint
+                lit: groupBgRect.groupHovered
+            }
 
             Behavior on x {
                 enabled: contentWrapper.layoutAnimationsEnabled

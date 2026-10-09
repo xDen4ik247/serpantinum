@@ -108,6 +108,46 @@ Variants {
                 let dummy = configRevision;
                 return (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.autohideTimeout !== undefined) ? Config.rawSettings.bar.autohideTimeout : 1000;
             }
+            // Liquid-glass islands (bar.glass, modular style only): translucent
+            // pills that niri blurs behind via ext-background-effect.
+            property bool glassEnabled: {
+                let dummy = configRevision;
+                return (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.glass !== undefined) ? Boolean(Config.rawSettings.bar.glass) : false;
+            }
+            property real glassTint: {
+                let dummy = configRevision;
+                let v = (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.glassTint !== undefined) ? Number(Config.rawSettings.bar.glassTint) : 60;
+                return Math.max(0, Math.min(100, isNaN(v) ? 60 : v)) / 100.0;
+            }
+            property bool glassActive: glassEnabled && !isSolid && !isVertical
+            // room below the islands for their soft shadow (input mask and exclusive zone unchanged)
+            property int glassShadowRoom: (glassActive && barPosition === "top" && !autohide) ? s(8) : 0
+
+            WlrLayershell.namespace: "qs-bar"
+
+            BackgroundEffect.blurRegion: Region {
+                IslandRegion { target: contentWrapper.islandAt(0) }
+                IslandRegion { target: contentWrapper.islandAt(1) }
+                IslandRegion { target: contentWrapper.islandAt(2) }
+                IslandRegion { target: contentWrapper.islandAt(3) }
+                IslandRegion { target: contentWrapper.islandAt(4) }
+                IslandRegion { target: contentWrapper.islandAt(5) }
+                IslandRegion { target: contentWrapper.islandAt(6) }
+                IslandRegion { target: contentWrapper.islandAt(7) }
+                IslandRegion { target: contentWrapper.islandAt(8) }
+                IslandRegion { target: contentWrapper.islandAt(9) }
+                IslandRegion { target: contentWrapper.islandAt(10) }
+                IslandRegion { target: contentWrapper.islandAt(11) }
+                IslandRegion { target: contentWrapper.islandAt(12) }
+                IslandRegion { target: contentWrapper.islandAt(13) }
+                IslandRegion { target: contentWrapper.islandAt(14) }
+                IslandRegion { target: contentWrapper.islandAt(15) }
+                IslandRegion { target: contentWrapper.islandAt(16) }
+                IslandRegion { target: contentWrapper.islandAt(17) }
+                IslandRegion { target: contentWrapper.islandAt(18) }
+                IslandRegion { target: contentWrapper.islandAt(19) }
+            }
+
             property real barOpacity: {
                 let dummy = configRevision;
                 return (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.opacity !== undefined) ? (Config.rawSettings.bar.opacity / 100.0) : 1.0;
@@ -258,14 +298,14 @@ Variants {
                 right: barPosition === "right" || !barWindow.isVertical
             }
 
-            implicitHeight: barWindow.isVertical ? 0 : (barHeight + (isFill ? cornerRadius : edgePadding))
+            implicitHeight: barWindow.isVertical ? 0 : (barHeight + (isFill ? cornerRadius : edgePadding) + glassShadowRoom)
             implicitWidth: barWindow.isVertical ? (barHeight + (isFill ? cornerRadius : edgePadding)) : 0
 
             margins {
                 top: isFill ? 0 : (barPosition === "bottom" ? 0 : (autohide ? 0 : s(4)))
                 bottom: isFill ? 0 : (barPosition === "top" ? 0 : (autohide ? 0 : s(4)))
-                left: isFill ? 0 : (barPosition === "right" ? 0 : (autohide ? 0 : s(4)))
-                right: isFill ? 0 : (barPosition === "left" ? 0 : (autohide ? 0 : s(4)))
+                left: (isFill || glassActive) ? 0 : (barPosition === "right" ? 0 : (autohide ? 0 : s(4)))
+                right: (isFill || glassActive) ? 0 : (barPosition === "left" ? 0 : (autohide ? 0 : s(4)))
             }
 
             exclusiveZone: (!barConfigReady || autohide || shouldHideForRedact) ? 0 : barHeight

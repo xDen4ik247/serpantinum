@@ -179,11 +179,11 @@ Item {
             Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
             radius: Math.max(0, ThemeBackend.borderRadius - s(2))
-            property color baseColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
-            color: batMouseArea.pressed ? Qt.darker(baseColor, 1.15) : (batMouseArea.containsMouse ? Qt.lighter(baseColor, 1.08) : baseColor)
+            property color baseColor: (module && module.glass) ? (batMouseArea.containsMouse ? module.glassChipHover : module.glassChip) : (root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0)
+            color: (module && module.glass) ? baseColor : (batMouseArea.pressed ? Qt.darker(baseColor, 1.15) : (batMouseArea.containsMouse ? Qt.lighter(baseColor, 1.08) : baseColor))
             Behavior on color { ColorAnimation { duration: 150 } }
-            property color baseBorderColor: root.isCompact ? ThemeBackend.surface2 : ThemeBackend.surface1
-            border.color: batMouseArea.containsMouse ? ThemeBackend.surface2 : baseBorderColor
+            property color baseBorderColor: (module && module.glass) ? Qt.alpha(ThemeBackend.text, 0.14) : (root.isCompact ? ThemeBackend.surface2 : ThemeBackend.surface1)
+            border.color: batMouseArea.containsMouse ? ((module && module.glass) ? Qt.alpha(ThemeBackend.text, 0.24) : ThemeBackend.surface2) : baseBorderColor
             Behavior on border.color { ColorAnimation { duration: 150 } }
             border.width: 1
             clip: true

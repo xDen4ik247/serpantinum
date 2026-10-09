@@ -8,6 +8,7 @@ import Quickshell.Wayland
 import "../../../reusables"
 import "../../../"
 import "../../"
+import "../../../calendar"
 
 Item {
     id: root
@@ -84,8 +85,12 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: {
-            if (Caching.serpantinumDir) {
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        // left: agenda panel (calendar/Gcal.qml); right: Serpantinum's clock & weather popup
+        onClicked: mouse => {
+            if (mouse.button === Qt.LeftButton) {
+                Gcal.toggle();
+            } else if (Caching.serpantinumDir) {
                 Quickshell.execDetached(["bash", Caching.serpantinumDir + "/scripts/qs_manager.sh", "toggle", "calendar"]);
             }
         }

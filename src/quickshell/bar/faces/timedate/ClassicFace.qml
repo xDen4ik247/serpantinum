@@ -23,6 +23,7 @@ Item {
             font.family: ThemeBackend.fontFamily
             font.pixelSize: widget ? widget.s(widget.isCompact ? 14 : 15) : 15
             font.weight: Font.Black
+            font.features: { "tnum": 1 }
             color: (widget && widget.isCompact) ? Qt.lighter(ThemeBackend.blue, 1.1) : ThemeBackend.blue
         }
 

@@ -58,7 +58,19 @@ Item {
         return 8;
     }
 
-    property int workspaceCount: Math.max(2, (activeIndex >= baseWorkspaceCount) ? (activeIndex + 1) : baseWorkspaceCount)
+    // bar.workspacesDynamic (niri): show exactly the workspaces niri has on this output
+    // (occupied ones plus its trailing empty one) instead of a fixed row of dots.
+    property bool dynamicWorkspaces: {
+        let dummy = configRevision;
+        return (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.workspacesDynamic !== undefined) ? Boolean(Config.rawSettings.bar.workspacesDynamic) : false;
+    }
+    property int niriWorkspaceTotal: 0
+
+    property int workspaceCount: {
+        if (isNiri && dynamicWorkspaces && niriWorkspaceTotal > 0)
+            return Math.max(1, niriWorkspaceTotal, activeIndex + 1);
+        return Math.max(2, (activeIndex >= baseWorkspaceCount) ? (activeIndex + 1) : baseWorkspaceCount);
+    }
 
     property bool hideEmptyWorkspaces: {
         let dummy = configRevision;
@@ -78,8 +90,18 @@ Item {
         while (workspaceListModel.count < target) {
             workspaceListModel.append({ "modelData": workspaceListModel.count });
         }
-        while (workspaceListModel.count > target) {
-            workspaceListModel.remove(workspaceListModel.count - 1);
+        // Extra slots are hidden first (isShown() is false, the face animates them out)
+        // and only dropped from the model once that animation has finished.
+        if (workspaceListModel.count > target) wsShrinkTimer.restart();
+    }
+
+    Timer {
+        id: wsShrinkTimer
+        interval: 480
+        onTriggered: {
+            while (workspaceListModel.count > root.workspaceCount) {
+                workspaceListModel.remove(workspaceListModel.count - 1);
+            }
         }
     }
 
@@ -134,6 +156,7 @@ Item {
     }
 
     function isShown(index) {
+        if (index >= workspaceCount) return false;
         if (!hideEmptyWorkspaces) return true;
         return index === activeIndex || isOccupied(index);
     }
@@ -262,26 +285,35 @@ Item {
                     let data = JSON.parse(this.text);
                     let wsList = data.workspaces || [];
                     let winList = data.windows || [];
-                    let occ = {};
+                    // windows reference workspaces by niri id; the bar indexes them by idx - 1,
+                    // so keep the two key spaces apart.
+                    let occById = {};
                     for (let i = 0; i < winList.length; i++) {
                         let win = winList[i];
                         if (win.workspace_id !== undefined && win.workspace_id !== null) {
-                            occ[win.workspace_id] = true;
+                            occById[win.workspace_id] = true;
                         }
                     }
+                    let myOutput = (root.barWindow && root.barWindow.screen && root.barWindow.screen.name) ? root.barWindow.screen.name : "";
+                    let onMyOutput = myOutput !== "" && wsList.some(w => w.output === myOutput);
+                    let occ = {};
                     let activeIdx = 0;
+                    let total = 0;
                     for (let j = 0; j < wsList.length; j++) {
                         let w = wsList[j];
+                        if (onMyOutput && w.output !== myOutput) continue;
                         let idx = (w.idx !== undefined ? w.idx : (w.id !== undefined ? w.id : 1)) - 1;
-                        if (w.is_focused || w.is_active) {
+                        total = Math.max(total, idx + 1);
+                        if (onMyOutput ? w.is_active : (w.is_focused || w.is_active)) {
                             activeIdx = idx;
                         }
-                        if (w.active_window_id !== null || occ[w.id] || occ[w.idx]) {
+                        if ((w.active_window_id !== null && w.active_window_id !== undefined) || occById[w.id]) {
                             occ[idx] = true;
                         }
                     }
                     root.niriActiveIndex = activeIdx;
                     root.niriOccupiedMap = occ;
+                    root.niriWorkspaceTotal = total;
                 } catch (e) {}
             }
         }

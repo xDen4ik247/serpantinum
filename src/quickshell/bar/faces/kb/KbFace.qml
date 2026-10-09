@@ -50,7 +50,7 @@ Item {
             "bash",
             "-c",
             root.isNiri
-                ? "layout=$(niri msg -j keyboard-layouts 2>/dev/null | jq -r '.names[.current_idx] // empty' | head -n1); [[ -z \"$layout\" || \"$layout\" == \"null\" ]] && layout=\"US\"; echo \"${layout:0:2}\" | tr '[:lower:]' '[:upper:]'"
+                ? "layout=$(fcitx-layout get 2>/dev/null) && { echo \"$layout\"; exit; }; layout=$(niri msg -j keyboard-layouts 2>/dev/null | jq -r '.names[.current_idx] // empty' | head -n1); [[ -z \"$layout\" || \"$layout\" == \"null\" ]] && layout=\"US\"; echo \"${layout:0:2}\" | tr '[:lower:]' '[:upper:]'"
                 : (root.isSway
                     ? "layout=$(swaymsg -t get_inputs 2>/dev/null | jq -r '[.[] | select(.type == \"keyboard\" and .xkb_active_layout_name != null)] | .[0].xkb_active_layout_name // empty' | head -n1); [[ -z \"$layout\" || \"$layout\" == \"null\" ]] && layout=\"US\"; echo \"${layout:0:2}\" | tr '[:lower:]' '[:upper:]'"
                     : "layout=$(LC_ALL=C hyprctl devices -j 2>/dev/null | jq -r '(.keyboards[] | select(.main == true) | .active_keymap) // .keyboards[0].active_keymap // empty' | head -n1); [[ -z \"$layout\" || \"$layout\" == \"null\" ]] && layout=\"US\"; echo \"${layout:0:2}\" | tr '[:lower:]' '[:upper:]'")
@@ -112,7 +112,7 @@ Item {
             iconFontSize: barWindow ? barWindow.s(root.isCompact ? 14 : 15) : (root.isCompact ? 14 : 15)
             buttonText: root.kbLayout
             textFontSize: barWindow ? barWindow.s(root.isCompact ? 11 : 12) : (root.isCompact ? 11 : 12)
-            accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+            accentColor: ((module && module.glass) ? (isHoveredOrHighlighted ? module.glassChipHover : module.glassChip) : (root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0))
             textColor: isHoveredOrHighlighted ? ThemeBackend.text : (root.isCompact ? Qt.lighter(ThemeBackend.text, 1.05) : ThemeBackend.text)
 
             property real targetWidth: Math.max(barWindow ? barWindow.s(root.isCompact ? 48 : 52) : (root.isCompact ? 48 : 52), implicitWidth)
@@ -130,7 +130,7 @@ Item {
 
             onClicked: {
                 if (root.isNiri) {
-                    Quickshell.execDetached(["niri", "msg", "action", "switch-layout", "next"]);
+                    Quickshell.execDetached(["bash", "-c", "fcitx-layout next || niri msg action switch-layout next"]);
                 } else if (root.isSway) {
                     Quickshell.execDetached(["swaymsg", "input", "type:keyboard", "xkb_switch_layout", "next"]);
                 } else {

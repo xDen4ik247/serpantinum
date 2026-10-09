@@ -9,6 +9,10 @@ trap 'rm -f "$PIPE"; kill $(jobs -p) 2>/dev/null; exit 0' EXIT INT TERM
 case "$COMPOSITOR" in
     niri)
         niri msg -j event-stream 2>/dev/null | jq --unbuffered -c 'select(has("KeyboardLayoutSwitched"))' > "$PIPE" &
+        if command -v fcitx-layout >/dev/null; then
+            fcitx-layout watch > "$PIPE" &
+            (sleep 30; echo tick) > "$PIPE" &
+        fi
         ;;
     sway)
         swaymsg -t subscribe -m '["input"]' 2>/dev/null | jq --unbuffered -c 'select(.change == "xkb_layout" or .change == "xkb_keymap")' > "$PIPE" &

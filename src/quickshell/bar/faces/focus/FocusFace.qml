@@ -43,7 +43,7 @@ Item {
             cornerRadius: barWindow ? barWindow.s(root.isCompact ? 9 : 10) : (root.isCompact ? 9 : 10)
             buttonIcon: "✦"
             iconFontSize: barWindow ? barWindow.s(root.isCompact ? 14 : 15) : (root.isCompact ? 14 : 15)
-            accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+            accentColor: ((module && module.glass) ? (isHoveredOrHighlighted ? module.glassChipHover : module.glassChip) : (root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0))
             textColor: isHoveredOrHighlighted ? ThemeBackend.text : (root.isCompact ? ThemeBackend.subtext0 : ThemeBackend.overlay2)
             anchors.verticalCenter: parent.verticalCenter
             onClicked: {
@@ -71,7 +71,7 @@ Item {
                 font.family: ThemeBackend.fontFamily
                 font.pixelSize: barWindow ? barWindow.s(root.isCompact ? 11 : 12) : (root.isCompact ? 11 : 12)
                 font.weight: Font.DemiBold
-                color: root.isCompact ? ThemeBackend.text : ThemeBackend.subtext1
+                color: (module && module.glass) ? Qt.alpha(ThemeBackend.text, 0.88) : (root.isCompact ? ThemeBackend.text : ThemeBackend.subtext1)
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 elide: Text.ElideRight

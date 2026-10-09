@@ -26,7 +26,7 @@ Item {
     readonly property real itemSpacing: barWindow ? barWindow.s(isCompact ? 8 : 10) : (isCompact ? 8 : 10)
     readonly property real iconPadding: barWindow ? barWindow.s(isCompact ? 10 : 12) : (isCompact ? 10 : 12)
     readonly property real totalPadding: iconPadding * 2
-    readonly property int itemCount: ((!module || module.moduleActive) && trayRepeater.count > 0) ? trayRepeater.count : 0
+    readonly property int itemCount: ((!module || module.moduleActive) && trayRepeater.count > 0) ? SystemTray.items.values.filter(i => i && i.id !== "Fcitx").length : 0
 
     property real targetHeight: itemCount > 0 ? (itemCount * iconSize + (itemCount - 1) * itemSpacing + totalPadding) : 0
     property bool isFaceVisible: showLayout && targetHeight > 0
@@ -105,6 +105,7 @@ Item {
 
             delegate: Image {
                 id: trayIcon
+                visible: modelData.id !== "Fcitx"  // shown by the keyboard pill instead
                 source: modelData.icon || ""
                 fillMode: Image.PreserveAspectFit
 

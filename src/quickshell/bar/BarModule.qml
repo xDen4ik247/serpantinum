@@ -66,7 +66,19 @@ Rectangle {
 
     radius: ThemeBackend.borderRadius
     border.width: 0
-    color: isGrouped ? "transparent" : (isSolid ? (distinctPills ? Qt.darker(ThemeBackend.surface0, 1.15) : "transparent") : ThemeBackend.base)
+    color: (isGrouped || glass) ? "transparent" : (isSolid ? (distinctPills ? Qt.darker(ThemeBackend.surface0, 1.15) : "transparent") : ThemeBackend.base)
+
+    // Glass mode (bar.glass): TopBar paints the island behind this module; faces use these
+    // translucent chip colours instead of the opaque surface ones.
+    readonly property bool glass: !!barWindow && !!barWindow.glassActive
+    readonly property color glassChip: Qt.alpha(ThemeBackend.text, 0.08)
+    readonly property color glassChipHover: Qt.alpha(ThemeBackend.text, 0.17)
+    readonly property bool hovered: modHover.hovered
+
+    HoverHandler {
+        id: modHover
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+    }
     clip: true
 
     width: targetWidth
