@@ -71,6 +71,12 @@ def status():
         m = json.load(urllib.request.urlopen(URL + "/v1/models", timeout=3))
         props = json.load(urllib.request.urlopen(URL + "/props", timeout=3))
     except Exception as e:
+        # npu-llm.socket accepts at once but answers only after the model has loaded (~45 s),
+        # so a timeout (or llama-server's 503 "loading model") means "loading", not "unreachable"
+        reason = getattr(e, "reason", e)
+        if isinstance(e, TimeoutError) or isinstance(reason, TimeoutError) or getattr(e, "code", None) == 503:
+            print("health    loading (the model starts on demand, ~45 s) - try `ai status` again shortly")
+            return 0
         print(f"health    unreachable ({e})")
         return 1
     model = m["data"][0]["id"] if m.get("data") else "?"

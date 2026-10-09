@@ -590,13 +590,30 @@ def _prompt(text: str, now: dt.datetime, ctx: dict) -> list:
     return msgs
 
 
-def llm_health(base=LLM_URL, timeout=0.6) -> bool:
+def llm_status(base=LLM_URL, timeout=0.6) -> str:
+    """"online" | "loading" | "offline".
+    The LLM is socket-activated (npu-llm.socket): the first request is accepted at once but only
+    answered once the model has loaded (~45 s), so a timeout means "loading", not "offline"."""
+    import socket
+    import urllib.error
     try:
         with urllib.request.urlopen(base + "/health", timeout=timeout) as r:
             body = r.read(200).decode("utf-8", "replace")
-            return r.status == 200 and "loading" not in body.lower()
+            if r.status == 200 and "loading" not in body.lower():
+                return "online"
+            return "loading"
+    except urllib.error.HTTPError as e:      # llama-server answers 503 {"status":"loading model"}
+        return "loading" if e.code == 503 else "offline"
+    except (TimeoutError, socket.timeout):
+        return "loading"
+    except urllib.error.URLError as e:
+        return "loading" if isinstance(e.reason, (TimeoutError, socket.timeout)) else "offline"
     except Exception:
-        return False
+        return "offline"
+
+
+def llm_health(base=LLM_URL, timeout=0.6) -> bool:
+    return llm_status(base, timeout) == "online"
 
 
 def parse_llm(text: str, now: dt.datetime, ctx: dict, base=LLM_URL, timeout=20.0) -> dict:

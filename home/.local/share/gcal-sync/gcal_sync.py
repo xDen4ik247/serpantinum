@@ -411,13 +411,28 @@ def moment_format(fmt: str, d: dt.date) -> str:
     return "".join(out)
 
 
+_DAILY_CFG: dict = {}
+
+
 def daily_config(vault: Path) -> dict:
-    cfg = load_json(vault / ".obsidian/daily-notes.json", {})
-    return {
+    """Obsidian's daily-notes settings; read once and reused until the file changes
+    (daily_relpath() asks for it ~100x per build)."""
+    f = vault / ".obsidian/daily-notes.json"
+    try:
+        mt = f.stat().st_mtime_ns
+    except OSError:
+        mt = 0
+    hit = _DAILY_CFG.get(str(vault))
+    if hit and hit[0] == mt:
+        return hit[1]
+    cfg = load_json(f, {})
+    c = {
         "folder": (cfg.get("folder") or "").strip("/"),
         "format": cfg.get("format") or "YYYY-MM-DD",
         "template": (cfg.get("template") or "").strip(),
     }
+    _DAILY_CFG[str(vault)] = (mt, c)
+    return c
 
 
 def daily_relpath(vault: Path, d: dt.date) -> str:
@@ -472,6 +487,46 @@ def priority_of(t: str) -> int:
     return 0
 
 
+VAULT_SCAN = CACHE / "vault-scan.json"
+VAULT_SCAN_VERSION = 1
+
+
+def _scan_note(text: str) -> dict:
+    """Date-independent facts of one note (cached by mtime): its tags and open-task lines."""
+    tags = TAG_RE.findall(text)
+    fm = re.match(r"---\n(.*?)\n---", text, re.S)
+    if fm:
+        mt = re.search(r"^tags:\s*\[([^\]]*)\]", fm.group(1), re.M)
+        for tg in (mt.group(1).split(",") if mt else []):
+            tg = "#" + tg.strip().strip("'\"").lstrip("#")
+            if len(tg) > 1:
+                tags.append(tg)
+    tasks = []
+    if "[ ]" in text or "[/]" in text:
+        in_fence = False
+        for ln, line in enumerate(text.splitlines(), 1):
+            st = line.lstrip()
+            if st.startswith("```") or st.startswith("~~~"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            m = TASK_RE.match(line)
+            # captured events live in local-events.ics; their task line would only duplicate them
+            if m and "%%gcal:" not in m.group(2):
+                tasks.append([ln, m.group(1) == "/", m.group(2)])
+    return {"tags": tags, "tasks": tasks}
+
+
+def _valid_hhmm(s: str) -> str | None:
+    """'9:30' -> '09:30'; None for impossible times like 9:75 or 25:00 (24:00 is allowed)."""
+    try:
+        hh, mi = map(int, s.split(":"))
+    except ValueError:
+        return None
+    return f"{hh:02d}:{mi:02d}" if 0 <= hh <= 24 and 0 <= mi <= 59 and not (hh == 24 and mi) else None
+
+
 def scan_vault(settings, today: dt.date, win_start: dt.date, win_end: dt.date, tz):
     vault: Path = settings["vault_path"]
     vname = settings["vault_name"]
@@ -479,47 +534,38 @@ def scan_vault(settings, today: dt.date, win_start: dt.date, win_end: dt.date, t
     if not vault.is_dir():
         return [], {}, info
     today_rel = daily_relpath(vault, today)
+    # per-note results are cached by (mtime, size): unchanged notes are not re-read every minute
+    cache = load_json(VAULT_SCAN, {})
+    if cache.get("v") != VAULT_SCAN_VERSION or cache.get("vault") != str(vault):
+        cache = {"v": VAULT_SCAN_VERSION, "vault": str(vault), "files": {}}
+    files, seen, dirty = cache["files"], set(), False
     tasks = []
     tag_count, notes = {}, []
-    for root, dirs, files in os.walk(vault):
+    for root, dirs, fnames in os.walk(vault):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules",)]
-        for fn in files:
+        for fn in fnames:
             if not fn.endswith(".md"):
                 continue
             p = Path(root) / fn
+            rel = os.path.relpath(p, vault)
             try:
-                text = p.read_text(encoding="utf-8", errors="replace")
-            except Exception:
+                stt = p.stat()
+            except OSError:
                 continue
-            rel = str(p.relative_to(vault))
+            seen.add(rel)
+            ent = files.get(rel)
+            if not ent or ent.get("m") != stt.st_mtime_ns or ent.get("s") != stt.st_size:
+                try:
+                    text = p.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+                ent = files[rel] = {"m": stt.st_mtime_ns, "s": stt.st_size, **_scan_note(text)}
+                dirty = True
             if not rel.startswith(("raw/",)):
-                for tg in TAG_RE.findall(text):
+                for tg in ent["tags"]:
                     tag_count[tg] = tag_count.get(tg, 0) + 1
-                fm = re.match(r"---\n(.*?)\n---", text, re.S)
-                if fm:
-                    mt = re.search(r"^tags:\s*\[([^\]]*)\]", fm.group(1), re.M)
-                    for tg in (mt.group(1).split(",") if mt else []):
-                        tg = "#" + tg.strip().strip("'\"").lstrip("#")
-                        if len(tg) > 1:
-                            tag_count[tg] = tag_count.get(tg, 0) + 1
-                notes.append((p.stat().st_mtime, p.stem))
-            if "[ ]" not in text and "[/]" not in text:
-                continue
-            in_fence = False
-            for ln, line in enumerate(text.splitlines(), 1):
-                s = line.lstrip()
-                if s.startswith("```") or s.startswith("~~~"):
-                    in_fence = not in_fence
-                    continue
-                if in_fence:
-                    continue
-                m = TASK_RE.match(line)
-                if not m:
-                    continue
-                body = m.group(2)
-                # captured events live in local-events.ics; their task line would only duplicate them
-                if "%%gcal:" in body:
-                    continue
+                notes.append((stt.st_mtime, p.stem))
+            for ln, in_progress, body in ent["tasks"]:
                 due, kind, time_s, rem = None, None, "", None
                 for k, rx in DUE_PATTERNS:
                     mm = rx.search(body)
@@ -530,8 +576,10 @@ def scan_vault(settings, today: dt.date, win_start: dt.date, win_end: dt.date, t
                     except ValueError:
                         continue
                     if k == "reminder":
-                        if mm.lastindex and mm.lastindex >= 2 and mm.group(2):
-                            rem = (dd, mm.group(2).zfill(5))
+                        # a malformed time (9:75) is ignored instead of aborting the whole build
+                        hhmm = _valid_hhmm(mm.group(2)) if mm.lastindex and mm.lastindex >= 2 and mm.group(2) else None
+                        if hhmm:
+                            rem = (dd, hhmm)
                         if due is not None:
                             continue
                     if due is None:
@@ -552,13 +600,21 @@ def scan_vault(settings, today: dt.date, win_start: dt.date, win_end: dt.date, t
                     "line": ln,
                     "uri": obsidian_uri(vname, rel),
                     "overdue": due < today,
-                    "inProgress": m.group(1) == "/",
+                    "inProgress": in_progress,
                     "priority": priority_of(body),
                 }
                 if rem:
                     hh, mi = map(int, rem[1].split(":"))
                     item["atMs"] = int(dt.datetime.combine(rem[0], dt.time(hh % 24, mi), tz).timestamp() * 1000)
                 tasks.append(item)
+    for rel in [r for r in files if r not in seen]:
+        del files[rel]
+        dirty = True
+    if dirty or not VAULT_SCAN.exists():
+        try:
+            atomic_write(VAULT_SCAN, json.dumps(cache, ensure_ascii=False), 0o600)
+        except OSError as e:
+            log(f"vault scan cache not written: {e}")
     tasks.sort(key=lambda t: (t["due"], t["time"] or "99", -t["priority"], t["text"].lower()))
     daily = {}
     d = win_start
@@ -890,11 +946,13 @@ def smart_parse(text, settings, tz, engine="auto", timeout=None):
     if engine == "rules" or settings.get("llm", "auto") == "off":
         return rules
     base = settings.get("llm_url") or P.LLM_URL
-    if not P.llm_health(base):
+    st = P.llm_status(base)
+    if st == "offline":
         rules["llmState"] = "offline"
         return rules
     try:
-        return P.parse_hybrid(text, now, parse_context(), base=base, timeout=timeout or 20)
+        # a socket-activated model that is still loading needs ~45 s for its first answer
+        return P.parse_hybrid(text, now, parse_context(), base=base, timeout=timeout or (90 if st == "loading" else 20))
     except Exception as e:
         rules["llmState"] = f"failed: {type(e).__name__}"
         return rules
@@ -957,7 +1015,7 @@ def cmd_parse(args):
 def cmd_parse_server(args):
     """Line protocol for the quick-capture preview (QML Process):
     in : {"id": n, "text": "...", "llm": true}  |  {"id": n, "op": "field", "item": {...}, "field": "date", "value": "fri"}
-    out: {"id": n, "stage": "rules"|"llm"|"field"|"llm-failed", "item": {...}, "llm": "pending"|"offline"|"off"|...}"""
+    out: {"id": n, "stage": "rules"|"llm"|"field"|"llm-failed", "item": {...}, "llm": "pending"|"loading"|"offline"|"off"}"""
     import threading
     import gcal_parse as P
     _, settings, _ = read_conf()
@@ -965,7 +1023,7 @@ def cmd_parse_server(args):
     base = settings.get("llm_url") or P.LLM_URL
     llm_enabled = settings.get("llm", "auto") != "off"
     out_lock = threading.Lock()
-    state = {"latest": 0, "health": (0.0, False), "cache": {}}
+    state = {"latest": 0, "health": (0.0, "offline"), "cache": {}}
     cond = threading.Condition()
     pending = {}
 
@@ -974,12 +1032,13 @@ def cmd_parse_server(args):
             sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
             sys.stdout.flush()
 
-    def healthy():
-        t, ok = state["health"]
-        if time.monotonic() - t > (15 if ok else 5):
-            ok = P.llm_health(base)
-            state["health"] = (time.monotonic(), ok)
-        return ok
+    def llm_status():
+        """online | loading | offline (cached: 15 s when online, 5 s otherwise)"""
+        t, st = state["health"]
+        if time.monotonic() - t > (15 if st == "online" else 5):
+            st = P.llm_status(base)
+            state["health"] = (time.monotonic(), st)
+        return st
 
     def llm_worker():
         while True:
@@ -996,11 +1055,13 @@ def cmd_parse_server(args):
                 if text in state["cache"]:
                     item = state["cache"][text]
                 else:
-                    item = P.parse_hybrid(text, now, parse_context(), base=base, timeout=25)
+                    # still loading (socket-activated, ~45 s): wait for the model instead of failing
+                    item = P.parse_hybrid(text, now, parse_context(), base=base,
+                                          timeout=90 if state["health"][1] == "loading" else 25)
                     state["cache"][text] = item
                 emit({"id": rid, "stage": "llm", "item": item})
             except Exception as e:
-                state["health"] = (time.monotonic(), False)
+                state["health"] = (time.monotonic(), "offline")
                 emit({"id": rid, "stage": "llm-failed", "error": f"{type(e).__name__}: {e}"[:160]})
 
     threading.Thread(target=llm_worker, daemon=True).start()
@@ -1014,7 +1075,7 @@ def cmd_parse_server(args):
             emit({"id": rid, "stage": "field", "item": field_update(req.get("item") or {}, req.get("field", ""), req.get("value", ""), tz)})
             continue
         if req.get("op") == "health":
-            emit({"id": rid, "stage": "health", "llm": "online" if healthy() else "offline"})
+            emit({"id": rid, "stage": "health", "llm": llm_status()})
             continue
         text = (req.get("text") or "").strip()
         state["latest"] = max(state["latest"], rid)
@@ -1030,9 +1091,10 @@ def cmd_parse_server(args):
             if text in state["cache"]:
                 emit({"id": rid, "stage": "llm", "item": state["cache"][text]})
                 continue
-            llm_state = "pending" if healthy() else "offline"
+            st = llm_status()
+            llm_state = {"online": "pending", "loading": "loading"}.get(st, "offline")
         emit({"id": rid, "stage": "rules", "item": item, "llm": llm_state})
-        if llm_state == "pending":
+        if llm_state in ("pending", "loading"):
             with cond:
                 pending[rid] = text
                 cond.notify()

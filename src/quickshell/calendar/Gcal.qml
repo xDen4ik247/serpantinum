@@ -229,9 +229,13 @@ Singleton {
         for (let k in overrides) it[k] = overrides[k];
         return it;
     }
-    property string llmState: ""           // pending | offline | off | failed | ""
+    property string llmState: ""           // pending | loading | offline | off | failed | ""
     property int reqId: 0
     property int llmReqId: 0
+    property string parsedText: ""         // the capture text that `parsed` was parsed from
+    property int rulesAppliedId: 0         // newest rules reply applied (older LLM replies are stale)
+    property int commitWaitId: 0           // commit waits for this re-parse of the current text
+    property var _sentTexts: ({})          // request id -> text (the server does not echo it)
     property bool captureUiActive: captureOpen || panelOpen
     property bool parserWanted: false
     onCaptureUiActiveChanged: { if (captureUiActive) { parserLinger.stop(); parserWanted = true; } else parserLinger.restart(); }
@@ -254,6 +258,11 @@ Singleton {
     }
     function sendParser(obj) {
         if (!parser.running) { parserWanted = true; return false; }
+        if (obj.text !== undefined) {
+            let m = _sentTexts;
+            for (let k in m) if (+k < obj.id - 16) delete m[k];
+            m[obj.id] = obj.text.trim();
+        }
         parser.write(JSON.stringify(obj) + "\n");
         return true;
     }
@@ -261,13 +270,20 @@ Singleton {
         let r;
         try { r = JSON.parse(line); } catch (e) { return; }
         if (r.stage === "rules") {
-            if (r.id < reqId) return;
+            let forCommit = commitWaitId !== 0 && r.id === commitWaitId;
+            if (r.id < reqId && !forCommit) return;
             parsed = r.item;
+            parsedText = _sentTexts[r.id] !== undefined ? _sentTexts[r.id] : "";
+            rulesAppliedId = Math.max(rulesAppliedId, r.id);
             rulesFound = r.item.found || [];
-            if (r.llm !== "pending" || llmState !== "pending") llmState = r.llm || "";
+            // only the reply to the LLM-requesting call knows the AI state (rules-only calls say "off")
+            if (r.id === llmReqId) llmState = r.llm || "";
+            if (forCommit) { commitWaitId = 0; commitFallback.stop(); commitItem(preview); }
         } else if (r.stage === "llm") {
-            if (r.id < llmReqId) return;
+            // drop LLM answers for older text: a newer rules parse (or LLM request) supersedes them
+            if (r.id < llmReqId || r.id < rulesAppliedId || commitWaitId !== 0) return;
             parsed = r.item;
+            parsedText = _sentTexts[r.id] !== undefined ? _sentTexts[r.id] : "";
             llmState = "";
         } else if (r.stage === "llm-failed") {
             if (r.id >= llmReqId) llmState = "failed";
@@ -283,7 +299,7 @@ Singleton {
     }
     function setCaptureText(t) {
         captureText = t;
-        if (t.trim() === "") { parsed = null; llmState = ""; rulesDebounce.stop(); llmDebounce.stop(); return; }
+        if (t.trim() === "") { parsed = null; parsedText = ""; llmState = ""; rulesDebounce.stop(); llmDebounce.stop(); return; }
         rulesDebounce.restart();
         llmDebounce.restart();
     }
@@ -295,7 +311,7 @@ Singleton {
         id: llmDebounce; interval: 650
         onTriggered: {
             root.llmReqId = ++root.reqId;
-            if (root.sendParser({ id: root.llmReqId, text: root.captureText, llm: true }) && root.llmState !== "offline")
+            if (root.sendParser({ id: root.llmReqId, text: root.captureText, llm: true }) && root.llmState !== "offline" && root.llmState !== "loading")
                 root.llmState = "pending";
         }
     }
@@ -318,24 +334,40 @@ Singleton {
         sendParser({ id: ++reqId, op: "field", item: preview, field: field, value: value });
     }
     function resetCapture() {
-        captureText = ""; parsed = null; overrides = ({}); llmState = ""; rulesFound = [];
+        captureText = ""; parsed = null; parsedText = ""; overrides = ({}); llmState = ""; rulesFound = [];
+        commitWaitId = 0; commitFallback.stop();
     }
 
     property string captureResult: ""
     property bool captureOk: false
-    property bool captureBusy: captureProc.running
+    property bool captureBusy: captureProc.running || commitWaitId !== 0
     signal captured(bool ok, string message)
     function commitCapture() {
         let text = captureText.trim();
+        if (!text || captureBusy) return;
+        rulesDebounce.stop(); llmDebounce.stop();
+        // commit only a parse of exactly this text; a debounced/LLM reply may still describe older text
+        if (parsed && parsedText === text) { commitItem(preview); return; }
+        commitWaitId = ++reqId;
+        if (sendParser({ id: commitWaitId, text: captureText, llm: false })) { commitFallback.restart(); return; }
+        commitWaitId = 0;
+        commitItem(null);
+    }
+    function commitItem(it) {
+        let text = captureText.trim();
         if (!text || captureProc.running) return;
-        let it = preview;
         captureProc.command = it ? [syncBin, "add", "--json", JSON.stringify(it)] : [syncBin, "add", "--engine", "rules", text];
         captureProc.running = true;
+    }
+    // parser did not answer the commit re-parse in time: let `gcal-sync add` parse the text itself
+    Timer {
+        id: commitFallback; interval: 1500
+        onTriggered: { if (root.commitWaitId !== 0) { root.commitWaitId = 0; root.commitItem(null); } }
     }
     // plain capture (kept for scripts): append "- [ ] text" without parsing
     function capture(text) {
         text = (text || "").trim();
-        if (!text || captureProc.running) return;
+        if (!text || captureBusy) return;
         captureProc.command = [syncBin, "capture", text];
         captureProc.running = true;
     }

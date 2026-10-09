@@ -133,7 +133,7 @@ FocusScope {
 
         // ── parser line ──
         Row {
-            visible: box.hasPreview || Gcal.llmState === "pending"
+            visible: box.hasPreview || Gcal.llmState === "pending" || Gcal.llmState === "loading"
             spacing: 6
             height: 16
             Text {
@@ -144,7 +144,7 @@ FocusScope {
                 font.family: ThemeBackend.iconFont
                 font.pixelSize: 13
                 SequentialAnimation on opacity {
-                    running: Gcal.llmState === "pending"
+                    running: Gcal.llmState === "pending" || Gcal.llmState === "loading"
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.3; duration: 500; easing.type: Easing.InOutSine }
                     NumberAnimation { to: 1; duration: 500; easing.type: Easing.InOutSine }
@@ -157,6 +157,7 @@ FocusScope {
                     let it = box.it;
                     let who = it && it.parser === "llm" ? "Parsed by local AI" + (it.ms ? " · " + (it.ms / 1000).toFixed(1) + " s" : "") : "Quick rules";
                     if (Gcal.llmState === "pending") who += " · AI is thinking…";
+                    else if (Gcal.llmState === "loading") who += " · AI loading…";
                     else if (Gcal.llmState === "offline") who += " · AI offline";
                     else if (Gcal.llmState === "failed") who += " · AI failed";
                     let where = it && it.kind === "event" ? (Gcal.writeEnabled ? "→ Google Calendar" : "→ local calendar + note")
