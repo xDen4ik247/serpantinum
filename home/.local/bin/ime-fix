@@ -4,6 +4,7 @@
 prev=$(timeout 2 fcitx5-remote -n 2>/dev/null)
 pkill -x mozc_server
 pkill -x mozc_renderer 2>/dev/null
+systemctl --user reset-failed fcitx5.service 2>/dev/null
 systemctl --user restart fcitx5.service
 for _ in $(seq 1 30); do timeout 1 fcitx5-remote >/dev/null 2>&1 && break; sleep 0.2; done
 if [ -n "$prev" ]; then

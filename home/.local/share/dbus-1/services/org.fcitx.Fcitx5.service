@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.fcitx.Fcitx5
+# Activate through the systemd user unit so there is only ever ONE fcitx5 (no --replace fights).
+Exec=/usr/bin/false
+SystemdService=fcitx5.service
