@@ -1,7 +1,9 @@
 > [!NOTE]
 > **This is the liquid-glass fork** of Serpantinum: glass top bar and widgets, Google Calendar + Obsidian agenda,
 > MPD music with synced lyrics, local AI on the Intel NPU/GPU, Japanese study tools and a glass login screen.
-> Start at **[docs/glass/README.md](docs/glass/README.md)**. Everything below is upstream's README.
+> Start at **[docs/glass/README.md](docs/glass/README.md)**. Install (Arch, niri):
+> `bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/glass/install/glass.sh)"`.
+> Everything below is upstream's README.
 
 <div align="center">
   <a href="https://ko-fi.com/ilyamiro">
