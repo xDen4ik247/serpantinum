@@ -1,5 +1,5 @@
 // Device sections replace upstream's completely, so they're spelled out in full.
-// niri-dwt-toggle flips the `dwt` line below while Minecraft is focused.
+// niri-dwt-toggle flips the `dwt` line below while a fullscreen (or overridden) window is focused.
 input {
     keyboard {
         xkb {
