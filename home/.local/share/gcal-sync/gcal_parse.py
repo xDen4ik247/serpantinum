@@ -119,6 +119,353 @@ def _wd_index(word: str) -> int | None:
 WD_ANY = "(?:" + "|".join(WD_EN + WD_EN_SHORT) + "|" + "|".join(WD_RU) + r")\b|" + "|".join(j + "日?" for j in WD_JA)
 
 
+# ───────────────────────────── repeats ─────────────────────────────
+# "every Monday at 10", "every 2 weeks on tue until December", "last friday of every month",
+# "каждый вторник в 18:00", "по будням", "каждые 2 недели в субботу до конца года", "10 раз" …
+
+_WD_EN_ONE = r"(?:(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?|mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)"
+_WD_ONE = r"(?:" + _WD_EN_ONE + "|" + "|".join(WD_RU) + r")\b"
+_WD_LIST = _WD_ONE + r"(?:\s*(?:,|and|&|и|или|or)\s*(?:on\s+|в\s+|во\s+|по\s+)?" + _WD_ONE + r")*"
+_N = (r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+      r"два|две|двух|три|тр[её]х|четыре|четыр[её]х|пять|пяти|шесть|шести|семь|семи|восемь|восьми|десять|десяти)")
+_NUMW = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+         "eleven": 11, "twelve": 12, "other": 2, "second": 2, "два": 2, "две": 2, "двух": 2, "три": 3, "трёх": 3, "трех": 3,
+         "четыре": 4, "четырёх": 4, "четырех": 4, "пять": 5, "пяти": 5, "шесть": 6, "шести": 6, "семь": 7, "семи": 7,
+         "восемь": 8, "восьми": 8, "десять": 10, "десяти": 10}
+_ORD_EN = r"(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last)"
+_ORD_RU = (r"(перв(?:ый|ую|ое|ая|ого|ой)|втор(?:ой|ую|ое|ая|ого)|трет(?:ий|ью|ье|ья|ьего|ьей)|"
+           r"четв[её]рт(?:ый|ую|ое|ая|ого|ой)|пят(?:ый|ую|ое|ая|ого|ой)|последн(?:ий|юю|ее|яя|его|ей))")
+_HOUR_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+             "eleven": 11, "twelve": 12, "двух": 2, "два": 2, "трёх": 3, "трех": 3, "три": 3, "четырёх": 4, "четырех": 4,
+             "четыре": 4, "пяти": 5, "пять": 5, "шести": 6, "шесть": 6, "семи": 7, "семь": 7, "восьми": 8, "восемь": 8,
+             "девяти": 9, "девять": 9, "десяти": 10, "десять": 10, "одиннадцати": 11, "одиннадцать": 11,
+             "двенадцати": 12, "двенадцать": 12}
+_HOUR_WORDS = "(?:" + "|".join(sorted(_HOUR_NUM, key=len, reverse=True)) + ")"
+_MON_EN = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+_MON_RU = "(?:" + "|".join(MONTHS_RU) + r")\w*"
+
+
+def _n(s: str | None, default=1) -> int:
+    if not s:
+        return default
+    s = s.lower()
+    if s.isdigit():
+        return int(s)
+    if s.startswith("втор"):
+        return 2
+    return _NUMW.get(s, default)
+
+
+def _ord(s: str) -> int:
+    s = s.lower()
+    for k, v in (("first", 1), ("1st", 1), ("second", 2), ("2nd", 2), ("third", 3), ("3rd", 3), ("fourth", 4), ("4th", 4),
+                 ("fifth", 5), ("5th", 5), ("last", -1), ("перв", 1), ("втор", 2), ("трет", 3), ("четв", 4), ("пят", 5),
+                 ("последн", -1)):
+        if s.startswith(k):
+            return v
+    return 1
+
+
+def _wd_code(word: str) -> str | None:
+    w = word.lower()
+    if w.endswith("days") or w in ("tues", "weds", "thurs"):
+        w = w[:-1]
+    i = _wd_index(w)
+    return WD_CODES[i] if i is not None else None
+
+
+def _days_in(s: str) -> list[str]:
+    out = []
+    for w in re.findall(_WD_ONE, s or "", re.I):
+        c = _wd_code(w)
+        if c and c not in out:
+            out.append(c)
+    return sorted(out, key=WD_CODES.index)
+
+
+def _freq_of(unit: str) -> str:
+    u = unit.lower()
+    if u.startswith(("day", "дн", "ден", "сут")):
+        return "daily"
+    if u.startswith(("week", "недел")):
+        return "weekly"
+    if u.startswith(("month", "месяц")):
+        return "monthly"
+    return "yearly"
+
+
+def _month_index(word: str) -> int | None:
+    w = word.lower().rstrip(".")
+    if re.match(r"[a-z]", w):
+        return MONTHS_EN.index(w[:3]) + 1 if w[:3] in MONTHS_EN else None
+    for i, p in enumerate(MONTHS_RU):
+        if re.match(p, w):
+            return i + 1
+    return None
+
+
+def _last_day(y: int, m: int) -> dt.date:
+    return (dt.date(y, m, 28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
+
+
+def _until_date(phrase: str, today: dt.date) -> dt.date | None:
+    """End of a series: "December" (= up to Nov 30), "Dec 20", "20 декабря", "end of the year",
+    "конца месяца", "15.12", "2026-12-20"."""
+    p = re.sub(r"\s+", " ", phrase.lower().strip())
+    if re.search(r"(end of (the )?year|конца года|нового года)", p):
+        return dt.date(today.year, 12, 31)
+    if re.search(r"(end of (the )?month|конца месяца)", p):
+        return _last_day(today.year, today.month)
+    if re.search(r"next month|следующего месяца", p):
+        return _last_day(today.year, today.month)
+    if re.search(r"next year|следующего года", p):
+        return dt.date(today.year, 12, 31)
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", p)
+    if m:
+        try:
+            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    m = re.search(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?", p)
+    if m:
+        y = int(m.group(3)) + (2000 if m.group(3) and len(m.group(3)) == 2 else 0) if m.group(3) else today.year
+        try:
+            d = dt.date(y, int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            return None
+        return d if m.group(3) or d >= today else d.replace(year=y + 1)
+    words = re.findall(r"[a-zа-яё]+\.?", p)
+    mon = next((_month_index(w) for w in words if _month_index(w)), None)
+    if mon is None:
+        return None
+    y = today.year if mon >= today.month else today.year + 1
+    day = re.search(r"\b(\d{1,2})(?:st|nd|rd|th|-?го)?\b", p)
+    end_of = re.search(r"end of|конца", p)
+    if end_of:
+        return _last_day(y, mon)
+    if day:
+        try:
+            d = dt.date(today.year, mon, int(day.group(1)))
+        except ValueError:
+            return None
+        return d if d >= today else d.replace(year=today.year + 1)
+    # "until December": the series stops before December starts
+    return dt.date(y, mon, 1) - dt.timedelta(days=1)
+
+
+def _eat_recurrence(T: "_Text", item: dict, today: dt.date) -> dict | None:
+    def mk(freq, interval=1, byday=None, bymonthday=None):
+        return {"freq": freq, "interval": max(1, interval), "byday": byday or [], "bymonthday": bymonthday or [],
+                "count": None, "until": None}
+
+    rec = None
+    # every morning / каждое утро → daily + a default time of day
+    m = T.first(r"\b(every\s+(morning|evening|night)|каждое\s+утро|каждый\s+вечер|каждую\s+ночь)\b")
+    if m:
+        w = m.group(0).lower()
+        item["_daypart"] = "09:00" if ("morning" in w or "утро" in w) else ("22:00" if ("night" in w or "ночь" in w) else "19:00")
+        rec = mk("daily")
+        T.eat(m)
+
+    # monthly on the Nth weekday: "last friday of every month", "каждый второй четверг месяца"
+    if not rec:
+        for pat in (r"\b(?:(?:every|each|on)\s+)?(?:the\s+)?" + _ORD_EN + r"\s+(" + _WD_ONE + r")\s+of\s+(?:every|each|the|a)\s+month\b",
+                    r"\b(?:every\s+month|monthly|each\s+month)\s+on\s+the\s+" + _ORD_EN + r"\s+(" + _WD_ONE + ")",
+                    r"\bevery\s+(first|1st|third|3rd|fourth|4th|fifth|5th|last)\s+(" + _WD_ONE + ")",
+                    r"(?:\b(?:кажд\w+|в|во)\s+)?" + _ORD_RU + r"\s+(" + _WD_ONE + r")\s+(?:каждого\s+)?месяца\b",
+                    r"\b(?:каждый\s+месяц|ежемесячно)\s+(?:в\s+|во\s+)?" + _ORD_RU + r"\s+(" + _WD_ONE + ")",
+                    r"\bкажд\w+\s+(перв\w+|трет\w+|четв[её]рт\w+|последн\w+)\s+(" + _WD_ONE + ")"):
+            m = T.first(pat)
+            if m:
+                code = _wd_code(m.group(2))
+                if code:
+                    rec = mk("monthly", byday=[f"{_ord(m.group(1))}{code}"])
+                    T.eat(m)
+                    break
+
+    # "monthly team retro on the first monday", "ежемесячно … в последнюю пятницу": the two halves apart
+    if not rec:
+        mm = T.first(r"\b(?:monthly|every\s+month|each\s+month|ежемесячно|каждый\s+месяц)\b")
+        if mm:
+            mo = T.first(r"\b(?:on\s+)?the\s+" + _ORD_EN + r"\s+(" + _WD_ONE + ")") or T.first(r"\b(?:в|во)\s+" + _ORD_RU + r"\s+(" + _WD_ONE + ")")
+            if mo and _wd_code(mo.group(2)):
+                rec = mk("monthly", byday=[f"{_ord(mo.group(1))}{_wd_code(mo.group(2))}"])
+                T.eat(mm)
+                T.eat(mo)
+
+    # monthly on a day of the month: "on the 1st of every month", "каждое 15 число", "15 числа каждого месяца"
+    if not rec:
+        for pat, day in ((r"\b(?:on\s+)?the\s+last\s+day\s+of\s+(?:every|each|the)\s+month\b|\bв\s+последний\s+день\s+(?:каждого\s+)?месяца\b", -1),
+                         (r"\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:day\s+)?of\s+(?:every|each|the|a)\s+month\b", None),
+                         (r"\b(?:every\s+month|monthly|each\s+month)\s+on\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b", None),
+                         (r"\bevery\s+(\d{1,2})(?:st|nd|rd|th)\b(?:\s+of\s+(?:the|each|every)\s+month)?", None),
+                         (r"\bкаждое\s+(\d{1,2})(?:-?е)?\s+число\b", None),
+                         (r"\b(\d{1,2})(?:-?го)?\s+числа\s+каждого\s+месяца\b", None),
+                         (r"\b(?:каждый\s+месяц|ежемесячно)\s+(\d{1,2})(?:-?го|\s+числа)\b", None)):
+            m = T.first(pat)
+            if m:
+                n = day if day is not None else int(m.group(1))
+                if 1 <= abs(n) <= 31:
+                    rec = mk("monthly", bymonthday=[n])
+                    T.eat(m)
+                    break
+
+    # intervals: "every 2 weeks (on tue)", "every other wednesday", "biweekly", "каждые 2 недели", "раз в две недели"
+    if not rec:
+        m = T.first(r"\bevery\s+(other|second|" + _N[1:-1] + r")\s+(day|week|month|year)s?\b(?:\s+on\s+(" + _WD_LIST + "))?")
+        if m:
+            rec = mk(_freq_of(m.group(2)), _n(m.group(1)), _days_in(m.group(3)) if _freq_of(m.group(2)) == "weekly" else [])
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\bevery\s+(?:other|second|alternate)\s+(" + _WD_LIST + ")")
+        if m:
+            rec = mk("weekly", 2, _days_in(m.group(1)))
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\b(?:bi-?weekly|fortnightly|every\s+fortnight)\b(?:\s+on\s+(" + _WD_LIST + "))?")
+        if m:
+            rec = mk("weekly", 2, _days_in(m.group(1)))
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\bкажд(?:ые|ую|ый|ое|ой)\s+(втор\w+|" + _N[1:-1] + r")\s+(дн\w*|день|сут\w*|недел\w*|месяц\w*|год\w*|лет)\b"
+                    r"(?:\s+(?:в|во|по)\s+(" + _WD_LIST + "))?")
+        if m:
+            f = _freq_of(m.group(2))
+            rec = mk(f, _n(m.group(1)), _days_in(m.group(3)) if f == "weekly" else [])
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\bраз\s+в\s+(?:" + _N + r"\s+)?(дн\w*|день|сутки|недел\w*|месяц\w*|год|года|лет)\b(?:\s+(?:в|во|по)\s+(" + _WD_LIST + "))?")
+        if m:
+            f = _freq_of(m.group(2))
+            rec = mk(f, _n(m.group(1)), _days_in(m.group(3)) if f == "weekly" else [])
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\bкажд(?:ый|ую|ое)\s+втор(?:ой|ую|ое)\s+(" + _WD_ONE + ")")
+        if m:
+            rec = mk("weekly", 2, _days_in(m.group(1)))
+            T.eat(m)
+
+    # every weekday / по будням, weekends / по выходным
+    if not rec:
+        m = T.first(r"\b(?:every\s+weekday|on\s+weekdays|weekdays|every\s+workday|on\s+workdays|workdays|"
+                    r"monday\s+(?:to|through|thru|-|–)\s+friday|mon\s*[-–]\s*fri|по\s+будням|в\s+будни|"
+                    r"каждый\s+будний\s+день|по\s+будним\s+дням|по\s+рабочим\s+дням|в\s+рабочие\s+дни|"
+                    r"с\s+понедельника\s+по\s+пятницу|пн\s*[-–]\s*пт)\b|平日")
+        if m:
+            rec = mk("weekly", 1, WD_CODES[:5])
+            T.eat(m)
+    if not rec:
+        m = T.first(r"\b(?:every\s+weekend|on\s+weekends|weekends|по\s+выходным|каждые\s+выходные)\b")
+        if m:
+            rec = mk("weekly", 1, ["SA", "SU"])
+            T.eat(m)
+
+    # weekly on named days: "every mon and wed", "mondays", "каждый вторник", "по средам и пятницам", 毎週火曜
+    if not rec:
+        m = T.first(r"\b(?:every|each|каждый|каждую|каждое|каждые|по)\s+(" + _WD_LIST + ")")
+        if not m:
+            m = T.first(r"\b(?:on\s+)?((?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s"
+                        r"(?:\s*(?:,|and|&)\s*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s)*)\b")
+        if m and _days_in(m.group(1)):
+            rec = mk("weekly", 1, _days_in(m.group(1)))
+            T.eat(m)
+        else:
+            m = T.first(r"毎週\s*(" + "|".join(WD_JA) + r")日?")
+            if m:
+                rec = mk("weekly", 1, [WD_CODES[WD_JA.index(m.group(1))]])
+                T.eat(m)
+
+    # plain: daily / weekly (on …) / monthly / yearly
+    if not rec:
+        for pat, f in ((r"\b(?:every\s*day|daily|each\s+day|ежедневно|каждый\s+день|каждые\s+сутки)\b|毎日", "daily"),
+                       (r"\b(?:every\s+week|weekly|each\s+week|once\s+a\s+week|еженедельно|каждую\s+неделю)\b|毎週", "weekly"),
+                       (r"\b(?:every\s+month|monthly|each\s+month|once\s+a\s+month|ежемесячно|каждый\s+месяц)\b|毎月", "monthly"),
+                       (r"\b(?:every\s+year|yearly|annually|each\s+year|once\s+a\s+year|ежегодно|каждый\s+год)\b|毎年", "yearly")):
+            m = T.first(pat)
+            if m:
+                rec = mk(f)
+                T.eat(m)
+                if f == "weekly":
+                    # the day usually follows right after: "every week on thursday", "каждую неделю по средам"
+                    for m2 in T.find(r"(?:\bon\s+|\bв\s+|\bво\s+|\bпо\s+)?(" + _WD_LIST + ")"):
+                        if not T.rest()[m.end():m2.start()].strip():
+                            rec["byday"] = _days_in(m2.group(1))
+                            T.eat(m2)
+                        break
+                break
+    if not rec:
+        return None
+    # the days may come later: "раз в две недели созвон по четвергам", "every week … on tuesday"
+    if rec["freq"] == "weekly" and not rec["byday"]:
+        m = T.first(r"(?:\bon\s+|\bпо\s+|\bв\s+|\bво\s+)(" + _WD_LIST + ")")
+        if m and _days_in(m.group(1)):
+            rec["byday"] = _days_in(m.group(1))
+            T.eat(m)
+
+    # a redundant second phrasing ("по средам … каждую неделю", "… of every month")
+    for pat, f in ((r"\b(?:every\s+week|weekly|еженедельно|каждую\s+неделю)\b", "weekly"),
+                   (r"\b(?:of\s+(?:every|each|the)\s+month|every\s+month|monthly|каждого\s+месяца|ежемесячно)\b", "monthly")):
+        if rec["freq"] == f:
+            m = T.first(pat)
+            if m:
+                T.eat(m)
+
+    # ── end of the series ──
+    m = T.first(r"\b(?:for\s+)?" + _N + r"\s+(?:times|occurrences|sessions|lessons|classes)\b|\b" + _N + r"\s+раза?\b(?!\s+в\s+(?:дн|день|сутки|недел|месяц|год|лет))")
+    if m:
+        rec["count"] = _n(m.group(1) or m.group(2))
+        T.eat(m)
+    else:
+        m = T.first(r"\bfor\s+(?:the\s+next\s+)?" + _N + r"\s+(day|week|month|year)s?\b"
+                    r"|\b(?:в\s+течение|на\s+протяжении)\s+(?:следующих\s+)?" + _N + r"\s+(дн\w*|недел\w*|месяц\w*|лет|год\w*)\b"
+                    r"|\b" + _N + r"\s+(недел\w*|месяц\w*|дн\w*)\s+подряд\b")
+        if m:
+            g = m.groups()
+            n, unit = next((_n(g[i]), g[i + 1]) for i in (0, 2, 4) if g[i])
+            rec["_span"] = (n, _freq_of(unit))
+            T.eat(m)
+    if not rec["count"] and "_span" not in rec:
+        phrase_en = (r"(?:the\s+)?end\s+of\s+(?:the\s+)?(?:year|month|" + _MON_EN + r")|next\s+(?:month|year)|"
+                     + _MON_EN + r"(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+\d{4})?|(?:the\s+)?\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MON_EN
+                     + r"|\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?")
+        phrase_ru = (r"конца\s+(?:года|месяца|" + _MON_RU + r")|нового\s+года|следующего\s+(?:месяца|года)|\d{1,2}(?:-?го)?\s+"
+                     + _MON_RU + "|" + _MON_RU + r"|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?")
+        m = T.first(r"\b(?:until|till|til|through|thru|up\s+to|ending(?:\s+on)?|ends?\s+on)\s+(" + phrase_en + r")(?![\w])"
+                    r"|\bдо\s+(" + phrase_ru + r")(?![\w])|\bпо\s+(\d{1,2}(?:-?е|-?го)?\s+" + _MON_RU + r")")
+        if m:
+            u = _until_date(m.group(1) or m.group(2) or m.group(3), today)
+            if u:
+                rec["until"] = u.isoformat()
+                T.eat(m)
+    return rec
+
+
+def _finish_recurrence(item: dict, now: dt.datetime):
+    """Move the series start onto its first real occurrence and turn "for 10 weeks" into COUNT/UNTIL."""
+    from gcal_rec import first_on_or_after, normalize
+    rec = item.get("recurrence")
+    if not rec:
+        return
+    span = rec.pop("_span", None)
+    today = now.date()
+    start = dt.date.fromisoformat(item["date"]) if item.get("date") else today
+    if start < today:
+        start = today
+    first = first_on_or_after(rec, start, item.get("time"), now.replace(tzinfo=None))
+    item["date"] = first.isoformat()
+    if rec["freq"] == "monthly" and not rec["byday"] and not rec["bymonthday"]:
+        rec["bymonthday"] = [first.day]          # "Monthly on day N", as Google shows it
+    if span:
+        n, unit = span
+        if unit == rec["freq"]:
+            rec["count"] = n * (len(rec["byday"]) if rec["freq"] == "weekly" and rec["byday"] else 1)
+        else:
+            days = {"daily": 1, "weekly": 7, "monthly": 30, "yearly": 365}[unit] * n
+            rec["until"] = (first + dt.timedelta(days=days - 1)).isoformat()
+    item["recurrence"] = normalize(rec)
+
+
+
 def parse_rules(text: str, now: dt.datetime) -> dict:
     today = now.date()
     T = _Text(text)
@@ -174,55 +521,8 @@ def parse_rules(text: str, now: dt.datetime) -> dict:
             rem_offset = dt.timedelta(minutes=0)
         T.eat(m)
 
-    # ── recurrence ──
-    rec = None
-    m = T.first(r"\b(?:every\s*day|daily|each\s+day|ежедневно|каждый\s+день)\b|毎日|\b(every\s+(morning|evening|night)|каждое\s+утро|каждый\s+вечер)\b")
-    if m:
-        rec = {"freq": "daily", "interval": 1, "byday": [], "text": "every day"}
-        if m.group(1):   # "every morning" also hints a time of day
-            T.eat(m)
-            word = (m.group(2) or m.group(1)).lower()
-            item["_daypart"] = "09:00" if ("morning" in word or "утро" in word) else ("22:00" if "night" in word else "19:00")
-        else:
-            T.eat(m)
-    if not rec:
-        m = T.first(r"\b(?:every\s+weekday|weekdays|по\s+будням|в\s+будни|каждый\s+будний\s+день)\b|平日")
-        if m:
-            rec = {"freq": "weekly", "interval": 1, "byday": WD_CODES[:5], "text": "every weekday"}
-            T.eat(m)
-    if not rec:
-        m = T.first(r"\b(?:every|each|каждый|каждую|каждое|каждые|по)\s+((?:(?:" + WD_ANY + r")(?:\s*(?:,|and|и|&)\s*)?)+)|毎週\s*(" + "|".join(WD_JA) + r")日?")
-        if m:
-            words = re.findall(WD_ANY, m.group(1) or m.group(2) or "", re.I)
-            days = sorted({_wd_index(w) for w in words if _wd_index(w) is not None})
-            if days:
-                rec = {"freq": "weekly", "interval": 1, "byday": [WD_CODES[d] for d in days],
-                       "text": "every " + ", ".join(WD_EN[d].capitalize() for d in days)}
-                T.eat(m)
-                if not item["date"]:
-                    item["date"] = min((_next_weekday(today, d) for d in days)).isoformat()
-    if not rec:
-        m = T.first(r"\b(?:every\s+(\d+)\s+(day|week|month|year)s?|каждые\s+(\d+)\s+(дн|недел|месяц|год|лет)\w*)\b")
-        if m:
-            n = int(m.group(1) or m.group(3))
-            u = (m.group(2) or m.group(4)).lower()
-            freq = {"day": "daily", "дн": "daily", "week": "weekly", "недел": "weekly", "month": "monthly", "месяц": "monthly"}.get(u, "yearly")
-            rec = {"freq": freq, "interval": n, "byday": [], "text": f"every {n} {freq.replace('ily','ys').replace('ly','s')}"}
-            T.eat(m)
-    if not rec:
-        for pat, freq, txt in ((r"\b(?:every\s+week|weekly|еженедельно|каждую\s+неделю)\b|毎週", "weekly", "every week"),
-                               (r"\b(?:every\s+month|monthly|ежемесячно|каждый\s+месяц)\b|毎月", "monthly", "every month"),
-                               (r"\b(?:every\s+year|yearly|annually|ежегодно|каждый\s+год)\b|毎年", "yearly", "every year")):
-            m = T.first(pat)
-            if m:
-                rec = {"freq": freq, "interval": 1, "byday": [], "text": txt}
-                T.eat(m)
-                break
-    if rec:  # redundant second phrasing ("по средам … каждую неделю")
-        m = T.first(r"\b(?:every\s+week|weekly|еженедельно|каждую\s+неделю)\b")
-        if m and rec["freq"] == "weekly":
-            T.eat(m)
-    item["recurrence"] = rec
+    # ── recurrence (repeat rule + its end: "until December", "10 times", "до конца года") ──
+    item["recurrence"] = _eat_recurrence(T, item, today)
 
     # ── relative "in 2 hours" / "через 2 часа" / "через полчаса" (date + time) ──
     m = T.first(r"\b(?:in|через)\s+(\d+(?:[.,]\d+)?|an?|one|two|three|half\s+an|полчаса|час|полтора|два|три|пару)?\s*"
@@ -272,6 +572,26 @@ def parse_rules(text: str, now: dt.datetime) -> dict:
                     r"|(\d{1,2})時(?:(\d{1,2})分|(半))?"
                     r"|\b(noon|midday|midnight|полдень|полночь|tonight|this\s+evening|in\s+the\s+morning|in\s+the\s+evening|in\s+the\s+afternoon|morning|afternoon|evening|утром|вечером|днём|днем|ночью)\b")
         if not m:
+            # approximate / spelled-out hours: "around 4", "about five pm", "где-то с четырёх", "в семь вечера"
+            m = T.first(r"(?:\b(?:at\s+)?(?:around|about|approx\.?|roughly|около|примерно(?:\s+в)?|где-?то(?:\s+(?:в|с|к|около))?)\s*|~\s*)"
+                        r"(\d{1,2}|" + _HOUR_WORDS + r")(?:[:.](\d{2}))?(?:\s*(am|pm|утра|дня|вечера|ночи|o'?clock))?(?![\w:./])"
+                        r"|\b(?:at|в|во|к|с|начиная\s+с)\s+(" + _HOUR_WORDS + r")(?:\s*(am|pm|утра|дня|вечера|ночи|o'?clock))?\b")
+            if not m:
+                return False
+            raw, mins, suf = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(4), None, m.group(5))
+            h = int(raw) if raw.isdigit() else _HOUR_NUM.get(raw.lower(), 0)
+            suf = (suf or "").lower()
+            if suf in ("pm", "вечера", "дня") and h < 12:
+                h += 12
+            elif suf == "am" and h == 12:
+                h = 0
+            elif not suf and 1 <= h <= 7:
+                h += 12
+            t = _hhmm(h, int(mins or 0)) if 0 < h <= 24 else None
+            if t:
+                item["time"] = t
+                T.eat(m)
+                return True
             return False
         g = m.groups()
         t = None
@@ -305,6 +625,11 @@ def parse_rules(text: str, now: dt.datetime) -> dict:
         eat_time()
 
     # ── durations ──
+    m = T.first(r"\b(?:for\s+)?(?:a\s+)?couple\s+(?:of\s+)?hours\b|\b(?:на\s+)?пар[уа]\s+час(?:ов|а)\b|\bчаса\s+(два|три|четыре)\b"
+                r"|\b(?:for\s+)?an\s+hour\s+or\s+two\b|\bчас(?:ик)?\s+или\s+два\b")
+    if m and not item["duration"]:
+        item["duration"] = {"три": 180, "четыре": 240}.get((m.group(1) or "").lower(), 120)
+        T.eat(m)
     m = T.first(r"\b(?:for\s+)?(\d+(?:[.,]\d+)?|an?|one|two|three|half\s+an)\s*(h|hrs?|hours?|m|mins?|minutes?)\b(?:\s*(\d+)\s*(?:m|min)\b)?"
                 r"|\b(\d+)h(\d+)\b"
                 r"|\bна\s+(\d+(?:[.,]\d+)?|полтора|два|три|пару)?\s*(час\w*|минут\w*|мин)\b"
@@ -464,6 +789,7 @@ def parse_rules(text: str, now: dt.datetime) -> dict:
     daypart = item.pop("_daypart", None)
     if daypart and not item["time"]:
         item["time"] = daypart
+    _finish_recurrence(item, now)
 
     # ── kind ──
     event_words = r"\b(meeting|meet|call with|lunch|dinner|breakfast|appointment|dentist|doctor|lecture|class|seminar|exam|party|concert|flight|gym|workout|interview|conference|wedding|birthday|trip|festival|game|match|встреч\w*|созвон\w*|обед|ужин|лекци\w*|семинар\w*|экзамен\w*|врач\w*|стоматолог\w*|спортзал\w*|тренировк\w*|концерт\w*|вечеринк\w*|собеседовани\w*|конференци\w*|свадьб\w*|день\s+рождения|поездк\w*|матч\w*)\b|会議|歯医者|ジム"
@@ -486,6 +812,8 @@ def parse_rules(text: str, now: dt.datetime) -> dict:
         item["found"].append("reminder")
     if deadline or has_event_word or has_task_word or (item["time"] and item["duration"]):
         item["found"].append("kind")
+    if deadline:
+        item["found"].append("deadline")
 
     if kind == "task" and not item["date"] and not item["recurrence"]:
         item["date"] = today.isoformat()
@@ -518,8 +846,68 @@ def parse_rules(text: str, now: dt.datetime) -> dict:
     rest = re.sub(r"^\s*(on|at|by|в|во|к|на|до)\s+", "", rest, flags=re.I)
     rest = re.sub(r"\s*[,;]\s*(?=[,;]|$)", "", rest)
     rest = re.sub(r"\s{2,}", " ", rest).strip(" ,.;:-—–")
+    rest = re.sub(r"^(?:starting|beginning|from|начиная(?:\s+с)?)\s+|\s+(?:starting|beginning|начиная(?:\s+с)?)$", "", rest, flags=re.I)
+    short = _tidy_title(rest)
+    if short != rest:
+        item["notes"] = text.strip()           # nothing is lost: the whole note goes to the description
+    rest = short
     item["title"] = (rest[:1].upper() + rest[1:]) if rest else text.strip()
+    item["confident"] = _confident(text, rest, short is not None and "notes" not in item)
     return item
+
+
+# ── deterministic title clean-up and the "rules are enough" check ──
+_FILLER_RE = re.compile(r"\b(?:i\s+(?:want|need|have|would\s+like|'d\s+like|wanna|gotta)\s+to|i'?ll|i\s+will|i'?m\s+going\s+to|"
+                        r"i\s+should|gonna|wanna|let'?s|хочу|хотела?|надо|нужно|мне|собираюсь|буду|наверное|наверно|"
+                        r"может\s+быть|кажется)\b", re.I)
+_EDGE_FILLER_RE = re.compile(r"^(?:(?:so|and|then|well|ok|okay|maybe|probably|also|i|я|ну|так|и|потом|ещё|еще|может)\b[\s,]*)+"
+                             r"|(?:[\s,]+\b(?:maybe|probably|perhaps|or\s+so|наверное|может|возможно|или\s+около\s+того))+$", re.I)
+
+
+def _tidy_title(t: str) -> str:
+    """Long rambling notes get a short title (first clause, <= 8 words); short ones stay as typed."""
+    words = t.split()
+    if len(words) <= 8 and len(t) <= 60:
+        return t
+    s = _FILLER_RE.sub(" ", t)
+    s = re.sub(r"\s{2,}", " ", s).strip(" ,.;:-")
+    for _ in range(3):
+        s2 = _EDGE_FILLER_RE.sub("", s).strip(" ,.;:-")
+        if s2 == s:
+            break
+        s = s2
+    if len(s.split()) > 8:
+        first = re.split(r"[.;!?]\s|\s*,\s*|\s+(?:and|and\s+then|then|but|и|а|но|потом)\s+", s)[0].strip()
+        if len(first.split()) >= 2:
+            s = first
+    w = s.split()
+    if len(w) > 9:
+        w = w[:9]
+        while len(w) > 2 and re.fullmatch(r"(?:a|an|the|to|of|with|for|and|at|in|on|в|во|с|со|и|к|на|по|для|из)", w[-1], re.I):
+            w.pop()
+        s = " ".join(w)
+    return s or t
+
+
+_VAGUE_RE = re.compile(r"\d|\b(?:after|before|around|about|until|till|next|this|last|morning|evening|night|noon|tonight|weekends?|"
+                       r"later|soon|maybe|probably|o'?clock|am|pm|hours?|minutes?|mins?|days?|weeks?|months?|years?|times|twice|"
+                       r"every|each|other|once|daily|weekly|monthly|first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|"
+                       r"mon|tue|wed|thu|fri|sat|sun|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|"
+                       r"jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|"
+                       r"september|october|november|december)\b"
+                       r"|\b(?:после|перед|около|где-?то|примерно|потом|позже|скоро|наверн|может|утр|вечер|ноч|недел|месяц|перв|трет|четв[её]рт|последн|"
+                       r"год|числ|час|минут|дн|день|раз|кажд|через|выходн|будн|понедельн|вторн|сред|четверг|пятниц|суббот|"
+                       r"воскрес|январ|феврал|март|апрел|мая|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*", re.I)
+
+
+def _confident(text: str, title: str, untouched: bool) -> bool:
+    """True when the rule parse is final and the LLM can be skipped: a short note whose leftover title
+    has no numbers or time-ish words the rules failed to understand."""
+    if not untouched or not title or len(text) > 90 or len(text.split()) > 14:
+        return False
+    if len(title.split()) > 6:
+        return False
+    return not _VAGUE_RE.search(title)
 
 
 # ───────────────────────────── LLM ─────────────────────────────
@@ -728,6 +1116,113 @@ def merge(rules: dict, llm: dict, text: str) -> dict:
             out["reminder"] = {"date": out["date"], "time": out["time"]}
     out["parser"] = "llm"
     out["hybrid"] = True
+    return out
+
+
+# ── compact LLM step (2026-10): the model only names things (kind, short title, place) and copies the
+# note's own date/time/repeat words; the rule parser turns those words into dates. Short static prompt,
+# ~30 output tokens, so a warm 4B model answers in ~1-2 s instead of ~4-6 s, and never miscounts weekdays.
+SCHEMA_SMART = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": ["task", "event"]},
+        "title": {"type": "string"},
+        "when": {"type": ["string", "null"]},
+        "repeat": {"type": ["string", "null"]},
+        "place": {"type": ["string", "null"]},
+    },
+    "required": ["kind", "title", "when", "repeat", "place"],
+    "additionalProperties": False,
+}
+SYSTEM_SMART = (
+    "Turn a quick note (English or Russian) into a calendar entry. Reply with JSON only.\n"
+    "kind: \"event\" if it happens at a time or place (meeting, class, appointment, sport, going somewhere), "
+    "\"task\" if it is something to do (buy, send, submit, read, pay).\n"
+    "title: 2-6 words in the note's language, without date, time or repeat words.\n"
+    "when: the note's own date/time words copied exactly, or null.\n"
+    "repeat: the note's own repeat words copied exactly, or null.\n"
+    "place: where, copied from the note, or null."
+)
+SHOTS_SMART = [
+    ("so tmrw after work i want to grab coffee with Alex at the cafe near the office maybe at 6",
+     {"kind": "event", "title": "Coffee with Alex", "when": "tmrw after work maybe at 6", "repeat": None,
+      "place": "the cafe near the office"}),
+    ("надо бы каждую неделю по средам сдавать отчёт начальнику до обеда",
+     {"kind": "task", "title": "Сдать отчёт начальнику", "when": "до обеда", "repeat": "каждую неделю по средам", "place": None}),
+]
+
+
+def llm_smart(text: str, base=LLM_URL, timeout=20.0) -> dict:
+    msgs = [{"role": "system", "content": SYSTEM_SMART}]
+    for u, a in SHOTS_SMART:
+        msgs += [{"role": "user", "content": u}, {"role": "assistant", "content": json.dumps(a, ensure_ascii=False, separators=(",", ":"))}]
+    msgs.append({"role": "user", "content": text})
+    payload = {"model": "local", "messages": msgs, "temperature": 0, "max_tokens": 90,
+               "response_format": {"type": "json_schema", "json_schema": {"name": "entry", "strict": True, "schema": SCHEMA_SMART}}}
+    req = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    t0 = time.monotonic()
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read())
+    content = data["choices"][0]["message"]["content"]
+    raw = json.loads(content[content.find("{"): content.rfind("}") + 1])
+    raw["_ms"] = int((time.monotonic() - t0) * 1000)
+    return raw
+
+
+def merge_smart(rules: dict, raw: dict, text: str, now: dt.datetime) -> dict:
+    """Rules own everything they found in the text; the LLM's copied when/repeat words fill the gaps
+    (parsed by the same rules); the LLM names the entry (kind, title, place)."""
+    found = set(rules.get("found") or [])
+    out = dict(rules)
+    when = (raw.get("when") or "").strip()
+    rep = (raw.get("repeat") or "").strip()
+    if (when or rep) and not ({"date", "time"} <= found and (rules.get("recurrence") or not rep)):
+        extra = parse_rules((when + " " + rep).strip(), now)
+        xf = set(extra.get("found") or [])
+        for f in ("date", "time", "duration", "recurrence"):
+            if f not in found and f in xf:
+                out[f] = extra[f]
+        if "recurrence" not in found and extra.get("recurrence"):
+            out["date"] = extra["date"]
+    kind = raw.get("kind") if raw.get("kind") in ("task", "event") else rules["kind"]
+    out["kind"] = rules["kind"] if "deadline" in found else kind
+    title = (raw.get("title") or "").strip().strip(".")
+    if title and _script(title) == _script(text) and len(title) <= max(len(text), 12):
+        out["title"] = title[:1].upper() + title[1:]
+    place = (raw.get("place") or "").strip()
+    if not rules.get("location") and place and place.lower() in text.lower():
+        out["location"] = place
+    if len(text.split()) > 8 and len(out["title"]) < len(text) * 0.7:
+        out["notes"] = text.strip()
+    if out["kind"] == "event":
+        out["allDay"] = not out.get("time")
+        if out.get("time") and not out.get("duration"):
+            out["duration"] = 60
+        if not out.get("date"):
+            out["date"] = now.date().isoformat()
+    else:
+        out["duration"] = None
+        out["allDay"] = False
+        if out.get("time") and not out.get("reminder"):
+            out["reminder"] = {"date": out["date"], "time": out["time"]}
+    out["parser"] = "llm"
+    out["hybrid"] = True
+    out["confident"] = True
+    out["ms"] = raw.get("_ms")
+    return out
+
+
+def parse_smart(text: str, now: dt.datetime, ctx: dict | None = None, base=LLM_URL, timeout=20.0, force_llm=False) -> dict:
+    """Fast path first: a confident rule parse is final (instant). Only hard notes go to the LLM."""
+    t0 = time.monotonic()
+    rules = parse_rules(text, now)
+    rules["ms"] = int((time.monotonic() - t0) * 1000)
+    if rules.get("confident") and not force_llm:
+        rules["path"] = "rules"
+        return rules
+    out = merge_smart(rules, llm_smart(text, base=base, timeout=timeout), text, now)
+    out["path"] = "llm"
     return out
 
 

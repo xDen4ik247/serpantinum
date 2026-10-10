@@ -50,11 +50,11 @@ SERP_SETTINGS = HOME / ".config/serpantinum/settings.json"
 GCALCLI_TOKEN = HOME / ".local/share/gcalcli/oauth"
 LOCAL_ICS = Path(os.environ.get("GCAL_SYNC_LOCAL_ICS", HOME / ".local/share/gcal-sync/local-events.ics"))
 
-PARSER_VERSION = 3  # bump to invalidate cached parses
+PARSER_VERSION = 4  # bump to invalidate cached parses
 PALETTE = ["blue", "mauve", "teal", "peach", "pink", "green", "yellow", "sapphire"]
 SETTINGS_SECTION = "gcal-sync"
 DEFAULTS = {
-    "vault": "~/Obsidian/Vault",
+    "vault": "~/Obsidian",            # set your vault in calendars.conf ([gcal-sync] vault = ~/path/to/vault)
     "vault_name": "",
     "days": "60",
     "past_days": "35",
@@ -157,6 +157,9 @@ def read_conf():
             "id": cp.get(sec, "id", fallback="").strip(),
             "enabled": cp.get(sec, "enabled", fallback="yes").strip().lower() not in ("no", "false", "0", "off"),
         })
+    gw = google_write_enabled()
+    for c in cals:
+        c["writable"] = bool(gw and google_calendar_id(c["url"], c.get("id", "")))
     if LOCAL_ICS.exists():
         cals.append({"name": "Captured", "url": LOCAL_ICS.as_uri(), "color": settings["local_color"], "id": "",
                      "enabled": True, "local": True})
@@ -164,6 +167,14 @@ def read_conf():
     settings["vault_path"] = vault
     settings["vault_name"] = settings["vault_name"] or vault.name
     return cp, settings, cals
+
+
+def google_write_enabled() -> bool:
+    try:
+        import gcal_google
+        return gcal_google.enabled()
+    except Exception:
+        return False
 
 
 def write_conf(cp: configparser.ConfigParser):
@@ -296,6 +307,20 @@ def parse_calendar(cal_cfg: dict, data: bytes, win_start: dt.date, win_end: dt.d
     # UIDs that belong to a recurring series (the library tags every occurrence with RECURRENCE-ID)
     rec_uids = {str(c.get("UID", "")) for c in cal.walk("VEVENT")
                 if "RRULE" in c or "RDATE" in c or "RECURRENCE-ID" in c}
+    # Google-style repeat summary per series ("Weekly on Monday and Wednesday, until Dec 1, 2026")
+    import gcal_rec
+    repeat_text = {}
+    for c in cal.walk("VEVENT"):
+        if "RRULE" in c and "RECURRENCE-ID" not in c:
+            try:
+                ms = to_local(c.decoded("DTSTART"), tz)
+                rule = c.get("RRULE")
+                rule = rule[0] if isinstance(rule, list) else rule
+                repeat_text[str(c.get("UID", ""))] = gcal_rec.describe(gcal_rec.from_rrule(rule, tz, ms), ms if not isinstance(ms, dt.datetime) else ms.date())
+            except Exception:
+                pass
+    local = bool(cal_cfg.get("local"))
+    source = "local" if local else ("google" if calid else "ics")
     query = recurring_ical_events.of(cal, skip_bad_series=True)
     for ev in query.between(win_start, win_end):
         if str(ev.get("STATUS", "")).upper() == "CANCELLED":
@@ -372,7 +397,13 @@ def parse_calendar(cal_cfg: dict, data: bytes, win_start: dt.date, win_end: dt.d
             "recurring": bool(is_rec),
             "busy": str(ev.get("TRANSP", "OPAQUE")).upper() != "TRANSPARENT",
             "alarms": sorted(set(alarms)),
-            "local": bool(cal_cfg.get("local")),
+            "local": local,
+            # editing: (uid, rid) addresses this occurrence; rid = its original start ("" = single event)
+            "uid": uid,
+            "rid": (rid_v.isoformat() if not isinstance(rid_v, dt.datetime) else to_local(rid_v, tz).isoformat()) if (is_rec and rid_v is not None) else "",
+            "repeat": repeat_text.get(uid, "Repeating event" if is_rec else ""),
+            "source": source,
+            "editable": local or (source == "google" and bool(cal_cfg.get("writable")) and uid.endswith("@google.com")),
         })
     return out, feed_name
 
@@ -714,7 +745,7 @@ def build(force_fetch=False, quiet=False):
         st["ok"] = not st["error"]
         rp = raw_path(cal["url"])
         # (re)parse when the feed changed, the window moved, or the calendar's settings changed
-        sig = f"v{PARSER_VERSION}|{key}|{win_start}|{win_end}|{cal['name']}|{cal['color']}|{cal.get('id','')}|{tz.key}|{rp.stat().st_mtime if rp.exists() else 0}"
+        sig = f"v{PARSER_VERSION}|{key}|{win_start}|{win_end}|{cal['name']}|{cal['color']}|{cal.get('id','')}|{tz.key}|w{int(bool(cal.get('writable')))}|{rp.stat().st_mtime if rp.exists() else 0}"
         entry = parsed.get(key)
         if rp.exists() and (changed or not entry or entry.get("sig") != sig):
             try:
@@ -755,7 +786,8 @@ def build(force_fetch=False, quiet=False):
         k = t["due"] if not t["overdue"] else today.isoformat()
         days.setdefault(k, {"events": 0, "tasks": 0, "colors": []})["tasks"] += 1
 
-    write_enabled = bool(shutil.which("gcalcli") or (Path(sys.prefix) / "bin/gcalcli").exists()) and GCALCLI_TOKEN.exists()
+    wt = write_target(settings, cals)
+    write_enabled = wt is not None
     doc = {
         "version": 1,
         "today": today.isoformat(),
@@ -764,6 +796,7 @@ def build(force_fetch=False, quiet=False):
         "configured": any(not c.get("local") for c in cals),
         "calendars": cal_status,
         "writeEnabled": write_enabled,
+        "writeCalendar": wt["name"] if wt else "",
         "obsidian": vinfo,
         "events": events,
         "tasks": tasks,
@@ -799,6 +832,11 @@ def remind(settings, doc, tz):
     items = []
     for e in doc["events"]:
         if e["allDay"]:
+            continue
+        if e.get("local") and e.get("alarms"):
+            # events made in the agenda: exactly the reminders chosen in the editor
+            for a in e["alarms"]:
+                items.append((f"{e['id']}-a{a}", e["startMs"] / 1000 - a * 60 + lead, e["title"], e))
             continue
         items.append((e["id"], e["startMs"] / 1000, e["title"], e))
         for a in e.get("alarms") or []:
@@ -938,12 +976,18 @@ def parse_context():
 
 
 def smart_parse(text, settings, tz, engine="auto", timeout=None):
+    """Fast path: a confident rule parse is final (instant). Only notes the rules cannot fully
+    explain go to the local LLM (short prompt, ~30 output tokens); its answer is merged with the
+    rules, and any failure falls back to the rule parse, never to the raw text."""
     import gcal_parse as P
     now = dt.datetime.now(tz).replace(tzinfo=None)
     t0 = time.monotonic()
     rules = P.parse_rules(text, now)
     rules["ms"] = int((time.monotonic() - t0) * 1000)
+    rules["path"] = "rules"
     if engine == "rules" or settings.get("llm", "auto") == "off":
+        return rules
+    if rules.get("confident") and engine != "llm":
         return rules
     base = settings.get("llm_url") or P.LLM_URL
     st = P.llm_status(base)
@@ -951,8 +995,11 @@ def smart_parse(text, settings, tz, engine="auto", timeout=None):
         rules["llmState"] = "offline"
         return rules
     try:
-        # a socket-activated model that is still loading needs ~45 s for its first answer
-        return P.parse_hybrid(text, now, parse_context(), base=base, timeout=timeout or (90 if st == "loading" else 20))
+        # a socket-activated model that is still loading needs ~35-45 s for its first answer
+        raw = P.llm_smart(text, base=base, timeout=timeout or (90 if st == "loading" else 25))
+        out = P.merge_smart(rules, raw, text, now)
+        out["path"] = "llm"
+        return out
     except Exception as e:
         rules["llmState"] = f"failed: {type(e).__name__}"
         return rules
@@ -1015,7 +1062,9 @@ def cmd_parse(args):
 def cmd_parse_server(args):
     """Line protocol for the quick-capture preview (QML Process):
     in : {"id": n, "text": "...", "llm": true}  |  {"id": n, "op": "field", "item": {...}, "field": "date", "value": "fri"}
-    out: {"id": n, "stage": "rules"|"llm"|"field"|"llm-failed", "item": {...}, "llm": "pending"|"loading"|"offline"|"off"}"""
+         {"id": n, "op": "warm"}   start the on-demand LLM in the background (capture opened)
+    out: {"id": n, "stage": "rules"|"llm"|"field"|"llm-failed"|"health", "item": {...},
+          "llm": "pending"|"loading"|"offline"|"off"|"skip"}   skip = the rules are sure, no LLM needed"""
     import threading
     import gcal_parse as P
     _, settings, _ = read_conf()
@@ -1056,9 +1105,11 @@ def cmd_parse_server(args):
                     item = state["cache"][text]
                 else:
                     # still loading (socket-activated, ~45 s): wait for the model instead of failing
-                    item = P.parse_hybrid(text, now, parse_context(), base=base,
-                                          timeout=90 if state["health"][1] == "loading" else 25)
+                    rules = P.parse_rules(text, now)
+                    raw = P.llm_smart(text, base=base, timeout=90 if state["health"][1] != "online" else 25)
+                    item = P.merge_smart(rules, raw, text, now)
                     state["cache"][text] = item
+                    state["health"] = (time.monotonic(), "online")
                 emit({"id": rid, "stage": "llm", "item": item})
             except Exception as e:
                 state["health"] = (time.monotonic(), "offline")
@@ -1077,6 +1128,19 @@ def cmd_parse_server(args):
         if req.get("op") == "health":
             emit({"id": rid, "stage": "health", "llm": llm_status()})
             continue
+        if req.get("op") == "warm":
+            warm_ok = str(settings.get("warm", "yes")).lower() not in ("no", "false", "0", "off")
+            if llm_enabled and warm_ok and not state.get("warming") and state["health"][1] != "online":
+                state["warming"] = True
+
+                def warm(rid=rid):
+                    # the first connection starts npu-llm (socket activation); wait until it answers
+                    st = P.llm_status(base, timeout=120)
+                    state["health"] = (time.monotonic(), st)
+                    state["warming"] = False
+                    emit({"id": rid, "stage": "health", "llm": st})
+                threading.Thread(target=warm, daemon=True).start()
+            continue
         text = (req.get("text") or "").strip()
         state["latest"] = max(state["latest"], rid)
         if not text:
@@ -1087,7 +1151,9 @@ def cmd_parse_server(args):
         item["ms"] = int((time.monotonic() - t0) * 1000)
         want_llm = bool(req.get("llm")) and llm_enabled
         llm_state = "off"
-        if want_llm:
+        if want_llm and item.get("confident") and not req.get("force"):
+            llm_state = "skip"          # the rules understood everything: final, instant
+        elif want_llm:
             if text in state["cache"]:
                 emit({"id": rid, "stage": "llm", "item": state["cache"][text]})
                 continue
@@ -1156,34 +1222,26 @@ def cmd_add(args):
     item.setdefault("date", dt.datetime.now(tz).date().isoformat())
     result = {"ok": True, "kind": item.get("kind", "task")}
     if item.get("kind") == "event":
-        exe = gcalcli_bin()
-        google_done = False
-        if exe and GCALCLI_TOKEN.exists() and not args.local:
-            import tempfile
-            uid = f"{uuid.uuid4()}@gcal-sync"
-            ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//gcal-sync//capture//EN\r\n" + P.vevent(item, uid, tz.key) + "\r\nEND:VCALENDAR\r\n"
-            with tempfile.NamedTemporaryFile("w", suffix=".ics", delete=False) as f:
-                f.write(ics)
-            cmd = [exe, "--nocolor", "import"]
-            if args.calendar:
-                cmd += ["--calendar", args.calendar]
-            r = subprocess.run(cmd + [f.name], capture_output=True, text=True, timeout=60)
-            os.unlink(f.name)
-            google_done = r.returncode == 0
-            if not google_done:
-                result["googleError"] = (r.stderr or r.stdout).strip()[-200:]
-        if google_done:
-            result["where"] = "Google Calendar"
-            with locked():
-                build(force_fetch=True, quiet=True)
-        else:
-            uid = f"{uuid.uuid4()}@gcal-sync.local"
-            add_local_event(item, uid, tz)
+        cals = read_conf()[2]
+        target = None if args.local else write_target(settings, cals, args.calendar)
+        uid = None
+        if target:
+            try:
+                import gcal_google as GG
+                uid = GG.create(google_calendar_id(target["url"], target.get("id", "")), item, tz)
+                _optimistic(target, tz, lambda st: st.create(item, uid=uid))
+                result["where"] = "Google Calendar"
+            except Exception as e:      # never lose a capture: fall back to the local calendar
+                result["googleError"] = str(e)[-200:]
+                uid = None
+        if uid is None:
+            uid = _store(tz).create(item)
             path, rel = capture_target(settings, tz)
             append_line(path, P.task_line(item, local_uid=uid))
-            result.update({"where": "Calendar (local) + " + rel.removesuffix(".md"), "file": rel, "uid": uid})
-            with locked():
-                build(quiet=True)
+            result.update({"where": "Calendar (local) + " + rel.removesuffix(".md"), "file": rel})
+        result["uid"] = uid
+        with locked():
+            build(quiet=True)
     else:
         path, rel = capture_target(settings, tz)
         line = P.task_line(item)
@@ -1193,6 +1251,119 @@ def cmd_add(args):
             build(quiet=True)
     result["message"] = ("Event added to " if result["kind"] == "event" else "Task added to ") + result["where"]
     print(json.dumps(result, ensure_ascii=False))
+
+
+
+# ───────────────────────────── event editing (agenda editor) ─────────────────────────────
+# gcal-sync edit get UID [RID] [--calendar NAME]
+# gcal-sync edit save --json ITEM [--uid UID --rid RID --scope this|following|all] [--calendar NAME]
+# gcal-sync edit delete UID [RID] --scope this|following|all [--calendar NAME]
+# Local events live in local-events.ics; Google events (with `gcal-setup oauth`) go through the API.
+
+def write_target(settings, cals, name: str | None = None):
+    """Calendar config that new events go to: a writable Google calendar, or None = local store."""
+    writable = [c for c in cals if c.get("writable") and c["enabled"] and not c.get("local")]
+    want = name or settings.get("write_calendar", "")
+    if name and any(c["name"] == name and c.get("local") for c in cals):
+        return None
+    for c in writable:
+        if c["name"] == want:
+            return c
+    return writable[0] if writable else None
+
+
+def _calendar_of(cals, name: str):
+    for c in cals:
+        if c["name"] == name:
+            return c
+    if name in ("", "Captured", "local"):
+        return {"name": "Captured", "local": True, "url": LOCAL_ICS.as_uri()}
+    raise SystemExit(f"unknown calendar {name!r}")
+
+
+def _store(tz, path=None):
+    from gcal_store import IcsStore
+    return IcsStore(path or LOCAL_ICS, tz)
+
+
+def _optimistic(cal, tz, fn):
+    """Apply a Google edit to the cached feed too, so the agenda shows it before Google's iCal
+    feed catches up (that can take minutes); the next real fetch replaces the file anyway."""
+    rp = raw_path(cal["url"])
+    if not rp.exists():
+        return
+    try:
+        fn(_store(tz, rp))
+    except Exception as e:
+        log(f"[{cal['name']}] local preview of the edit failed: {e}")
+
+
+EDIT_MSG = {"deleted": "Event deleted", "deleted this": "Deleted this event", "deleted following": "Deleted this and following events",
+            "updated": "Event saved", "updated this": "Saved this event", "updated following": "Saved this and following events",
+            "updated all": "Saved all events", "created": "Event created"}
+
+
+def cmd_edit(args):
+    import gcal_rec
+    _, settings, cals = read_conf()
+    tz = local_tz(settings)
+    cal = _calendar_of(cals, args.calendar or "")
+    local = bool(cal.get("local"))
+    if args.op == "get":
+        if local:
+            item = _store(tz).get(args.uid, args.rid or "")
+        else:
+            import gcal_google as GG
+            rp = raw_path(cal["url"])
+            item = GG._scratch(rp.read_bytes() if rp.exists() else None, args.uid, tz).get(args.uid, args.rid or "")
+        if item is None:
+            raise SystemExit("event not found")
+        item.update(calendar=cal["name"], source="local" if local else "google",
+                    editable=local or (bool(cal.get("writable")) and args.uid.endswith("@google.com")))
+        print(json.dumps(item, ensure_ascii=False))
+        return
+    scope = args.scope or "all"
+    if scope not in ("this", "following", "all"):
+        raise SystemExit("scope must be this|following|all")
+    if args.op == "save":
+        item = json.loads(args.json)
+        if not (item.get("title") or "").strip():
+            raise SystemExit("empty title")
+        if not item.get("date"):
+            raise SystemExit("no date")
+        item["recurrence"] = gcal_rec.normalize(item.get("recurrence"))
+    with locked():
+        if args.op == "save" and not args.uid:          # create
+            target = None if (args.calendar and local) else write_target(settings, cals, args.calendar or None)
+            if target:
+                import gcal_google as GG
+                uid = GG.create(google_calendar_id(target["url"], target.get("id", "")), item, tz)
+                _optimistic(target, tz, lambda st: st.create(item, uid=uid))
+                where = target["name"]
+            else:
+                uid = _store(tz).create(item)
+                where = "local calendar"
+            build(quiet=True)
+            print(json.dumps({"ok": True, "uid": uid, "result": "created", "message": f"Event created in {where}"}, ensure_ascii=False))
+            return
+        if local:
+            st = _store(tz)
+            r = st.update(args.uid, args.rid or "", scope, item) if args.op == "save" else st.delete(args.uid, args.rid or "", scope)
+        else:
+            import gcal_google as GG
+            if not (cal.get("writable") and args.uid.endswith("@google.com")):
+                raise SystemExit("this calendar is read-only here (enable write-back: gcal-setup oauth)")
+            calid = google_calendar_id(cal["url"], cal.get("id", ""))
+            rp = raw_path(cal["url"])
+            feed = rp.read_bytes() if rp.exists() else None
+            if args.op == "save":
+                r = GG.update(calid, args.uid, args.rid or "", scope, item, tz, feed)
+                _optimistic(cal, tz, lambda st: st.update(args.uid, args.rid or "", scope, item))
+            else:
+                r = GG.delete(calid, args.uid, args.rid or "", scope, tz, feed)
+                _optimistic(cal, tz, lambda st: st.delete(args.uid, args.rid or "", scope))
+        build(quiet=True)
+    print(json.dumps({"ok": True, "uid": args.uid, "result": r, "message": EDIT_MSG.get(r, r)}, ensure_ascii=False))
 
 
 def cmd_status(args):
@@ -1211,7 +1382,8 @@ def cmd_status(args):
     print(f"obsidian: {ob.get('vault')} — {len(doc.get('tasks', []))} open tasks with dates, "
           f"{len(doc.get('daily', {}))} daily notes in window, today's note: {ob.get('todayNote')} "
           f"({'exists' if ob.get('todayExists') else 'not created yet'})")
-    print("google write (gcalcli):", "enabled" if doc.get("writeEnabled") else "not set up (optional: gcal-setup write)")
+    print("google write-back:", ("enabled → " + doc.get("writeCalendar", "")) if doc.get("writeEnabled")
+          else "not set up (optional: gcal-setup oauth); new events stay in the local calendar")
 
 
 # ───────────────────────────── setup (interactive) ─────────────────────────────
@@ -1312,24 +1484,52 @@ def setup_remove(name):
 
 
 def setup_write():
-    exe = gcalcli_bin()
     print(f"""
-{B}Optional: create Google events from the desktop (gcalcli, OAuth){C0}
-The read-only iCal links are all the agenda needs. This extra step only enables
-quick-adding events ("/e Lunch with Anna tomorrow 13:00" in the capture prompt).
+{B}Optional: write events back to Google Calendar (Calendar API, your own OAuth client){C0}
+The read-only iCal links are all the agenda needs. Without this, events you create or edit in the
+agenda live in the local calendar ("Captured"). With it, they go to Google: create, and edit/delete
+"this event / this and following / all events".
 
-  1. https://console.cloud.google.com/ → create a project → APIs & Services →
-     enable {B}Google Calendar API{C0}.
-  2. OAuth consent screen → External → add yourself as a {B}test user{C0}.
-  3. Credentials → Create credentials → {B}OAuth client ID{C0} → type {B}Desktop app{C0}.
-  4. Run (a browser window opens once to grant access):
-       {B}{exe or '~/.venvs/gcal/bin/gcalcli'} --client-id=YOUR_ID init{C0}
-     (it asks for the client secret). The token is stored in {GCALCLI_TOKEN}.
-  5. Run {B}gcal-sync sync{C0}: the capture prompt now accepts /e events.
+  1. https://console.cloud.google.com/ → create a project (any name) →
+     APIs & Services → Library → enable {B}Google Calendar API{C0}.
+  2. APIs & Services → OAuth consent screen → External → fill the app name and your email →
+     Audience/Test users → add {B}your own Google account{C0}.
+  3. APIs & Services → Credentials → Create credentials → {B}OAuth client ID{C0} →
+     Application type {B}Desktop app{C0} → Create → {B}Download JSON{C0}.
+  4. Run:  {B}gcal-setup oauth ~/Downloads/client_secret_….json{C0}
+     A browser tab asks you to allow "See and edit events on all your calendars"
+     (scope calendar.events). The token is stored in ~/.config/gcal-sync/google-token.json (0600).
+  5. Done. New agenda events go to your first calendar (set `write_calendar = NAME` under
+     [gcal-sync] in ~/.config/gcal-sync/calendars.conf to pick another one).
+  Turn it off again: {B}gcal-setup oauth off{C0}
 """)
-    if not exe:
-        print(f"{Y}gcalcli is not installed: ~/.venvs/gcal/bin/pip install gcalcli{C0}")
-    print("Status:", "ENABLED" if (exe and GCALCLI_TOKEN.exists()) else "not set up")
+    print("Status:", "ENABLED" if google_write_enabled() else "not set up")
+
+
+def setup_oauth(rest):
+    import gcal_google as GG
+    if rest and rest[0] in ("off", "revoke", "disable"):
+        GG.revoke()
+        with locked():
+            build(quiet=True)
+        print("Google write-back disabled (token removed). Revoke the app at https://myaccount.google.com/permissions if you like.")
+        return
+    path = rest[0] if rest else ""
+    if not GG.CLIENT.exists() and not path:
+        setup_write()
+        path = input("Path to the downloaded client JSON: ").strip()
+    if path:
+        GG.install_client(path)
+        print(f"{G}OAuth client saved to {GG.CLIENT} (0600){C0}")
+    try:
+        GG.authorize()
+    except GG.GoogleError as e:
+        raise SystemExit(f"{R}{e}{C0}")
+    _, settings, cals = read_conf()
+    t = write_target(settings, cals)
+    print(f"{G}Google write-back enabled.{C0} New events go to: {t['name'] if t else '(no Google calendar connected yet: gcal-setup)'}")
+    with locked():
+        build(force_fetch=True, quiet=True)
 
 
 def cmd_setup(args):
@@ -1344,8 +1544,10 @@ def cmd_setup(args):
         setup_remove(" ".join(args.name))
     elif sub == "write":
         setup_write()
+    elif sub == "oauth":
+        setup_oauth(args.name or [])
     else:
-        raise SystemExit("usage: gcal-setup [add|list|remove NAME|write]")
+        raise SystemExit("usage: gcal-setup [add|list|remove NAME|write|oauth [CLIENT.json|off]]")
 
 
 def cmd_range(args):
@@ -1391,12 +1593,25 @@ def main():
     p.add_argument("--local", action="store_true", help="never write to Google, keep events local")
     p.add_argument("--engine", choices=["auto", "rules", "llm"], default="auto")
     p = sp.add_parser("setup"); p.add_argument("what", nargs="?"); p.add_argument("name", nargs="*")
-    args = ap.parse_args()
+    p = sp.add_parser("edit"); p.add_argument("op", choices=["get", "save", "delete"]); p.add_argument("uid", nargs="?")
+    p.add_argument("rid", nargs="?", default=""); p.add_argument("--uid", dest="uid_opt"); p.add_argument("--rid", dest="rid_opt")
+    p.add_argument("--json"); p.add_argument("--scope", choices=["this", "following", "all"]); p.add_argument("--calendar")
+    argv = sys.argv[1:]
+    if argv[:1] == ["setup"] and "--oauth" in argv:
+        argv = ["setup", "oauth"] + [a for a in argv[1:] if a != "--oauth"]
+    args = ap.parse_args(argv)
+    if args.cmd == "edit":
+        args.uid = args.uid_opt or args.uid
+        args.rid = args.rid_opt if args.rid_opt is not None else args.rid
+        if args.op != "save" and not args.uid:
+            raise SystemExit("usage: gcal-sync edit get|delete UID [RID]")
+        if args.op == "save" and not args.json:
+            raise SystemExit("usage: gcal-sync edit save --json ITEM [--uid UID --rid RID --scope S]")
     if not args.cmd:
         args.cmd, args.no_remind, args.quiet = "sync", False, False
     {"run": cmd_run, "sync": cmd_run, "daily": cmd_daily, "capture": cmd_capture, "event": cmd_event,
      "status": cmd_status, "setup": cmd_setup, "parse": cmd_parse, "parse-server": cmd_parse_server,
-     "add": cmd_add, "range": cmd_range}[args.cmd](args)
+     "add": cmd_add, "range": cmd_range, "edit": cmd_edit}[args.cmd](args)
 
 
 if __name__ == "__main__":

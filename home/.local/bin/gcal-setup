@@ -3,5 +3,6 @@
 #   gcal-setup            add calendars interactively
 #   gcal-setup list       show configured calendars (links masked)
 #   gcal-setup remove N   remove calendar N
-#   gcal-setup write      optional: enable creating events (gcalcli OAuth)
+#   gcal-setup write      how to enable Google write-back (instructions)
+#   gcal-setup oauth [CLIENT.json | off]   enable/disable Google write-back (Calendar API OAuth)
 exec "$HOME/.venvs/gcal/bin/python" "$HOME/.local/share/gcal-sync/gcal_sync.py" setup "$@"

@@ -4,3 +4,4 @@ AgendaEventRow 1.0 AgendaEventRow.qml
 AgendaTaskRow 1.0 AgendaTaskRow.qml
 DayDots 1.0 DayDots.qml
 CaptureBox 1.0 CaptureBox.qml
+EventEditor 1.0 EventEditor.qml

@@ -27,6 +27,16 @@ PanelWindow {
         width: Math.round(card.width)
         height: Math.round(card.height)
         radius: card.radius
+        // the event editor card may reach below a short agenda card
+        regions: [
+            Region {
+                x: Math.round(editor.x)
+                y: Math.round(editor.y)
+                width: editor.visible ? Math.round(editor.width) : 0
+                height: editor.visible ? Math.round(editor.height) : 0
+                radius: 22
+            }
+        ]
     }
 
     // ── open / close animation ──────────────────────────────────────────
@@ -47,6 +57,16 @@ PanelWindow {
             }
         }
         function onPanelOpenSerialChanged() { flick.contentY = 0; }
+        function onEdited(ok, message) {
+            if (!win.shown || !ok) return;
+            toast.text = message;
+            toast.ok = ok;
+            toastTimer.restart();
+        }
+        function onEditorOpenChanged() {
+            if (Gcal.editorOpen) { edCloseAnim.stop(); edOpenAnim.restart(); editor.forceActiveFocus(); }
+            else { edOpenAnim.stop(); edCloseAnim.restart(); content.forceActiveFocus(); }
+        }
         function onCaptured(ok, message) {
             if (!win.shown) return;
             toast.text = message;
@@ -85,7 +105,8 @@ PanelWindow {
     Item {
         id: card
         width: win.targetW
-        height: Math.min(content.implicitHeight, win.height - 24)
+        // grows to hold the event editor while it is open (one even glass layer under it)
+        height: Math.min(Math.max(content.implicitHeight, win.edT > 0 ? editor.height + 64 + 18 : 0), win.height - 24)
         Behavior on width { enabled: win.shown && !openAnim.running; NumberAnimation { duration: 560; easing.type: Easing.OutQuint } }
         Behavior on height { enabled: win.shown && !openAnim.running; NumberAnimation { duration: 560; easing.type: Easing.OutQuint } }
         x: Math.round((win.width - width) / 2)
@@ -135,8 +156,8 @@ PanelWindow {
                 x: Math.round((card.width - win.targetW) / 2) + win.pad
                 y: win.pad
                 width: win.targetW - win.pad * 2
-                // soft crossfade when switching 8 days <-> Month
-                opacity: win.viewFade
+                // soft crossfade when switching 8 days <-> Month; fades back while the event editor is open
+                opacity: win.viewFade * (1 - 0.96 * win.edT)
                 transform: Translate { y: (1 - win.viewFade) * 6 }
                 spacing: 14
 
@@ -175,6 +196,11 @@ PanelWindow {
                         spacing: 6
                         ViewToggle { anchors.verticalCenter: parent.verticalCenter }
                         Item { width: 4; height: 1 }
+                        IconButton {
+                            glyph: 0xF0415
+                            tip: "New event"
+                            onClicked: Gcal.newEvent(win.monthMode ? Gcal.selectedDay : (Gcal.focusDay || Gcal.todayKey))
+                        }
                         IconButton {
                             glyph: 0xF0450
                             tip: "Sync now"
@@ -425,6 +451,31 @@ PanelWindow {
                 }
             }
         }
+    }
+
+    // ── event details / editor over the card ────────────────────────────
+    property real edT: 0
+    NumberAnimation { id: edOpenAnim; target: win; property: "edT"; to: 1; duration: 460; easing.type: Easing.OutQuint }
+    NumberAnimation { id: edCloseAnim; target: win; property: "edT"; to: 0; duration: 200; easing.type: Easing.InCubic }
+    Rectangle {
+        // dims the agenda behind the editor; a click here closes the editor
+        x: card.x
+        y: card.y
+        width: card.width
+        height: card.height
+        radius: card.radius
+        visible: win.edT > 0
+        color: Qt.rgba(0, 0, 0, 0.12 * win.edT)
+        MouseArea { anchors.fill: parent; enabled: Gcal.editorOpen; onClicked: Gcal.closeEditor() }
+    }
+    EventEditor {
+        id: editor
+        visible: win.edT > 0
+        x: Math.round(card.x + (card.width - width) / 2)
+        y: Math.round(Math.max(card.y + 10, Math.min(card.y + 64, win.height - height - 16)) - (1 - win.edT) * 14)
+        opacity: win.edT
+        scale: 0.96 + 0.04 * win.edT
+        transformOrigin: Item.Top
     }
 
     // ── 8 days <-> Month crossfade ──────────────────────────────────────

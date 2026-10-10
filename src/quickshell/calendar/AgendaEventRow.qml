@@ -89,7 +89,20 @@ Item {
         Text {
             width: parent.width
             text: row.ev ? row.ev.title : ""
+            rightPadding: repGlyph.visible ? repGlyph.width + 6 : 0
             elide: Text.ElideRight
+            // repeating event: small repeat glyph after the title
+            Text {
+                id: repGlyph
+                visible: !!row.ev && !!row.ev.recurring && !row.compact
+                x: Math.min(parent.contentWidth + 6, parent.width - width)
+                anchors.verticalCenter: parent.verticalCenter
+                text: String.fromCodePoint(0xF0456)
+                color: ThemeBackend.subtext0
+                opacity: row.past ? 0.4 : 0.7
+                font.family: ThemeBackend.iconFont
+                font.pixelSize: Math.round(row.fontPx * 0.85)
+            }
             color: ThemeBackend.text
             opacity: row.past ? 0.5 : 1
             font.family: ThemeBackend.fontFamily
@@ -121,7 +134,8 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: Gcal.openEvent(row.ev)
+        // in the agenda: details card (repeat rule, edit/delete); on the desktop widget: Google Calendar
+        onClicked: (Gcal.panelOpen && !row.compact) ? Gcal.showEvent(row.ev) : Gcal.openEvent(row.ev)
     }
 
     // video-call chip (Meet / Zoom / Teams / Telemost)

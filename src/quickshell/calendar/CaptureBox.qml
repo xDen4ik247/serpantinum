@@ -88,6 +88,16 @@ FocusScope {
                     Gcal.editField("priority", order[(order.indexOf(box.it.priority || "") + 1) % order.length]);
                 }
             }
+            // the full event editor (repeat options like Google's, reminders) for this note
+            Chip {
+                glyph: 0xF0493
+                label: "More options"
+                subtle: true
+                removable: false
+                editable: false
+                visible: box.it && box.it.kind === "event" && !Gcal.commitWaiting
+                onActivated: Gcal.editFromCapture()
+            }
             Chip { field: "tags"; glyph: 0xF04FC; label: box.it && box.it.tags && box.it.tags.length ? box.it.tags.join(" ") : ""; editText: label }
             Chip { field: "reminder"; glyph: 0xF009C; label: box.it && box.it.reminder ? (box.it.reminder.date !== box.it.date ? Gcal.prettyDate(box.it.reminder.date) + " " : "") + box.it.reminder.time : ""; editText: "" }
 
@@ -133,7 +143,7 @@ FocusScope {
 
         // ── parser line ──
         Row {
-            visible: box.hasPreview || Gcal.llmState === "pending" || Gcal.llmState === "loading"
+            visible: box.hasPreview || Gcal.llmState === "pending" || Gcal.llmState === "loading" || Gcal.commitWaiting
             spacing: 6
             height: 16
             Text {
@@ -144,7 +154,7 @@ FocusScope {
                 font.family: ThemeBackend.iconFont
                 font.pixelSize: 13
                 SequentialAnimation on opacity {
-                    running: Gcal.llmState === "pending" || Gcal.llmState === "loading"
+                    running: Gcal.llmState === "pending" || Gcal.llmState === "loading" || Gcal.commitWaiting
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.3; duration: 500; easing.type: Easing.InOutSine }
                     NumberAnimation { to: 1; duration: 500; easing.type: Easing.InOutSine }
@@ -155,7 +165,11 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 text: {
                     let it = box.it;
+                    // Enter was pressed while the AI was still reading: say so, add when it answers
+                    if (Gcal.commitWaiting)
+                        return (Gcal.llmState === "loading" ? "Understanding… (AI is starting up)" : "Understanding…") + "   ·   ↵ add now with quick rules   ·   Esc cancel";
                     let who = it && it.parser === "llm" ? "Parsed by local AI" + (it.ms ? " · " + (it.ms / 1000).toFixed(1) + " s" : "") : "Quick rules";
+                    if (it && it.confident && it.parser !== "llm") who = "Quick rules · sure";
                     if (Gcal.llmState === "pending") who += " · AI is thinking…";
                     else if (Gcal.llmState === "loading") who += " · AI loading…";
                     else if (Gcal.llmState === "offline") who += " · AI offline";
@@ -164,10 +178,11 @@ FocusScope {
                                                          : "→ " + (Gcal.obsidian.inbox ? Gcal.obsidian.inbox.replace(/\.md$/, "") : "today's note");
                     return who + "   " + where + "   ·   ↵ to add";
                 }
-                color: ThemeBackend.subtext0
-                opacity: 0.75
+                color: Gcal.commitWaiting ? ThemeBackend.mauve : ThemeBackend.subtext0
+                opacity: Gcal.commitWaiting ? 1 : 0.75
                 font.family: ThemeBackend.fontFamily
                 font.pixelSize: 11
+                font.weight: Gcal.commitWaiting ? Font.Bold : Font.Normal
             }
         }
     }
@@ -188,7 +203,7 @@ FocusScope {
         onTextChanged: Gcal.setCaptureText(text)
         Keys.onReturnPressed: box.submit()
         Keys.onEnterPressed: box.submit()
-        Keys.onEscapePressed: { if (text !== "") text = ""; else box.escaped(); }
+        Keys.onEscapePressed: { if (Gcal.commitWaiting) Gcal.cancelCommitWait(); else if (text !== "") text = ""; else box.escaped(); }
         Text {
             anchors.fill: parent
             verticalAlignment: Text.AlignVCenter
