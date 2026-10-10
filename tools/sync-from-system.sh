@@ -75,7 +75,7 @@ for s in niri-autofit niri-dwt-toggle fcitx-layout ime-fix serp-tweaks niri-keys
          music-ctl music-player music-smart \
          gcal-setup gcal-sync \
          ai ai-chat aidict aipanel ai-notes ai-notes-panel anki-add jocr \
-         greeter-sync jp-quiz glass-music power-mode niri-focus-or-run; do
+         greeter-sync jp-quiz glass-music power-mode niri-focus-or-run sleep-guard; do
     copy ".local/bin/$s"
 done
 
@@ -85,6 +85,8 @@ copy .local/share/ai-notes/ai_notes.py
 copy .local/share/ai-notes/ui
 copy .local/share/gcal-sync/gcal_sync.py
 copy .local/share/gcal-sync/gcal_parse.py
+for f in gcal_rec.py gcal_store.py gcal_google.py; do copy ".local/share/gcal-sync/$f"; done
+copy .local/share/gcal-sync/tests
 copy .local/share/npu-ocr/jocr
 copy .local/share/npu-ocr/ui
 
