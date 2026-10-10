@@ -2,14 +2,19 @@
 # glass-music — open the Glass Music library app as a normal niri app (app-id "glass-music"),
 # or focus it when it is already running. Close it like any window (Mod+Q); music keeps
 # playing in the MPD user service.
+#   glass-music --current   open (or focus) it on the album of the playing track (bar click-through)
 APP="${GLASS_MUSIC_APP:-$HOME/.local/share/glass-music/app}"
 TITLE="${GLASS_MUSIC_TITLE:-Glass Music}"
 APP_ID="${GLASS_MUSIC_APP_ID:-glass-music}"
+CURRENT=0
+if [ "${1:-}" = "--current" ]; then CURRENT=1; shift; fi
 # Already open? Focus it (shared helper ~/.local/bin/niri-focus-or-run: app-id + exact title).
 FOCUS=$(command -v niri-focus-or-run || echo "$HOME/.local/bin/niri-focus-or-run")
 if [ -x "$FOCUS" ] && "$FOCUS" --title "$TITLE" "$APP_ID"; then
+    [ "$CURRENT" = 1 ] && quickshell ipc -p "$APP/qml" call glassmusic openCurrent >/dev/null 2>&1
     exit 0
 fi
+[ "$CURRENT" = 1 ] && export GLASS_MUSIC_OPEN=current
 # MPD normally starts at login; make sure it is up before the backend connects.
 systemctl --user start mpd.service >/dev/null 2>&1 &
 # QS_APP_ID makes quickshell use this as the Wayland xdg-toplevel app-id (default org.quickshell).

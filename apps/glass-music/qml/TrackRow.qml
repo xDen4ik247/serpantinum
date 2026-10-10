@@ -161,10 +161,10 @@ Item {
         x: dur.x - width - 4
         anchors.verticalCenter: parent.verticalCenter
         size: 32; iconSize: 18
-        icon: row.liked ? "heart" : "heart-outline"
+        icon: row.liked ? "star" : "star-outline"
         active: row.liked
         opacity: row.liked || hover.hovered ? 1 : 0
-        tip: row.liked ? "Remove from Liked Songs" : "Save to Liked Songs"
+        tip: row.liked ? "Favourite · click to remove" : "Add to Favourites"
         onClicked: row.app.toggleLike(row.ti)
     }
     Text {

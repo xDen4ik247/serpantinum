@@ -79,7 +79,28 @@ ShellRoot {
         path: app.smartPath
         watchChanges: true
         onFileChanged: reload()
-        onLoaded: { try { app.smart = JSON.parse(text()); } catch (e) {} }
+        onLoaded: {
+            let st;
+            try { st = JSON.parse(text()); } catch (e) { return; }
+            // a style picked here but not started yet gives way once My Vibe (re)starts anywhere
+            if (st.active && (!app.smart.active || st.style !== app.smart.style || st.started !== app.smart.started)) app.vibeStyle = "";
+            app.smart = st;
+            if (st.styles && st.styles.length) app.styles = st.styles;
+        }
+    }
+    // music-smart's style song lists (written only when the library / favourites / styles change)
+    FileView {
+        id: stylesFile
+        path: app.smartStylesPath
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const d = JSON.parse(text());
+                if (d.styles && d.styles.length) app.styles = d.styles;
+                app.stylePools = d.pools || {};
+            } catch (e) {}
+        }
     }
 
     // ------------------------------------------------------------------ app state
@@ -114,6 +135,14 @@ ShellRoot {
         property var home: ({ recent: [], most: [], counts: {} })
         property var smart: ({ active: false })
         property string smartPath: Quickshell.env("GLASS_MUSIC_SMART_STATE") || ((Quickshell.env("HOME") || "") + "/.local/state/music-smart/state.json")
+        property string smartStylesPath: smartPath.replace(/state\.json$/, "styles.json")
+        // My Vibe: the styles music-smart offers, their song lists, and the style picked here
+        property var styles: []
+        property var stylePools: ({})
+        property string vibeStyle: ""
+        readonly property string curStyle: vibeStyle || smart.style || "default"
+        readonly property bool vibeOn: !!smart.active
+        property bool openCurrentPending: Quickshell.env("GLASS_MUSIC_OPEN") === "current"
         readonly property bool playing: status.state === "play"
         readonly property int curIdx: status.file && fileIdx[status.file] !== undefined ? fileIdx[status.file] : -1
         readonly property var curTrack: curIdx >= 0 ? lib.tracks[curIdx] : null
@@ -142,6 +171,7 @@ ShellRoot {
             if (m.type === "library") setLibrary(m);
             else if (m.type === "status") {
                 status = m;
+                if (openCurrentPending && ready) { openCurrentPending = false; if (m.file) Qt.callLater(openCurrent); }
                 posBase = m.elapsed; posAt = Date.now(); position = m.elapsed;
                 if (m.file && lyrics.file !== m.file && rightPanel === "lyrics") send({ cmd: "lyrics", file: m.file });
             }
@@ -164,7 +194,7 @@ ShellRoot {
             else if (m.type === "search") { if (m.rid === searchRid) searchRes = m; }
             else if (m.type === "lyrics") lyrics = m;
             else if (m.type === "toast") toast(m.icon, m.text);
-            else if (m.type === "hello") smartPath = m.smartState || smartPath;
+            else if (m.type === "hello") { smartPath = m.smartState || smartPath; if (m.smartStyles) smartStylesPath = m.smartStyles; }
             else if (m.type === "error") console.warn("backend error:", m.error, m.trace || "");
             else if (m.type === "log") console.log("backend:", m.msg);
             else if (m.type === "mpd" && !m.ok) toast("warn", "MPD unavailable: " + m.error);
@@ -181,6 +211,7 @@ ShellRoot {
             albumsByAdded = L.albums.slice().sort((a, b) => (b.ad || "").localeCompare(a.ad || "")).map(a => a.k);
             lib = L;
             ready = true;
+            if (openCurrentPending && status.file) { openCurrentPending = false; Qt.callLater(openCurrent); }
             console.log("library:", L.tracks.length, "tracks,", L.albums.length, "albums,", L.artists.length, "artists", m.cached ? "(cache)" : "(indexed)", m.ms + " ms");
         }
 
@@ -253,7 +284,60 @@ ShellRoot {
             const hues = { heavy: 0.0, rock: 0.07, alt: 0.78, rap: 0.58, electronic: 0.52, pop: 0.9, chill: 0.42 };
             return Qt.hsla(hues[m] !== undefined ? hues[m] : 0.6, 0.55, 0.5, 1);
         }
-        function likedTracks() { return idxOfFiles(Object.keys(likes)); }
+        function likedTracks() { return idxOfFiles(Object.keys(likes)); }      // favourites
+
+        // ---- My Vibe styles (music-smart)
+        readonly property var fallbackStyles: [
+            { id: "default", label: "My Vibe", desc: "What you play most, with room for surprises", icon: "vibe" },
+            { id: "favourites", label: "Favourites", desc: "Only the songs you starred", icon: "star" },
+            { id: "discover", label: "Discover", desc: "Songs and artists you rarely play", icon: "compass" },
+            { id: "reggae", label: "Reggae", desc: "Roots, dub, dancehall, ska and rocksteady", icon: "reggae" }
+        ]
+        function styleList() {
+            if (styles.length) return styles;
+            const out = fallbackStyles.slice();
+            for (const m of lib.moods) out.push({ id: m.id, label: m.label, desc: m.n + " songs", icon: m.id, n: m.n });
+            return out;
+        }
+        function styleInfo(id) {
+            for (const s of styleList()) if (s.id === id) return s;
+            return { id: id, label: id === "default" ? "My Vibe" : id, desc: "", icon: "vibe" };
+        }
+        function styleLabel(id) { return styleInfo(id).label; }
+        function styleIcon(id) {
+            const ic = styleInfo(id).icon || id;
+            return ["vibe", "star", "compass", "reggae", "heavy", "rock", "alt", "rap", "electronic", "pop", "chill"].indexOf(ic) >= 0 ? ic : "tag";
+        }
+        function styleColor(id) {
+            const hues = { favourites: 0.12, discover: 0.48, reggae: 0.31, heavy: 0.0, rock: 0.07, alt: 0.78, rap: 0.58, electronic: 0.52, pop: 0.9, chill: 0.42 };
+            if (id === "default") return th.accent;
+            if (hues[id] !== undefined) return Qt.hsla(hues[id], 0.55, 0.52, 1);
+            let h = 0;
+            for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+            return Qt.hsla(h / 360, 0.5, 0.52, 1);
+        }
+        function styleTracks(id) {
+            if (stylePools[id]) return idxOfFiles(stylePools[id]);
+            if (id === "favourites") return likedTracks();
+            return moodTracks(id);
+        }
+        // play button: the style that is on → play / pause; anything else → start it
+        function vibePlay(id) {
+            id = id || curStyle;
+            if (smart.active && smart.style === id && status.file) { toggle(); return; }
+            vibeStyle = id;
+            send({ cmd: "smart", action: "start", style: id });
+        }
+        function vibePick(id) {
+            if (smart.active && smart.style !== id) send({ cmd: "smart", action: "start", style: id });
+            vibeStyle = id;
+        }
+        function vibeReroll() { send({ cmd: "smart", action: "reroll" }); }
+        function vibeStop() { send({ cmd: "smart", action: "stop" }); }
+        function openCurrent() {
+            if (curIdx >= 0) { goTrackAlbum(curIdx); if (rightPanel === "") rightPanel = "queue"; }
+            else go("home");
+        }
 
         // ---- navigation
         function go(page, arg) {
@@ -312,10 +396,10 @@ ShellRoot {
             const mode = !status.repeat ? "all" : (status.single ? "off" : "one");
             send({ cmd: "repeat", mode: mode });
         }
-        function toggleLike(i) { if (i >= 0) send({ cmd: "love", file: lib.tracks[i].f, on: !isLiked(i) }); }
+        function toggleLike(i) { if (i >= 0) send({ cmd: "fav", file: lib.tracks[i].f, on: !isLiked(i) }); }
         function smartToggle() { send({ cmd: "smart", action: smart.active ? "stop" : "start" }); }
-        function smartStart(reroll) { send({ cmd: "smart", action: reroll && smart.active ? "reroll" : "start" }); }
-        function mix(mood) { send({ cmd: "mix", mood: mood }); }
+        function smartStart(reroll) { send({ cmd: "smart", action: reroll && smart.active ? "reroll" : "start", style: smart.active ? "" : curStyle }); }
+        function mix(mood) { vibePlay(mood); }
         function togglePanel(p) {
             rightPanel = rightPanel === p ? "" : p;
             if (rightPanel === "lyrics" && status.file && lyrics.file !== status.file) send({ cmd: "lyrics", file: status.file });
@@ -331,9 +415,9 @@ ShellRoot {
                 { icon: "next-up", text: "Play next", act: () => addNext([i]) },
                 { icon: "playlist-plus", text: "Add to queue", act: () => addQueue([i]) },
                 { sep: true },
-                { icon: isLiked(i) ? "heart" : "heart-outline", text: isLiked(i) ? "Remove from Liked Songs" : "Save to Liked Songs", act: () => toggleLike(i) },
+                { icon: isLiked(i) ? "star" : "star-outline", text: isLiked(i) ? "Remove from Favourites" : "Add to Favourites", act: () => toggleLike(i) },
                 { icon: "playlist", text: "Add to playlist", sub: "playlists", files: [t.f] },
-                { icon: bans[t.f] ? "smart" : "cancel", text: bans[t.f] ? "Allow in smart shuffle" : "Never in smart shuffle", act: () => send({ cmd: "ban", file: t.f, on: !bans[t.f] }) },
+                { icon: bans[t.f] ? "vibe" : "cancel", text: bans[t.f] ? "Allow in My Vibe again" : "Never play in My Vibe", act: () => send({ cmd: "ban", file: t.f, on: !bans[t.f] }) },
                 { sep: true },
                 { icon: "artist", text: "Go to artist", act: () => goArtist(t.p) },
                 { icon: "album", text: "Go to album", act: () => goAlbum(t.k) }
@@ -361,7 +445,7 @@ ShellRoot {
                 { icon: "playlist-remove", text: "Remove from queue", act: () => send({ cmd: "deleteid", id: entry.id }) }
             ];
             if (i >= 0) items.push({ sep: true },
-                { icon: isLiked(i) ? "heart" : "heart-outline", text: isLiked(i) ? "Remove from Liked Songs" : "Save to Liked Songs", act: () => toggleLike(i) },
+                { icon: isLiked(i) ? "star" : "star-outline", text: isLiked(i) ? "Remove from Favourites" : "Add to Favourites", act: () => toggleLike(i) },
                 { icon: "artist", text: "Go to artist", act: () => goTrackArtist(i) },
                 { icon: "album", text: "Go to album", act: () => goTrackAlbum(i) });
             menu.open(items, item, mx, my);
@@ -521,7 +605,11 @@ ShellRoot {
         function scroll(y: real): void { if (app.pageItem && app.pageItem.flick) app.pageItem.flick.contentY = y }
         function menuDemo(): void { if (app.lib.tracks.length) app.trackMenu(app.curIdx >= 0 ? app.curIdx : 0, [], 0, app.rootItem, app.rootItem.width / 2, app.rootItem.height / 3) }
         function closeMenu(): void { menu.close() }
-        function state(): string { return JSON.stringify({ page: app.nav.page, arg: app.nav.arg, tracks: app.lib.tracks.length, status: app.status.state, file: app.status.file, queue: app.queue.length, panel: app.rightPanel, thumbs: Object.keys(app.thumbs).length }) }
+        function state(): string { return JSON.stringify({ page: app.nav.page, arg: app.nav.arg, tracks: app.lib.tracks.length, status: app.status.state, file: app.status.file, queue: app.queue.length, panel: app.rightPanel, thumbs: Object.keys(app.thumbs).length, style: app.curStyle, vibeOn: app.vibeOn, styles: app.styleList().length, favs: app.likesCount }) }
+        // open the album of the playing track (bar island click-through: glass-music --current)
+        function openCurrent(): void { if (app.ready) app.openCurrent(); else app.openCurrentPending = true }
+        function vibe(style: string): void { app.vibePlay(style) }
+        function pickStyle(style: string): void { app.vibeStyle = style }
         function quit(): void { app.close() }
         // renders only this window's own content to a PNG (no screen capture, no clipboard)
         function shot(path: string): void { app.rootItem.grabToImage(r => r.saveToFile(path)) }

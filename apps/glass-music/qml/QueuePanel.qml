@@ -51,7 +51,7 @@ Item {
                 width: parent.width
                 height: 30
                 visible: qp.upNext.length > 0
-                SectionLabel { app: qp.app; x: 20; text: qp.app.smart.active ? "Next up · smart shuffle" : (qp.app.status.random ? "Next up · shuffled" : "Next up") }
+                SectionLabel { app: qp.app; x: 20; text: qp.app.smart.active ? "Next up · My Vibe · " + (qp.app.smart.styleLabel || "") : (qp.app.status.random ? "Next up · shuffled" : "Next up") }
             }
             Text {
                 visible: qp.app.queue.length === 0

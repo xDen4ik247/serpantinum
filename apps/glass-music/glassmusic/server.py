@@ -27,6 +27,7 @@ CACHE_DIR = os.environ.get("GLASS_MUSIC_CACHE",
                            os.path.join(os.environ.get("XDG_CACHE_HOME", HOME + "/.cache"), "glass-music"))
 HISTORY = os.environ.get("GLASS_MUSIC_HISTORY", HOME + "/.local/share/music-smart/history.sqlite")
 SMART_STATE = os.environ.get("GLASS_MUSIC_SMART_STATE", HOME + "/.local/state/music-smart/state.json")
+FAV = "favourite"     # MPD sticker shared with music-smart
 
 _out_lock = threading.Lock()
 
@@ -213,8 +214,10 @@ class Server:
         return files
 
     def send_likes(self):
-        # the same stickers music-smart reads: love = favourite (x2.5), ban = never in smart queues
-        emit({"type": "likes", "files": self.stickers("love"), "bans": self.stickers("ban")})
+        # The whole library counts as liked. Favourites (sticker "favourite"; the old "love" still
+        # counts until music-smart migrates it) play more often in My Vibe; "ban" = never play.
+        favs = sorted(set(self.stickers(FAV)) | set(self.stickers("love")))
+        emit({"type": "likes", "files": favs, "bans": self.stickers("ban")})
 
     def send_playlists(self):
         names = []
@@ -290,53 +293,17 @@ class Server:
             cmds = [("addid", f) for f in files]
         self.call(lambda m: m.batch(cmds))
 
-    def mood_mix(self, mood, count=50):
-        tracks = self.lib["tracks"]
-        ms = library.music_smart()
-        files = []
-        if ms:
-            try:
-                lib = [{"file": t["f"], "title": t["t"], "artist": t["a"], "primary": t["p"],
-                        "keys": {t["p"].lower()} | set(ms.split_artists(t.get("as") or [t["a"]])), "album": t["al"],
-                        "genres": [t["g"]], "mood": t["m"], "duration": t["d"]} for t in tracks]
-                stick = {"love": set(), "ban": set(), "rating": {}}
-                for name in ("love", "ban"):
-                    try:
-                        pairs = self.call(lambda m: m.cmd("sticker", "find", "song", "", name), idempotent=True)
-                    except MPDError:
-                        continue
-                    cur = None
-                    for k, v in pairs:
-                        if k == "file":
-                            cur = v
-                        elif k == "sticker" and cur and v.partition("=")[0] == name:
-                            stick[name].add(cur)
-                db = self.history_db() or sqlite3.connect(":memory:")
-                if not db.execute("SELECT name FROM sqlite_master WHERE name='plays'").fetchone():
-                    db = sqlite3.connect(":memory:")
-                    db.execute("CREATE TABLE plays(file, artist, mood, started, outcome)")
-                model = ms.Model(db, lib, stick)
-                picks = model.pick(count, mood, set(), [])
-                files = [s["file"] for s, _, _ in picks]
-                db.close()
-            except Exception:
-                emit({"type": "log", "msg": "mix: " + traceback.format_exc(limit=2)})
-                files = []
-        if not files:
-            pool = [t["f"] for t in tracks if t["m"] == mood]
-            random.shuffle(pool)
-            files = pool[:count]
-        self.play_files(files, 0)
-        emit({"type": "toast", "icon": "mix", "text": f"{library.MOOD_LABEL.get(mood, mood)} mix · {len(files)} tracks"})
-
-    def smart(self, action):
+    def smart(self, action, style=""):
+        """My Vibe lives in music-smart: start [style] / reroll / stop (it keeps the queue topped up)."""
         env = dict(os.environ)
         extra = os.environ.get("GLASS_MUSIC_SMART_ENV")
         if extra:
             env.update(json.loads(extra))
+        args = [library.MUSIC_SMART, action] + ([style] if style and re.match(r"^[a-z0-9][a-z0-9_-]*$", style) else [])
         try:
-            subprocess.Popen([library.MUSIC_SMART, action], env=env, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+            p = subprocess.Popen(args, env=env, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+            threading.Thread(target=p.wait, daemon=True).start()     # reap it (no zombies)
         except OSError as ex:
             emit({"type": "toast", "icon": "warn", "text": f"music-smart: {ex}"})
 
@@ -344,7 +311,8 @@ class Server:
     def handle(self, c):
         cmd = c.get("cmd")
         if cmd == "hello":
-            emit({"type": "hello", "smartState": SMART_STATE, "mpd": self.address})
+            emit({"type": "hello", "smartState": SMART_STATE,
+                  "smartStyles": os.path.join(os.path.dirname(SMART_STATE), "styles.json"), "mpd": self.address})
             self.send_library()
             self.send_status()
             self.send_queue()
@@ -408,18 +376,19 @@ class Server:
                 self.call(lambda m: m.batch(cmds))
             else:
                 self.call(lambda m: m.cmd("clear"))
-        elif cmd == "love":
+        elif cmd in ("fav", "love"):
             f = c.get("file")
             if f:
                 if c.get("on", True):
-                    self.call(lambda m: m.cmd("sticker", "set", "song", f, "love", "1"))
+                    self.call(lambda m: m.cmd("sticker", "set", "song", f, FAV, "1"))
                 else:
-                    try:
-                        self.call(lambda m: m.cmd("sticker", "delete", "song", f, "love"))
-                    except MPDError:
-                        pass
-                emit({"type": "toast", "icon": "heart" if c.get("on", True) else "heart-off",
-                      "text": "Added to Liked Songs" if c.get("on", True) else "Removed from Liked Songs"})
+                    for name in (FAV, "love"):
+                        try:
+                            self.call(lambda m: m.cmd("sticker", "delete", "song", f, name))
+                        except MPDError:
+                            pass
+                emit({"type": "toast", "icon": "star" if c.get("on", True) else "star-outline",
+                      "text": "Favourite · My Vibe plays it more often" if c.get("on", True) else "No longer a favourite"})
         elif cmd == "ban":
             f = c.get("file")
             if f:
@@ -430,12 +399,12 @@ class Server:
                         self.call(lambda m: m.cmd("sticker", "delete", "song", f, "ban"))
                     except MPDError:
                         pass
-                emit({"type": "toast", "icon": "cancel" if c.get("on", True) else "smart",
-                      "text": "Smart shuffle will skip this song" if c.get("on", True) else "Back in smart shuffle"})
-        elif cmd == "mix":
-            self.mood_mix(c.get("mood", "alt"))
+                emit({"type": "toast", "icon": "cancel" if c.get("on", True) else "vibe",
+                      "text": "My Vibe will never play this song" if c.get("on", True) else "Back in My Vibe"})
+        elif cmd == "mix":           # old name: a style's endless My Vibe queue
+            self.smart("start", c.get("mood", ""))
         elif cmd == "smart":
-            self.smart(c.get("action", "start"))
+            self.smart(c.get("action", "start"), c.get("style", ""))
         elif cmd == "playlistadd":
             name, files = c.get("name", "").strip(), c.get("files", [])
             if name and files:

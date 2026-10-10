@@ -1,6 +1,6 @@
 import QtQuick
 
-// Search: "Browse all" mood tiles while empty; otherwise top result + songs, artists,
+// Search: "Browse all" My Vibe style tiles while empty; otherwise top result + songs, artists,
 // albums and every matching song. Matching runs in the backend (Cyrillic/Japanese aware,
 // layout-swap and transliteration tolerant), one round trip per keystroke.
 Item {
@@ -43,7 +43,7 @@ Item {
                     readonly property int cols: Math.max(2, Math.floor((width + 14) / (210 + 14)))
                     readonly property real tileW: (width - (cols - 1) * 14) / cols
                     Repeater {
-                        model: pg.app.lib.moods
+                        model: pg.app.styleList().filter(x => x.id !== "default" && x.id !== "discover")
                         Rectangle {
                             id: tile
                             required property var modelData
@@ -51,11 +51,15 @@ Item {
                             height: Math.round(width * 0.56)
                             radius: 12
                             clip: true
-                            color: pg.app.th.mix(pg.app.moodColor(modelData.id), pg.app.th.base, 0.18)
+                            color: pg.app.th.mix(pg.app.styleColor(modelData.id), pg.app.th.base, 0.18)
                             readonly property var sample: {
-                                const a = pg.app.lib.albums;
-                                for (let j = 0, n = 0; j < a.length; j++) if (a[j].m === modelData.id && a[j].c && (n++) === 3) return a[j].k;
-                                return "";
+                                const tr = pg.app.styleTracks(modelData.id);
+                                let first = "";
+                                for (let j = 0, n = 0; j < tr.length; j++) {
+                                    const k = pg.app.lib.tracks[tr[j]].k, al = pg.app.albumByKey[k];
+                                    if (al && al.c) { if (!first) first = k; if ((n++) === 3) return k; }
+                                }
+                                return first;
                             }
                             Text {
                                 x: 16; y: 14
@@ -70,7 +74,7 @@ Item {
                             Text {
                                 x: 16
                                 anchors { bottom: parent.bottom; bottomMargin: 12 }
-                                text: tile.modelData.n + " songs"
+                                text: pg.app.n(tile.modelData.n !== undefined ? tile.modelData.n : pg.app.styleTracks(tile.modelData.id).length, "song")
                                 color: Qt.rgba(1, 1, 1, 0.75)
                                 font.family: pg.app.th.font
                                 font.pixelSize: 13
@@ -87,7 +91,7 @@ Item {
                             HoverHandler { id: th; cursorShape: Qt.PointingHandCursor }
                             scale: th.hovered ? 1.02 : 1
                             Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-                            TapHandler { onTapped: pg.app.go("mood", tile.modelData.id) }
+                            TapHandler { onTapped: pg.app.go("style", tile.modelData.id) }
                         }
                     }
                 }

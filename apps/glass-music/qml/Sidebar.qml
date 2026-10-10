@@ -1,7 +1,7 @@
 import QtQuick
 
-// Left column: Home / Search, then Your Library (Artists, Albums, Songs, Liked Songs),
-// smart mixes and the MPD stored playlists. Collapses to icons in narrow windows.
+// Left column: Home / Search, then Your Library (Favourites, Artists, Albums, Songs),
+// My Vibe and the MPD stored playlists. Collapses to icons in narrow windows.
 Item {
     id: side
     property var app
@@ -67,8 +67,8 @@ Item {
                 width: flick.width
                 spacing: 2
                 SideItem {
-                    app: side.app; collapsed: side.collapsed; icon: "heart"; tint: Qt.hsla(0.72, 0.55, 0.55, 1)
-                    title: "Liked Songs"; subtitle: "Playlist · " + side.app.n(side.app.likesCount, "song")
+                    app: side.app; collapsed: side.collapsed; icon: "star"; tint: side.app.styleColor("favourites")
+                    title: "Favourites"; subtitle: side.app.likesCount ? "Starred · " + side.app.n(side.app.likesCount, "song") : "Star the songs you love most"
                     active: side.app.nav.page === "liked"; onClicked: side.app.go("liked")
                 }
                 SideItem {
@@ -88,25 +88,28 @@ Item {
                 }
 
                 Item { width: 1; height: 10 }
-                SectionLabel { app: side.app; text: "Smart mixes"; visible: !side.collapsed }
+                SectionLabel { app: side.app; text: "My Vibe"; visible: !side.collapsed }
                 SideItem {
-                    app: side.app; collapsed: side.collapsed; icon: "smart"; tint: side.app.th.accent
-                    glow: !!side.app.smart.active
-                    title: "Smart shuffle"
-                    subtitle: side.app.smart.active ? "On · " + (side.app.smart.vibeLabel || "") + " vibe" : "Learns what you play"
-                    onClicked: side.app.smartStart(true)
-                    onRightClicked: side.app.send({ cmd: "smart", action: "stop" })
+                    app: side.app; collapsed: side.collapsed
+                    icon: side.app.vibeOn ? side.app.styleIcon(side.app.smart.style || "default") : "vibe"
+                    tint: side.app.styleColor(side.app.vibeOn ? (side.app.smart.style || "default") : "default")
+                    glow: side.app.vibeOn
+                    title: side.app.vibeOn && side.app.smart.style !== "default" ? "My Vibe · " + (side.app.smart.styleLabel || "") : "My Vibe"
+                    subtitle: side.app.vibeOn ? "On · click to re-roll, right-click: off" : "One button: what you play most"
+                    onClicked: { if (side.app.vibeOn) side.app.vibeReroll(); else side.app.vibePlay(side.app.curStyle); }
+                    onRightClicked: side.app.vibeStop()
                 }
-                Repeater {
-                    model: side.app.lib.moods
-                    SideItem {
-                        required property var modelData
-                        app: side.app; collapsed: side.collapsed
-                        icon: modelData.id; tint: side.app.moodColor(modelData.id)
-                        title: modelData.label + " mix"; subtitle: modelData.n + " songs"
-                        active: side.app.nav.page === "mood" && side.app.nav.arg === modelData.id
-                        onClicked: side.app.go("mood", modelData.id)
-                    }
+                SideItem {
+                    app: side.app; collapsed: side.collapsed; icon: "reggae"; tint: side.app.styleColor("reggae")
+                    title: "Reggae"; subtitle: "My Vibe style · " + side.app.n(side.app.styleTracks("reggae").length, "song")
+                    active: side.app.nav.page === "style" && side.app.nav.arg === "reggae"
+                    onClicked: side.app.go("style", "reggae")
+                }
+                SideItem {
+                    app: side.app; collapsed: side.collapsed; icon: "tag"; tint: side.app.th.surface2
+                    title: "All styles"; subtitle: "Moods, Discover, Favourites…"
+                    active: side.app.nav.page === "search" && side.app.searchText === ""
+                    onClicked: { side.app.search(""); side.app.go("search"); }
                 }
 
                 Item { width: 1; height: 10; visible: side.app.playlists.length > 0 }

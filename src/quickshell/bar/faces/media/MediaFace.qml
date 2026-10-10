@@ -12,9 +12,12 @@ import "../../../media" as Music
 //   nothing playing: collapses to a small music button that opens the library player.
 // Mouse: left = music panel, middle = play/pause, right = music library (Glass Music),
 //        wheel = player volume (shown on the progress line for a moment).
-// Smart shuffle (music-smart): a 󰒝 chip leads the hover controls (and appears next to the
-//   idle music button); click = start / re-roll, right-click = leave smart mode. While a smart
-//   queue plays, the cover wears an accent ring + 󰒝 badge.
+// My Vibe (music-smart): a vibe chip (style glyph + name) leads the hover controls and appears
+//   next to the idle music button. Click = start My Vibe in that style, or (while it plays) open
+//   the inline style picker; right-click = re-roll; middle-click = leave My Vibe; wheel = next /
+//   previous style (switches after a short pause while My Vibe plays). ☆ toggles the current
+//   track as a favourite. Right-click on cover/title opens Glass Music on the playing album.
+//   While a My Vibe queue plays, the cover wears an accent ring + badge.
 // In glass mode (bar.glass) TopBar paints the island; this face only uses glass chips.
 Item {
     id: root
@@ -54,7 +57,11 @@ Item {
     readonly property real endPad: s(isCompact ? 10 : 13)
     readonly property real btnSize: coverSize
     readonly property real btnGap: s(2)
-    readonly property real controlsW: btnSize * 4 + btnGap * 3
+    readonly property real vibeW: Math.ceil(s(isCompact ? 8 : 10) + vibeGlyphW + s(5) + Math.min(s(96), tmVibe.advanceWidth) + s(isCompact ? 10 : 12))
+    readonly property real vibeGlyphW: s(isCompact ? 12 : 14)
+    readonly property bool favShown: smart.onLibrary && smart.curFile !== "" && !pickerOpen
+    readonly property real controlsW: pickerOpen ? vibeW : vibeW + btnGap + (favShown ? btnSize + btnGap : 0) + btnSize * 3 + btnGap * 2
+    readonly property real pickerW: smart.playableStyles.length * (btnSize + btnGap) - btnGap
     readonly property real fontSize: s(isCompact ? 11 : 12)
 
     readonly property real fullTextW: tmTitle.advanceWidth + (artist !== "" ? tmSep.advanceWidth + tmArtist.advanceWidth : 0)
@@ -67,16 +74,37 @@ Item {
         if (hovered) { unhoverTimer.stop(); hoverHold = true; }
         else unhoverTimer.restart();
     }
-    Timer { id: unhoverTimer; interval: 350; onTriggered: root.hoverHold = false }
+    Timer { id: unhoverTimer; interval: 350; onTriggered: { root.hoverHold = false; root.pickerOpen = false; root.previewStyle = ""; } }
     readonly property bool controlsShown: hasTrack && hoverHold
     readonly property bool idleExpanded: !hasTrack && hoverHold
     readonly property var smart: Music.SmartShuffle
     readonly property bool smartOn: smart.shown && hasTrack
+    // Inline style picker (replaces the title while open); previewStyle = the hovered style chip.
+    property bool pickerOpen: false
+    property string previewStyle: ""
+    readonly property string vibeStyle: previewStyle !== "" ? previewStyle : smart.shownStyle
+    readonly property bool vibeLit: smartOn && smart.pendingStyle === "" && previewStyle === ""
+    // Wheel on the vibe chip while My Vibe plays: switch once the wheel rests.
+    Timer {
+        id: styleSwitchTimer
+        interval: 900
+        onTriggered: {
+            if (root.smart.pendingStyle === "" ) return;
+            if (root.smart.shown && root.smart.pendingStyle !== root.smart.style) root.smart.startStyle(root.smart.pendingStyle);
+            else if (root.smart.pendingStyle === root.smart.style) root.smart.pendingStyle = "";
+        }
+    }
+    function cancelStyleSwitch() { styleSwitchTimer.stop(); }
+    function cycleStyle(dir) {
+        smart.pendingStyle = smart.nextStyleId(smart.shownStyle, dir);
+        if (smart.pendingStyle === smart.style && smart.shown) smart.pendingStyle = "";
+        if (smart.shown) styleSwitchTimer.restart();
+    }
 
     property real targetWidth: {
         if (!moduleActive) return 0;
-        if (!hasTrack) return idleExpanded ? Math.round(inset * 2 + coverSize * 2 + btnGap * 2) : faceH;
-        let w = inset + coverSize + textGap + textW;
+        if (!hasTrack) return idleExpanded ? Math.round(inset * 2 + coverSize + btnGap * 2 + vibeW) : faceH;
+        let w = inset + coverSize + textGap + (pickerOpen && controlsShown ? pickerW : textW);
         return Math.round(w + (controlsShown ? (s(8) + controlsW + inset) : endPad));
     }
     implicitWidth: targetWidth
@@ -93,12 +121,17 @@ Item {
     function openPlayer() {
         Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/glass-music\""]);
     }
+    // Glass Music on the album of the playing track (focuses it when it is already open).
+    function openPlayerCurrent() {
+        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/glass-music\" --current"]);
+    }
 
     HoverHandler { id: faceHover }
 
     TextMetrics { id: tmTitle; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.DemiBold; text: root.title }
     TextMetrics { id: tmSep; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.Medium; text: "  —  " }
     TextMetrics { id: tmArtist; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.Medium; text: root.artist }
+    TextMetrics { id: tmVibe; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.DemiBold; text: root.smart.labelOf(root.vibeStyle) }
 
     // ── Volume (wheel) ────────────────────────────────────────────────────────
     property real wheelAccum: 0
@@ -148,23 +181,9 @@ Item {
         }
     }
 
-    // Idle + hover: one click starts a smart queue.
-    IconButton {
-        width: root.btnSize
-        height: root.btnSize
-        cornerRadius: Math.round(root.btnSize / 2)
-        buttonIcon: "󰒝"
-        iconFontSize: root.s(root.isCompact ? 10 : 12)
-        accentColor: root.smartOn ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.40 : 0.28)
-                                  : (isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor)
-        textColor: root.smartOn ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor)
-        onClicked: root.smart.start()
-
-        MouseArea {
-            anchors.fill: parent
-            acceptedButtons: Qt.RightButton
-            onClicked: root.smart.stop()
-        }
+    // Idle + hover: one click starts My Vibe (wheel picks the style first).
+    VibeChip {
+        face: root
         x: root.inset + root.coverSize + root.btnGap * 2 + (root.idleExpanded ? 0 : -root.s(8))
         anchors.verticalCenter: parent.verticalCenter
         opacity: root.idleExpanded ? 1 : 0
@@ -193,7 +212,7 @@ Item {
                 if (mouse.button === Qt.MiddleButton) {
                     if (root.player && root.player.canTogglePlaying) root.player.togglePlaying();
                 } else if (mouse.button === Qt.RightButton) {
-                    root.openPlayer();
+                    root.openPlayerCurrent();
                 } else {
                     root.openPanel();
                 }
@@ -300,7 +319,7 @@ Item {
                 Behavior on scale { NumberAnimation { duration: 360; easing.type: Easing.OutQuint } }
             }
 
-            // Smart shuffle on: accent ring around the cover + a small 󰒝 badge.
+            // My Vibe on: accent ring around the cover + a small badge with the style glyph.
             Rectangle {
                 anchors.fill: parent
                 anchors.margins: -root.s(2)
@@ -330,10 +349,47 @@ Item {
                 Behavior on scale { NumberAnimation { duration: 600; easing.type: Easing.OutQuint } }
                 Text {
                     anchors.centerIn: parent
-                    text: "󰒝"
+                    text: root.smart.glyphOf(root.smart.style)
                     font.family: ThemeBackend.iconFont
                     font.pixelSize: Math.round(root.s(root.isCompact ? 7 : 8))
                     color: ThemeBackend.base
+                }
+            }
+        }
+
+        // Inline style picker: one round chip per style; hover previews it in the vibe chip.
+        Row {
+            id: picker
+            x: root.inset + root.coverSize + root.textGap - (root.pickerOpen && root.controlsShown ? 0 : root.s(8))
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: root.btnGap
+            opacity: root.pickerOpen && root.controlsShown ? 1 : 0
+            visible: opacity > 0.01
+            enabled: root.pickerOpen && root.controlsShown
+            Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+            Behavior on x { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+            Repeater {
+                model: root.smart.playableStyles
+                IconButton {
+                    required property var modelData
+                    readonly property bool isCur: root.smart.shown && modelData.id === root.smart.style
+                    width: root.btnSize
+                    height: root.btnSize
+                    cornerRadius: Math.round(root.btnSize / 2)
+                    buttonIcon: root.smart.glyphOf(modelData.id)
+                    iconFontSize: root.s(root.isCompact ? 11 : 13)
+                    accentColor: isCur ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.40 : 0.28)
+                                       : (isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor)
+                    textColor: isCur ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor)
+                    onIsHoveredOrHighlightedChanged: {
+                        if (isHoveredOrHighlighted) root.previewStyle = modelData.id;
+                        else if (root.previewStyle === modelData.id) root.previewStyle = "";
+                    }
+                    onClicked: {
+                        root.pickerOpen = false;
+                        root.previewStyle = "";
+                        if (isCur) root.smart.reroll(); else root.smart.startStyle(modelData.id);
+                    }
                 }
             }
         }
@@ -344,6 +400,9 @@ Item {
             x: root.inset + root.coverSize + root.textGap
             width: root.textW
             height: parent.height
+            opacity: root.pickerOpen && root.controlsShown ? 0 : 1
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
             readonly property real lineY: Math.round(height / 2 - lineA.height / 2 - root.s(2.5))
             readonly property real gapW: root.s(40)
@@ -541,7 +600,7 @@ Item {
         // Transport buttons, revealed on hover.
         Row {
             id: controls
-            x: root.inset + root.coverSize + root.textGap + root.textW + root.s(8) + (root.controlsShown ? 0 : root.s(10))
+            x: root.inset + root.coverSize + root.textGap + (root.pickerOpen && root.controlsShown ? root.pickerW : root.textW) + root.s(8) + (root.controlsShown ? 0 : root.s(10))
             anchors.verticalCenter: parent.verticalCenter
             spacing: root.btnGap
             opacity: root.controlsShown ? 1 : 0
@@ -550,24 +609,22 @@ Item {
             Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
             Behavior on x { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
 
+            VibeChip { face: root }
+            // Favourite (☆ / ★) for the playing library track.
             IconButton {
-            width: root.btnSize
-            height: root.btnSize
-            cornerRadius: Math.round(root.btnSize / 2)
-            buttonIcon: "󰒝"
-            iconFontSize: root.s(root.isCompact ? 10 : 12)
-            accentColor: root.smartOn ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.40 : 0.28)
-                                      : (isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor)
-            textColor: root.smartOn ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor)
-            onClicked: root.smart.start()
-
-            MouseArea {
-                anchors.fill: parent
-                acceptedButtons: Qt.RightButton
-                onClicked: root.smart.stop()
-            }
+                visible: root.favShown
+                width: root.btnSize
+                height: root.btnSize
+                cornerRadius: Math.round(root.btnSize / 2)
+                buttonIcon: root.smart.fav ? "󰓎" : "󰓒"
+                iconFontSize: root.s(root.isCompact ? 11 : 13)
+                accentColor: root.smart.fav ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.34 : 0.22)
+                                            : (isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor)
+                textColor: root.smart.fav ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor)
+                onClicked: root.smart.toggleFav()
             }
             IconButton {
+                visible: !root.pickerOpen
                 width: root.btnSize
                 height: root.btnSize
                 cornerRadius: Math.round(root.btnSize / 2)
@@ -579,6 +636,7 @@ Item {
                 onClicked: root.player.previous()
             }
             IconButton {
+                visible: !root.pickerOpen
                 width: root.btnSize
                 height: root.btnSize
                 cornerRadius: Math.round(root.btnSize / 2)
@@ -590,6 +648,7 @@ Item {
                 onClicked: root.player.togglePlaying()
             }
             IconButton {
+                visible: !root.pickerOpen
                 width: root.btnSize
                 height: root.btnSize
                 cornerRadius: Math.round(root.btnSize / 2)

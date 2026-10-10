@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Effects
 
-// Album, Liked Songs, all Songs, a playlist, a mood mix, Recently / Most played:
+// Album, Favourites, all Songs, a playlist, a My Vibe style, Recently / Most played:
 // a coloured hero, the action row (play / shuffle / …) and a virtualised song list.
 Item {
     id: pg
@@ -10,7 +10,7 @@ Item {
     property string arg: ""
     property real topPad: 64
     property alias flick: list
-    readonly property string kind: app.nav.page
+    readonly property string kind: app.nav.page === "mood" ? "style" : app.nav.page
     readonly property var album: kind === "album" ? app.albumByKey[arg] : null
     readonly property var playlist: {
         if (kind !== "playlist") return null;
@@ -22,28 +22,30 @@ Item {
         if (kind === "liked") return app.likedTracks();
         if (kind === "songs") { const a = []; for (let i = 0; i < app.lib.tracks.length; i++) a.push(i); return a; }
         if (kind === "playlist") return playlist ? app.idxOfFiles(playlist.files) : [];
-        if (kind === "mood") return app.moodTracks(arg);
+        if (kind === "style") return app.styleTracks(arg);
         if (kind === "recent") return app.idxOfFiles(app.home.recent);
         if (kind === "most") return app.idxOfFiles(app.home.most);
         return [];
     }
     readonly property color tint: kind === "album" ? app.colorFor(arg)
-        : kind === "liked" ? Qt.hsla(0.72, 0.55, 0.55, 1)
-        : kind === "mood" ? app.moodColor(arg)
+        : kind === "liked" ? app.styleColor("favourites")
+        : kind === "style" ? app.styleColor(arg)
         : kind === "playlist" && tracks.length ? app.colorFor(app.lib.tracks[tracks[0]].k)
         : app.th.accent
     readonly property string title: kind === "album" ? (album ? album.n : "")
-        : kind === "liked" ? "Liked Songs" : kind === "songs" ? "Songs"
-        : kind === "playlist" ? arg : kind === "mood" ? app.moodLabel(arg) + " mix"
+        : kind === "liked" ? "Favourites" : kind === "songs" ? "Songs"
+        : kind === "playlist" ? arg : kind === "style" ? app.styleLabel(arg)
         : kind === "recent" ? "Recently played" : kind === "most" ? "Most played" : ""
     readonly property string label: kind === "album" ? (album && album.single ? "Single" : "Album")
-        : kind === "mood" ? "Smart mix" : kind === "songs" ? "Library" : "Playlist"
+        : kind === "style" ? "My Vibe style" : kind === "liked" ? "Starred songs" : kind === "songs" ? "Library" : "Playlist"
     readonly property int total: { let s = 0; for (const i of tracks) s += app.lib.tracks[i].d; return s; }
     property string stickyTitle: title
     property real stickyAt: 300 + topPad * 0.5 - 40
 
+    // a style plays as My Vibe: an endless smart queue that tops itself up
+    readonly property bool vibeHere: kind === "style" && app.vibeOn && app.smart.style === arg
     function playAll(shuffle) {
-        if (kind === "mood" && !shuffle) { app.mix(arg); return; }
+        if (kind === "style" && !shuffle) { app.vibePlay(arg); return; }
         if (tracks.length) app.playContext(tracks, 0, shuffle);
     }
     function scrollTop() { list.contentY = list.originY; }
@@ -116,7 +118,7 @@ Item {
                             anchors.centerIn: parent
                             size: parent.width * 0.38
                             color: "white"
-                            name: pg.kind === "liked" ? "heart" : pg.kind === "mood" ? pg.arg : pg.kind === "recent" ? "history" : pg.kind === "most" ? "fire" : "note"
+                            name: pg.kind === "liked" ? "star" : pg.kind === "style" ? pg.app.styleIcon(pg.arg) : pg.kind === "recent" ? "history" : pg.kind === "most" ? "fire" : "note"
                         }
                     }
                 }
@@ -145,6 +147,20 @@ Item {
                         maximumLineCount: 2
                         elide: Text.ElideRight
                         lineHeight: 0.95
+                    }
+                    Text {
+                        visible: text !== ""
+                        width: parent.width
+                        text: pg.kind === "liked" ? "Your whole library already counts as liked. Star (☆) the songs you love most: My Vibe plays them more often."
+                            : pg.kind === "style" ? pg.app.styleInfo(pg.arg).desc + " · press play for an endless mix that tops itself up"
+                            : ""
+                        color: pg.app.th.text
+                        opacity: 0.85
+                        font.family: pg.app.th.font
+                        font.pixelSize: 14
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
                     }
                     Row {
                         width: parent.width
@@ -194,14 +210,21 @@ Item {
                     spacing: 18
                     IconButton {
                         app: pg.app; filled: true; size: 58; iconSize: 30
-                        icon: pg.isCurrentContext && pg.app.playing ? "pause" : "play"
-                        tip: pg.kind === "mood" ? "Play a smart " + pg.app.moodLabel(pg.arg) + " mix" : "Play"
-                        onClicked: { if (pg.isCurrentContext) pg.app.toggle(); else pg.playAll(false); }
+                        icon: (pg.isCurrentContext || pg.vibeHere) && pg.app.playing ? "pause" : "play"
+                        tip: pg.kind === "style" ? "Play My Vibe · " + pg.app.styleLabel(pg.arg) : "Play"
+                        onClicked: { if (pg.isCurrentContext || pg.vibeHere) pg.app.toggle(); else pg.playAll(false); }
                     }
                     IconButton {
                         app: pg.app; icon: "shuffle"; size: 46; iconSize: 28; anchors.verticalCenter: parent.verticalCenter
                         tip: "Shuffle play"
                         onClicked: pg.playAll(true)
+                    }
+                    IconButton {
+                        visible: pg.kind === "liked" && pg.tracks.length > 0
+                        app: pg.app; icon: "vibe"; size: 46; iconSize: 26; anchors.verticalCenter: parent.verticalCenter
+                        active: pg.app.vibeOn && pg.app.smart.style === "favourites"
+                        tip: "My Vibe · Favourites: an endless mix of them"
+                        onClicked: pg.app.vibePlay("favourites")
                     }
                     IconButton {
                         app: pg.app; icon: "playlist-plus"; size: 46; iconSize: 26; anchors.verticalCenter: parent.verticalCenter
@@ -231,7 +254,7 @@ Item {
                 visible: pg.tracks.length === 0
                 x: 28
                 topPadding: 24
-                text: pg.kind === "liked" ? "Songs you like will appear here. Tap ♡ on any song (stored as music-smart ‘love’)."
+                text: pg.kind === "liked" ? "No favourites yet. Star (☆) a song in any list or in the player bar."
                     : pg.kind === "recent" || pg.kind === "most" ? "Nothing yet: music-smart logs what you play." : "Nothing here yet."
                 color: pg.app.th.sub1
                 font.family: pg.app.th.font

@@ -7,6 +7,6 @@ binds {
     Mod+Shift+M hotkey-overlay-title="Music: open Glass Music library (or focus it)" { spawn "/home/user/.local/bin/glass-music"; }
     Mod+Comma hotkey-overlay-title="Music: previous track" { spawn "/home/user/.local/bin/music-ctl" "previous"; }
     Mod+Period hotkey-overlay-title="Music: next track" { spawn "/home/user/.local/bin/music-ctl" "next"; }
-    Mod+S hotkey-overlay-title="Music: smart shuffle (start / re-roll)" { spawn "/home/user/.local/bin/music-smart" "start"; }
+    Mod+S hotkey-overlay-title="Music: My Vibe (start / re-roll in its style)" { spawn "/home/user/.local/bin/music-smart" "start"; }
     Mod+Slash hotkey-overlay-title="Music: play / pause" { spawn "/home/user/.local/bin/music-ctl" "play-pause"; }
 }

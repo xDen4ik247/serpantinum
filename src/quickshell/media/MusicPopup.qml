@@ -20,10 +20,11 @@ import "."
 //   └────────────┴──────────────────┘
 //
 // Keys: Space play/pause · ←/→ seek 5 s · ↑/↓ volume · N/P next/previous · S shuffle ·
-//       R repeat · L lyrics · E equalizer · Tab lyrics↔equalizer · G smart shuffle · Esc closes.
-// Smart shuffle (music-smart, also Mod+S): the 󰒝 button next to lyrics/EQ/library starts or
-// re-rolls a smart queue (right-click leaves smart mode); while it plays, the button glows and
-// the info block shows the vibe and why the current track was picked.
+//       R repeat · L lyrics · E equalizer · Tab lyrics↔equalizer · G My Vibe · F favourite · Esc closes.
+// My Vibe (music-smart, also Mod+S): the style button next to lyrics/EQ/library starts My Vibe in
+// its style or re-rolls it (right-click leaves My Vibe; styles: bar chip / Glass Music); ☆ marks the
+// track as a favourite. While My Vibe plays, the button glows and the info block shows the style
+// and why the current track was picked.
 Item {
     id: root
 
@@ -274,6 +275,7 @@ Item {
         else if (k === Qt.Key_P) { if (targetPlayer && targetPlayer.canGoPrevious) targetPlayer.previous(); event.accepted = true; }
         else if (k === Qt.Key_S) { toggleShuffle(); event.accepted = true; }
         else if (k === Qt.Key_G) { SmartShuffle.start(); event.accepted = true; }
+        else if (k === Qt.Key_F) { if (SmartShuffle.onLibrary && SmartShuffle.curFile !== "") SmartShuffle.toggleFav(); event.accepted = true; }
         else if (k === Qt.Key_R) { cycleRepeat(); event.accepted = true; }
         else if (k === Qt.Key_L) { if (eqOpen) eqOpen = false; else lyricsHidden = !lyricsHidden; event.accepted = true; }
         else if (k === Qt.Key_E) { eqOpen = !eqOpen; event.accepted = true; }
@@ -649,7 +651,7 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             visible: SmartShuffle.shown && root.hasTrack && SmartShuffle.why !== ""
-            text: "󰒝  " + SmartShuffle.vibeLabel + " vibe  ·  " + SmartShuffle.why
+            text: SmartShuffle.glyphOf(SmartShuffle.style) + "  My Vibe" + (SmartShuffle.style !== "default" ? " · " + SmartShuffle.styleLabel : "") + "  ·  " + SmartShuffle.why
             font.family: ThemeBackend.fontFamily
             font.pixelSize: root.s(11)
             font.weight: Font.Medium
@@ -719,11 +721,22 @@ Item {
             spacing: root.s(4)
 
             IconButton {
+                visible: SmartShuffle.onLibrary && SmartShuffle.curFile !== "" && root.hasTrack
+                width: root.s(28)
+                height: root.s(28)
+                cornerRadius: Math.round(width / 2)
+                buttonIcon: SmartShuffle.fav ? "󰓎" : "󰓒"
+                iconFontSize: root.s(14)
+                accentColor: SmartShuffle.fav ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.4 : 0.28) : (isHoveredOrHighlighted ? root.chipHover : root.chip)
+                textColor: SmartShuffle.fav ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dim)
+                onClicked: SmartShuffle.toggleFav()
+            }
+            IconButton {
                 readonly property bool on: SmartShuffle.shown
                 width: root.s(28)
                 height: root.s(28)
                 cornerRadius: Math.round(width / 2)
-                buttonIcon: "󰒝"
+                buttonIcon: SmartShuffle.glyphOf(SmartShuffle.shownStyle)
                 iconFontSize: root.s(14)
                 accentColor: on ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.4 : 0.28) : (isHoveredOrHighlighted ? root.chipHover : root.chip)
                 textColor: on ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dim)

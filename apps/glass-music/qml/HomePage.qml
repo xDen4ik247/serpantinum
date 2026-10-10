@@ -1,6 +1,7 @@
 import QtQuick
 
-// Home: greeting, quick tiles, smart-shuffle vibes, recently / most played, jump back in.
+// Home: greeting, My Vibe (one play button + styles), quick tiles, recently / most played,
+// jump back in, your artists.
 Item {
     id: pg
     anchors.fill: parent
@@ -30,7 +31,7 @@ Item {
         return names;
     }
     readonly property var quick: {
-        const out = [{ kind: "liked" }, { kind: "smart" }];
+        const out = [{ kind: "liked" }];
         for (const k of jumpBack) { if (out.length >= 8) break; out.push({ kind: "album", k: k }); }
         return out;
     }
@@ -58,6 +59,14 @@ Item {
                     font.pixelSize: 32
                     font.weight: Font.Bold
                 }
+                MyVibeHero {
+                    id: vibeHero
+                    app: pg.app
+                    width: parent.width
+                    height: implicitHeight
+                    shown: fl.contentY < y + height + pg.topPad
+                }
+                Item { width: 1; height: 4 }
                 Grid {
                     id: quickGrid
                     width: parent.width
@@ -71,50 +80,21 @@ Item {
                             app: pg.app
                             width: quickGrid.tileW
                             coverKey: modelData.kind === "album" ? modelData.k : ""
-                            icon: modelData.kind === "liked" ? "heart" : "smart"
-                            tint: modelData.kind === "liked" ? Qt.hsla(0.72, 0.55, 0.55, 1) : pg.app.th.accent
-                            glow: modelData.kind === "smart" && !!pg.app.smart.active
+                            icon: "star"
+                            tint: pg.app.styleColor("favourites")
                             playing: modelData.kind === "album" && pg.curAlbum === modelData.k
-                            title: modelData.kind === "liked" ? "Liked Songs"
-                                 : modelData.kind === "smart" ? (pg.app.smart.active ? "Smart shuffle · " + (pg.app.smart.vibeLabel || "") : "Smart shuffle")
+                            title: modelData.kind === "liked" ? "Favourites"
                                  : (pg.app.albumByKey[modelData.k] ? pg.app.albumByKey[modelData.k].n : "")
                             onClicked: {
                                 if (modelData.kind === "liked") pg.app.go("liked");
-                                else if (modelData.kind === "smart") pg.app.smartStart(true);
                                 else pg.app.goAlbum(modelData.k);
                             }
                             onPlay: {
                                 if (modelData.kind === "liked") { const t = pg.app.likedTracks(); if (t.length) pg.app.playContext(t, 0, false); }
-                                else if (modelData.kind === "smart") pg.app.smartStart(true);
                                 else pg.app.playAlbum(modelData.k, false);
                             }
                         }
                     }
-                }
-            }
-
-            Shelf {
-                id: vibes
-                app: pg.app
-                width: parent.width
-                title: "Your vibes"
-                subtitle: pg.app.smart.active ? "Smart shuffle is on · " + (pg.app.smart.vibeLabel || "") + " vibe" + (pg.app.smart.why ? " · " + pg.app.smart.why : "") : "Weighted by what you play, the time of day and your likes"
-                count: pg.app.lib.moods.length + 1
-                minCard: 168
-                delegate: Card {
-                    required property int index
-                    readonly property var mood: index > 0 ? pg.app.lib.moods[index - 1] : null
-                    app: pg.app
-                    width: vibes.cardW
-                    tileIcon: index === 0 ? "smart" : mood.id
-                    tileText: index === 0 ? "Smart shuffle" : mood.label + " mix"
-                    tint: index === 0 ? pg.app.th.mix(pg.app.th.accent, pg.app.th.deep, 0.35) : pg.app.moodColor(mood.id)
-                    glow: index === 0 && !!pg.app.smart.active
-                    playing: index === 0 && !!pg.app.smart.active
-                    title: index === 0 ? (pg.app.smart.active ? "Re-roll the vibe" : "Start smart shuffle") : mood.label
-                    subtitle: index === 0 ? "Picks a vibe for this hour and keeps the queue topped up" : pg.app.n(mood.n, "song") + " · a fresh weighted pick every time"
-                    onClicked: index === 0 ? pg.app.smartStart(true) : pg.app.go("mood", mood.id)
-                    onPlay: index === 0 ? pg.app.smartStart(true) : pg.app.mix(mood.id)
                 }
             }
 

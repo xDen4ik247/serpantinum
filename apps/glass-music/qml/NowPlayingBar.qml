@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Effects
 
 // Bottom now-playing island: cover + title/artist (→ album / artist) + ♥ · transport with
-// shuffle / repeat and a seekable progress line · smart shuffle, lyrics, queue, volume.
+// shuffle / repeat and a seekable progress line · My Vibe, lyrics, queue, volume.
 Item {
     id: bar
     property var app
@@ -59,9 +59,9 @@ Item {
             anchors { right: parent.right; verticalCenter: parent.verticalCenter }
             visible: !!bar.t
             size: 34; iconSize: 20
-            icon: bar.app.isLiked(bar.app.curIdx) ? "heart" : "heart-outline"
+            icon: bar.app.isLiked(bar.app.curIdx) ? "star" : "star-outline"
             active: bar.app.isLiked(bar.app.curIdx)
-            tip: active ? "Remove from Liked Songs" : "Save to Liked Songs"
+            tip: active ? "Favourite · click to remove" : "Add to Favourites (My Vibe plays it more often)"
             onClicked: bar.app.toggleLike(bar.app.curIdx)
         }
     }
@@ -152,9 +152,10 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             IconButton {
                 id: smartBtn
-                app: bar.app; icon: "smart"; size: 34; iconSize: 20; dot: true
+                app: bar.app; size: 34; iconSize: 20; dot: true
+                icon: active ? bar.app.styleIcon(bar.app.smart.style || "default") : "vibe"
                 active: !!bar.app.smart.active
-                tip: active ? "Smart shuffle on (" + (bar.app.smart.vibeLabel || "") + ") · click: re-roll · right-click: off" : "Smart shuffle"
+                tip: active ? "My Vibe · " + (bar.app.smart.styleLabel || "") + " · click: re-roll · right-click: off" : "Play My Vibe · " + bar.app.styleLabel(bar.app.curStyle)
                 onClicked: bar.app.smartStart(true)
                 onRightClicked: bar.app.send({ cmd: "smart", action: "stop" })
             }
@@ -162,7 +163,7 @@ Item {
                 id: smartLabel
                 visible: !!bar.app.smart.active && !bar.compact && bar.width > 1250
                 anchors { left: smartBtn.right; leftMargin: 2; verticalCenter: parent.verticalCenter }
-                text: bar.app.smart.vibeLabel || ""
+                text: bar.app.smart.styleLabel || bar.app.smart.vibeLabel || ""
                 color: bar.app.th.accent
                 font.family: bar.app.th.font
                 font.pixelSize: 12
