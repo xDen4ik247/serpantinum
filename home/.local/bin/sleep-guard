@@ -1,0 +1,304 @@
+#!/usr/bin/python3
+"""sleep-guard: reliable suspend/resume with the Serpantinum lock screen on niri.
+
+Fixes three ways the laptop "didn't wake up":
+  1. The idle "suspend" action asks for the lock only 200 ms before `systemctl suspend`, and the lock screen
+     takes longer than that, so the laptop could sleep (and wake) without a working lock. We hold a logind
+     *delay* inhibitor: on PrepareForSleep we turn the monitors on (a lock surface created while niri has the
+     monitors powered off broke after resume), lock, wait until the lock screen is up, then let sleep proceed.
+  2. niri handles the power key itself (hard-coded Suspend). The press that wakes the laptop reaches niri after
+     resume and sent it straight back to sleep. After every resume we hold a *block* inhibitor for a few
+     seconds, so that request is refused (logind rejects it outright for a strong block lock).
+  3. Opening the lid is not "input" for niri, so screens powered off by the idle timer stayed black. We power
+     the monitors on after every resume.
+Plus a lock guardian: while the session is locked, if the shell that draws the lock screen dies or hangs, its
+log is saved and it is restarted and locked again (instead of niri's red "locked, no lock screen" fallback).
+
+Idle cost: blocks on D-Bus/inotify; polls the shell every 3 s only while the session is locked.
+"""
+import glob
+import os
+import signal
+import subprocess
+import sys
+import time
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+UID = os.getuid()
+HOME = os.path.expanduser("~")
+RUN = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{UID}")
+SERP_DIR = os.path.join(HOME, ".local/share/serpantinum/src")
+MAIN_QML = os.path.join(SERP_DIR, "quickshell/Shell.qml")
+LOCK_MARKER = os.path.join(RUN, "serpantinum/lock/locked")
+STATE = os.path.join(HOME, ".local/state/sleep-guard")
+RESUME_BLOCK_S = 4          # refuse suspend requests this long after resume
+LOCK_WAIT_S = 3.5           # max time to wait for the lock screen before sleep (logind allows 5 s)
+PROBE_EVERY_S = 3
+HANG_PROBES = 4             # consecutive failed IPC probes (~12 s) = hung lock screen
+MAX_RESTARTS = 3            # per 10 minutes
+
+os.makedirs(STATE, exist_ok=True)
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def niri_env():
+    env = dict(os.environ)
+    socks = sorted(glob.glob(os.path.join(RUN, "niri.*.sock")), key=os.path.getmtime, reverse=True)
+    for s in socks:
+        pid = s.rsplit(".", 2)[-2]
+        if pid.isdigit() and os.path.exists(f"/proc/{pid}"):
+            env["NIRI_SOCKET"] = s
+            break
+    return env
+
+
+def run(cmd, timeout=5):
+    try:
+        return subprocess.run(cmd, env=niri_env(), timeout=timeout, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode
+    except (subprocess.TimeoutExpired, OSError):
+        return -1
+
+
+def monitors_off():
+    for p in glob.glob("/sys/class/drm/card*-*/dpms"):
+        try:
+            d = os.path.dirname(p)
+            if open(os.path.join(d, "status")).read().strip() == "connected" and \
+                    open(p).read().strip() == "Off":
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def monitors_on():
+    run(["niri", "msg", "action", "power-on-monitors"])
+
+
+def shell_pid():
+    """PID of the main shell. While locked, quickshell forks a PAM helper with the same command line:
+    the main process is the one whose parent is not itself a copy of the shell."""
+    want = [b"quickshell", b"-p", MAIN_QML.encode()]
+    pids = set()
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            if open(f"/proc/{d}/cmdline", "rb").read().split(b"\0")[:-1] == want:
+                pids.add(int(d))
+        except OSError:
+            continue
+    for pid in pids:
+        try:
+            ppid = int(open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        if ppid not in pids:
+            return pid
+    return None
+
+
+def shell_ipc(*args, timeout=2):
+    return run(["quickshell", "-p", MAIN_QML, "ipc", *args], timeout=timeout)
+
+
+def locked():
+    return os.path.exists(LOCK_MARKER)
+
+
+class Guard:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+        self.delay_fd = None
+        self.restarts = []
+        self.bad_probes = 0
+        self.probe_id = 0
+        self.bus.signal_subscribe("org.freedesktop.login1", "org.freedesktop.login1.Manager",
+                                  "PrepareForSleep", "/org/freedesktop/login1", None,
+                                  Gio.DBusSignalFlags.NONE, self.on_prepare, None)
+        self.take_delay()
+        # watch the lock marker so the guardian only runs while locked
+        d = Gio.File.new_for_path(os.path.dirname(LOCK_MARKER))
+        if not d.query_exists():
+            d.make_directory_with_parents()
+        self.mon = d.monitor_directory(Gio.FileMonitorFlags.NONE)
+        self.mon.connect("changed", lambda *a: self.update_probe())
+        self.update_probe()
+
+    # ---- logind inhibitors
+    def inhibit(self, mode, why):
+        res, fds = self.bus.call_with_unix_fd_list_sync(
+            "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+            "Inhibit", GLib.Variant("(ssss)", ("sleep", "sleep-guard", why, mode)),
+            GLib.VariantType("(h)"), Gio.DBusCallFlags.NONE, -1, None, None)
+        return fds.get(res.unpack()[0])
+
+    def take_delay(self):
+        if self.delay_fd is None:
+            self.delay_fd = self.inhibit("delay", "Lock the screen before sleeping")
+
+    def release_delay(self):
+        if self.delay_fd is not None:
+            os.close(self.delay_fd)
+            self.delay_fd = None
+
+    # ---- sleep / resume
+    def on_prepare(self, _conn, _sender, _path, _iface, _sig, params, _data):
+        going = params.unpack()[0]
+        if going:
+            self.before_sleep()
+        else:
+            self.after_resume()
+
+    def before_sleep(self):
+        t0 = time.monotonic()
+        try:
+            if not locked():
+                if monitors_off():
+                    monitors_on()
+                    time.sleep(0.3)
+                shell_ipc("call", "lock", "activate")
+                while not locked() and time.monotonic() - t0 < LOCK_WAIT_S:
+                    time.sleep(0.1)
+                # let the lock surface paint its first frames before the GPU powers down
+                time.sleep(max(0.0, min(0.8, LOCK_WAIT_S - (time.monotonic() - t0))))
+            log(f"before sleep: locked={locked()} after {time.monotonic() - t0:.1f}s")
+        finally:
+            self.release_delay()
+
+    def after_resume(self):
+        fd = None
+        try:
+            fd = self.inhibit("block", "Just woke up: ignore the power-button press that woke the laptop")
+        except GLib.Error as e:
+            log(f"block inhibitor failed: {e.message}")
+        if fd is not None:
+            GLib.timeout_add_seconds(RESUME_BLOCK_S, lambda: (os.close(fd), False)[1])
+        monitors_on()
+        try:
+            with open(os.path.join(RUN, "sleep-guard-resumed"), "w") as f:
+                f.write(f"{time.time():.0f}\n")
+        except OSError:
+            pass
+        self.take_delay()
+        log(f"resumed: locked={locked()}")
+        self.bad_probes = 0
+        self.update_probe()
+
+    # ---- lock guardian
+    def update_probe(self):
+        if locked() and not self.probe_id:
+            self.probe_id = GLib.timeout_add_seconds(PROBE_EVERY_S, self.probe)
+        elif not locked() and self.probe_id:
+            GLib.source_remove(self.probe_id)
+            self.probe_id = 0
+            self.bad_probes = 0
+
+    def probe(self):
+        if not locked():
+            self.probe_id = 0
+            return False
+        pid = shell_pid()
+        if pid is None:
+            self.recover(None, "the shell is gone while the session is locked")
+        elif shell_ipc("show") != 0:
+            self.bad_probes += 1
+            if self.bad_probes >= HANG_PROBES:
+                self.recover(pid, f"the shell did not answer for {self.bad_probes * PROBE_EVERY_S}s while locked")
+        else:
+            self.bad_probes = 0
+        return True
+
+    def save_log(self, pid):
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        out = os.path.join(STATE, f"shell-{ts}.log")
+        files = glob.glob(os.path.join(RUN, f"quickshell/by-pid/{pid}/log.qslog")) if pid else []
+        if not files:  # dead instance: newest Shell.qml log
+            files = sorted(glob.glob(os.path.join(RUN, "quickshell/by-id/*/log.qslog")),
+                           key=os.path.getmtime, reverse=True)[:1]
+        for f in files:
+            try:
+                txt = subprocess.run(["quickshell", "log", "-t", "300", f], capture_output=True,
+                                     text=True, timeout=10).stdout
+                open(out, "w").write(txt)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+        for old in sorted(glob.glob(os.path.join(STATE, "shell-*.log")))[:-5]:
+            os.remove(old)
+
+    def recover(self, pid, why):
+        now = time.monotonic()
+        self.restarts = [t for t in self.restarts if now - t < 600]
+        if len(self.restarts) >= MAX_RESTARTS:
+            log(f"NOT restarting ({why}): too many restarts")
+            return
+        self.restarts.append(now)
+        log(f"restarting the shell: {why}")
+        self.save_log(pid)
+        for p in subprocess.run(["pgrep", "-f", r"^bash .*/serpantinumd start$"], capture_output=True,
+                                text=True).stdout.split():
+            os.kill(int(p), signal.SIGTERM)
+        time.sleep(1.5)
+        # the main shell and its PAM helper (same command line)
+        for p in subprocess.run(["pgrep", "-f", "^quickshell -p " + MAIN_QML + "$"], capture_output=True,
+                                text=True).stdout.split():
+            try:
+                os.kill(int(p), signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.3)
+        for f in ("/tmp/serpantinumd.lock", "/tmp/serpantinumd.pid", LOCK_MARKER):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        errlog = os.path.join(STATE, "shell-stderr.log")
+        if os.path.exists(errlog) and os.path.getsize(errlog) > 2_000_000:
+            os.truncate(errlog, 0)
+        start = f"exec serpantinumd start >>'{errlog}' 2>&1"
+        # 1st try: spawned by niri (like at login), so it doesn't live in this service's cgroup;
+        # 2nd try: a transient scope of the user manager (also outside this service)
+        for attempt in (["niri", "msg", "action", "spawn", "--", "bash", "-c", start],
+                        ["systemd-run", "--user", "--scope", "--quiet", "--collect", "bash", "-c", start]):
+            if attempt[0] == "systemd-run":
+                subprocess.Popen(attempt, env=niri_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+            else:
+                rc = run(attempt)
+                if rc != 0:
+                    log(f"{attempt[0]} spawn failed (rc {rc})")
+            for _ in range(30):
+                time.sleep(0.5)
+                if shell_pid() and shell_ipc("show") == 0:
+                    break
+            if shell_pid():
+                break
+            log(f"no shell after {attempt[0]}, trying the next way")
+        monitors_on()
+        shell_ipc("call", "lock", "activate")  # niri lets a new client replace a dead lock
+        self.bad_probes = 0
+        log(f"shell restarted (pid {shell_pid()}) and locked again")
+
+
+def main():
+    Guard()
+    loop = GLib.MainLoop()
+    try:
+        gi.require_version("GLibUnix", "2.0")
+        from gi.repository import GLibUnix
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, loop.quit)
+    except (ValueError, ImportError):
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, loop.quit)
+    loop.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

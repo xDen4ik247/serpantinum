@@ -127,7 +127,7 @@
       "suspend": {
         "id": "suspend",
         "timeout": 480,
-        "enabled": true,
+        "enabled": false,
         "respectInhibitors": true,
         "mprisInhibit": false,
         "command": "",
@@ -135,7 +135,23 @@
         "isCustom": false
       }
     },
-    "manualInhibit": true
+    "manualInhibit": false,
+    "customActions": [
+      {
+        "id": "suspend-guarded",
+        "name": "Suspend (sleep-guard locks first)",
+        "timeout": 480,
+        "enabled": true,
+        "respectInhibitors": true,
+        "mprisInhibit": false,
+        "warningTimeout": 0,
+        "warningCommand": "",
+        "beforeCommand": "",
+        "command": "systemctl suspend",
+        "resumeCommand": "",
+        "isCustom": true
+      }
+    ]
   },
   "notifications": {
     "dnd": true,
@@ -180,6 +196,6 @@
     "attachToBar": true
   },
   "inputs": {
-    "passwordReveal": true
+    "passwordReveal": false
   }
 }

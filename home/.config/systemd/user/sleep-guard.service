@@ -1,0 +1,14 @@
+[Unit]
+Description=sleep-guard: lock before sleep, screen on + no instant re-suspend after resume, restart a dead lock screen
+PartOf=graphical-session.target
+After=graphical-session.target niri.service
+
+[Service]
+Type=simple
+# blocks on D-Bus/inotify; checks the shell every 3 s only while the session is locked
+ExecStart=%h/.local/bin/sleep-guard
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
