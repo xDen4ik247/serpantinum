@@ -37,6 +37,7 @@ Item {
 
     readonly property string fontSans: cfg("font", "Google Sans")
     readonly property string fontIcon: cfg("iconFont", "JetBrainsMono Nerd Font")
+    readonly property string deviceLabel: cfg("deviceLabel", "")
 
     // Nerd Font (Material Design) glyphs
     readonly property string icLock:    "\u{F033E}"
@@ -146,6 +147,15 @@ Item {
         intro.start()
         pwd.forceActiveFocus()
     }
+    // the password field owns the keyboard from the very first frame (also in the idle
+    // clock view), so the first keystroke both wakes the greeter and lands in the field
+    Connections {
+        target: root.Window.window
+        ignoreUnknownSignals: true
+        function onActiveChanged() {
+            if (root.Window.window && root.Window.window.active && !root.busy) pwd.forceActiveFocus()
+        }
+    }
 
     // ================================================================ background
     Rectangle { anchors.fill: parent; color: root.cBase }
@@ -156,12 +166,18 @@ Item {
         property real zoom: 1.06
         scale: zoom + 0.025 * root.t
         transformOrigin: Item.Center
+        // The 2880x1800 JPEGs decode on a worker thread (a synchronous decode held back
+        // the window and with it the keyboard for ~150 ms); the wallpaper fades in from
+        // the base colour as soon as the first one is ready (~50 ms after the first frame).
+        readonly property bool ready: (root.idleSharp ? bgSharp.status : bgBlur.status) === Image.Ready
+        opacity: ready ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
 
         Image {
             id: bgSharp
             anchors.fill: parent
             fillMode: Image.PreserveAspectCrop
-            asynchronous: false
+            asynchronous: true
             smooth: true
             source: root.fileUrl(root.cfg("background", "assets/bg.jpg"))
             onStatusChanged: if (status === Image.Error && source != "assets/bg.jpg") source = "assets/bg.jpg"
@@ -171,6 +187,7 @@ Item {
             id: bgBlur
             anchors.fill: parent
             fillMode: Image.PreserveAspectCrop
+            asynchronous: true
             smooth: true
             source: root.fileUrl(root.cfg("backgroundBlur", "assets/bg-blur.jpg"))
             onStatusChanged: if (status === Image.Error && source != "assets/bg-blur.jpg") source = "assets/bg-blur.jpg"
@@ -326,8 +343,10 @@ Item {
             y: root.height * 0.585 - height / 2 + root.px(56) * (1 - root.t)
             opacity: root.t
             scale: 0.94 + 0.06 * root.t
-            visible: opacity > 0.01
-            enabled: root.awake
+            // Deliberately NOT `visible: opacity > 0` / `enabled: root.awake`: an invisible or
+            // disabled card cannot hold keyboard focus, so the idle view would drop keystrokes.
+            // At opacity 0 the scene graph culls the subtree anyway; the card's mouse areas
+            // are gated on root.awake instead.
 
             Glass {
                 anchors.fill: parent
@@ -451,6 +470,7 @@ Item {
                         text: root.icSwap
                         MouseArea {
                             id: swapMouse
+                            enabled: root.awake
                             anchors.fill: parent; anchors.margins: -root.px(6)
                             hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: { root.userIndex = (root.userIndex + 1) % userInst.count; pwd.forceActiveFocus() }
@@ -650,6 +670,7 @@ Item {
                         }
                         MouseArea {
                             id: subMouse
+                            enabled: root.awake
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
@@ -832,7 +853,7 @@ Item {
             width: powerRow.width + root.px(12)
             height: root.px(52)
             opacity: root.t
-            visible: opacity > 0.01
+            visible: opacity > 0.01 && powerRow.width > 0   // no empty island when sddm offers no power actions
             enabled: root.awake
 
             property string armedAction: ""
@@ -898,7 +919,9 @@ Item {
             color: root.cText
             opacity: 0.55 * root.t
             visible: opacity > 0.01
-            text: root.hasSddm && sddm.hostName ? String(sddm.hostName).toUpperCase() : ""
+            // optional machine-local label (deviceLabel= in theme.conf.user), else the hostname
+            text: root.deviceLabel !== "" ? root.deviceLabel
+                : (root.hasSddm && sddm.hostName ? String(sddm.hostName).toUpperCase() : "")
         }
     }
 

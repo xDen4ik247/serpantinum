@@ -10,6 +10,10 @@
 # Output: bg.jpg (wallpaper, cover-scaled), bg-blur.jpg (blurred + saturated, the
 # glass backdrop), avatar.png (optional) and theme.conf.user (palette as INI; the
 # theme dir symlinks theme.conf.user -> here, so SDDM loads it as theme config).
+#
+# Machine-local greeter options (never in the repo) go in
+# ~/.config/serp-glass/greeter.conf as KEY=VALUE lines; supported:
+#   deviceLabel=My Laptop     top-right label instead of the hostname
 set -euo pipefail
 
 OUT="${GREETER_SYNC_DIR:-/var/lib/serp-greeter}"
@@ -17,6 +21,7 @@ W=2880 H=1800                       # panel resolution (X11 greeter renders 1:1)
 CACHE="$HOME/.cache/serpantinum/wallpaper"
 STATE="$HOME/.local/state/serpantinum"
 SETTINGS="$HOME/.config/serpantinum/settings.json"
+LOCAL="${XDG_CONFIG_HOME:-$HOME/.config}/serp-glass/greeter.conf"
 FORCE=0; [[ "${1:-}" == "--force" ]] && FORCE=1
 
 if [[ ! -d "$OUT" || ! -w "$OUT" ]]; then
@@ -49,14 +54,22 @@ for a in "$cand" "$HOME/.face" "$HOME/.face.icon"; do
 done
 
 # ---- skip when nothing changed ----------------------------------------------
-key="$(stat -c '%n %s %Y' "$wp" "$pal" ${avatar:+"$avatar"} 2>/dev/null | md5sum | cut -c1-16)"
+# images depend on wallpaper + avatar; theme.conf.user also on palette + local options
+imgkey="$(stat -c '%n %s %Y' "$wp" ${avatar:+"$avatar"} 2>/dev/null | md5sum | cut -c1-16)"
+local_conf=(); [[ -f "$LOCAL" ]] && local_conf=("$LOCAL")
+key="$imgkey-$(stat -c '%n %s %y' "$pal" "${local_conf[@]}" 2>/dev/null | md5sum | cut -c1-16)"
 if [[ $FORCE -eq 0 && -f "$OUT/.stamp" && "$(cat "$OUT/.stamp")" == "$key" && -f "$OUT/bg-blur.jpg" ]]; then
     exit 0
 fi
+redo_img=1
+[[ $FORCE -eq 0 && -f "$OUT/.stamp" && "$(cut -d- -f1 "$OUT/.stamp")" == "$imgkey" \
+   && -f "$OUT/bg.jpg" && -f "$OUT/bg-blur.jpg" ]] && redo_img=0
 
 tmp="$(mktemp -d "$OUT/.tmp.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 src="$wp[0]"   # first frame for gifs
+
+if [[ $redo_img -eq 1 ]]; then
 
 # sharp: cover-scale to the panel
 magick "$src" -resize "${W}x${H}^" -gravity center -extent "${W}x${H}" \
@@ -71,6 +84,20 @@ if [[ -n "$avatar" ]]; then
     magick "$avatar[0]" -resize 512x512^ -gravity center -extent 512x512 "$tmp/avatar.png" \
         || rm -f "$tmp/avatar.png"
 fi
+fi   # redo_img
+
+# local option (allow-listed key; quotes/backslashes/control chars stripped)
+opt() {
+    [[ -f "$LOCAL" ]] || return 0
+    local v
+    v="$(sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" "$LOCAL" | tail -n1 | tr -d '"\\\000-\037')"
+    v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"   # trim
+    [[ ${#v} -ge 2 && $v == \'*\' ]] && v="${v:1:${#v}-2}"            # 'quoted'
+    printf '%s' "${v:0:48}"
+}
+has_avatar=0
+if [[ $redo_img -eq 1 ]]; then [[ -f "$tmp/avatar.png" ]] && has_avatar=1
+else [[ -f "$OUT/avatar.png" ]] && has_avatar=1; fi
 
 # ---- palette -> INI -----------------------------------------------------------
 c() { jq -r --arg k "$1" --arg d "$2" '.[$k] // $d' "$pal" 2>/dev/null || echo "$2"; }
@@ -79,7 +106,7 @@ c() { jq -r --arg k "$1" --arg d "$2" '.[$k] // $d' "$pal" 2>/dev/null || echo "
     echo "[General]"
     echo "background=\"$OUT/bg.jpg\""
     echo "backgroundBlur=\"$OUT/bg-blur.jpg\""
-    if [[ -f "$tmp/avatar.png" ]]; then echo "avatar=\"$OUT/avatar.png\""; else echo "avatar=\"\""; fi
+    if [[ $has_avatar -eq 1 ]]; then echo "avatar=\"$OUT/avatar.png\""; else echo "avatar=\"\""; fi
     echo "base=\"$(c base '#0e1415')\""
     echo "mantle=\"$(c mantle '#161d1d')\""
     echo "surface=\"$(c surface1 '#252b2c')\""
@@ -90,11 +117,15 @@ c() { jq -r --arg k "$1" --arg d "$2" '.[$k] // $d' "$pal" 2>/dev/null || echo "
     echo "accent2=\"$(c peach '#b7c7ea')\""
     echo "accentInk=\"$(c sapphire '#004f54')\""
     echo "error=\"$(c red '#ffb4ab')\""
+    lbl="$(opt deviceLabel)"; [[ -n "$lbl" ]] && echo "deviceLabel=\"$lbl\""
     echo "stamp=\"$(date +%s)\""
 } > "$tmp/theme.conf.user"
 
 chmod 644 "$tmp"/*
-for f in bg.jpg bg-blur.jpg theme.conf.user; do mv -f "$tmp/$f" "$OUT/$f"; done
-if [[ -f "$tmp/avatar.png" ]]; then mv -f "$tmp/avatar.png" "$OUT/avatar.png"; else rm -f "$OUT/avatar.png"; fi
+if [[ $redo_img -eq 1 ]]; then
+    for f in bg.jpg bg-blur.jpg; do mv -f "$tmp/$f" "$OUT/$f"; done
+    if [[ -f "$tmp/avatar.png" ]]; then mv -f "$tmp/avatar.png" "$OUT/avatar.png"; else rm -f "$OUT/avatar.png"; fi
+fi
+mv -f "$tmp/theme.conf.user" "$OUT/theme.conf.user"
 echo "$key" > "$OUT/.stamp"
 echo "greeter-sync: updated $OUT from $wp"
