@@ -1,8 +1,10 @@
 import QtQuick
 import QtQuick.Effects
 
-// Right-click menu overlay. Items: {icon, text, act} | {sep: true} | {…, sub: "playlists"|"savequeue", files}.
-// "Add to playlist" swaps the menu to the stored playlists plus a "New playlist" name field.
+// Right-click menu overlay. Items: {icon, text, act} | {sep: true} | {…, sub: "playlists"|"savequeue", files}
+// | {…, sub: "remove", files, ids?, temp?, title?}.
+// "Add to playlist" swaps the menu to the stored playlists plus a "New playlist" name field;
+// "Remove…" swaps it to a confirmation (Trash / temp cache, and whether to unlike on Yandex).
 Item {
     id: m
     property var app
@@ -25,7 +27,7 @@ Item {
     }
     function close() { open_ = false; mode = null; m.app.rootItem.forceActiveFocus(); }
     function run(it) {
-        if (it.sub) { mode = { sub: it.sub, files: it.files || [] }; if (it.sub === "savequeue") Qt.callLater(() => nameField.forceActiveFocus()); return; }
+        if (it.sub) { mode = { sub: it.sub, files: it.files || [], ids: it.ids || {}, temp: !!it.temp, title: it.title || "" }; if (it.sub === "savequeue") Qt.callLater(() => nameField.forceActiveFocus()); return; }
         close();
         if (it.act) it.act();
     }
@@ -87,9 +89,44 @@ Item {
                     }
                 }
             }
+            // remove: confirm
+            Column {
+                visible: m.mode !== null && m.mode.sub === "remove"
+                width: col.width
+                readonly property int nf: m.mode && m.mode.files ? m.mode.files.length : 0
+                readonly property bool likeSync: !!m.app.ym.signed && !(m.mode && m.mode.temp)
+                MenuRow {
+                    app: m.app; width: parent.width; icon: "back"; bold: true
+                    text: parent.nf > 1 ? "Remove " + parent.nf + " songs?" : "Remove “" + (m.mode ? m.mode.title : "") + "”?"
+                    onPicked: m.mode = null
+                }
+                Rectangle { width: parent.width; height: 1; color: m.app.th.alpha(m.app.th.text, 0.08) }
+                Text {
+                    width: parent.width
+                    leftPadding: 10; rightPadding: 10; topPadding: 8; bottomPadding: 6
+                    wrapMode: Text.WordWrap
+                    text: m.mode && m.mode.temp ? "Deletes the download from the temporary cache."
+                        : "Moves the " + (parent.nf > 1 ? "files" : "file") + " and lyrics to the Trash (restorable)."
+                          + (parent.likeSync ? " Liked songs come back with the daily sync unless you unlike them." : "")
+                    color: m.app.th.sub1
+                    font.family: m.app.th.font
+                    font.pixelSize: 12
+                }
+                MenuRow {
+                    visible: parent.likeSync
+                    app: m.app; width: parent.width; icon: "heart-off"; text: "Remove and unlike on Yandex"
+                    onPicked: { m.app.removeSongs(m.mode.files, true, m.mode.ids); m.close(); }
+                }
+                MenuRow {
+                    app: m.app; width: parent.width; icon: "delete"
+                    text: parent.likeSync ? "Remove, keep the Yandex like" : "Remove"
+                    onPicked: { m.app.removeSongs(m.mode.files, false, m.mode.ids); m.close(); }
+                }
+            }
+
             // name field (new playlist / save queue)
             Item {
-                visible: m.mode !== null
+                visible: m.mode !== null && (m.mode.sub === "playlists" || m.mode.sub === "savequeue")
                 width: col.width
                 height: 48
                 Rectangle {
@@ -133,7 +170,7 @@ Item {
             app: m.app
             icon: parent && parent.it ? parent.it.icon || "" : ""
             text: parent && parent.it ? parent.it.text || "" : ""
-            chevron: !!(parent && parent.it && parent.it.sub === "playlists")
+            chevron: !!(parent && parent.it && (parent.it.sub === "playlists" || parent.it.sub === "remove"))
             onPicked: m.run(parent.it)
         }
     }

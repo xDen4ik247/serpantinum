@@ -29,6 +29,8 @@ import time
 import traceback
 
 from ymd import core
+
+from . import removal
 from yandex_music import Client
 from yandex_music.exceptions import NetworkError, YandexMusicError
 
@@ -301,6 +303,39 @@ class YM:
         for i in range(0, len(ids), 100):
             out += self.client().tracks(ids[i:i + 100])
         return out
+
+    def track_id_of(self, path):
+        """Yandex track id of a local file: the downloader's link tag (newer downloads), else the
+        liked track whose downloader path is this file."""
+        try:
+            import mutagen
+            f = mutagen.File(path)
+            tags = f.tags if f is not None else None
+            vals = []
+            if tags is not None:
+                for k in ("\xa9cmt", "comment", "COMMENT"):
+                    v = tags.get(k) if hasattr(tags, "get") else None
+                    if v:
+                        vals += [str(x) for x in (v if isinstance(v, list) else [v])]
+                if hasattr(tags, "getall"):
+                    vals += [str(fr.url) for fr in tags.getall("WOAF")]
+            for v in vals:
+                m = re.search(r"music\.yandex\.\w+/(?:album/\d+/)?track/(\d+)", v)
+                if m:
+                    return m.group(1)
+        except Exception:
+            pass
+        return self.liked_paths().get(os.path.splitext(os.path.realpath(path))[0])
+
+    def liked_paths(self):
+        """{library path without extension: track id} for every liked track (cached)."""
+        if getattr(self, "_liked_paths", None) is None:
+            out = {}
+            for t in self.full_tracks(self.liked_ids()):
+                for root in (self.lib, TEMP):
+                    out[os.path.realpath(os.path.join(root, self.base(t)))] = str(t.id)
+            self._liked_paths = out
+        return self._liked_paths
 
     def liked_ids(self, refresh=False):
         if self.likes is None or refresh:
@@ -632,6 +667,8 @@ class Worker:
             emit({"type": "ym-playlists", "items": self.ym.my_playlists()})
         elif cmd == "status":
             self.status()
+        elif cmd == "remove":
+            self.remove(c)
         elif cmd == "like":
             tid, on = str(c.get("id")), bool(c.get("on", True))
             cl = self.ym.client()
@@ -644,6 +681,30 @@ class Worker:
             emit({"type": "ym-liked", "id": tid, "on": on})
             emit({"type": "toast", "icon": "heart" if on else "heart-outline",
                   "text": "Liked on Yandex Music" if on else "Removed from your Yandex likes"})
+
+    def remove(self, c):
+        """Unlike the songs on Yandex (so the daily sync leaves them out), then remove the files."""
+        paths = [p for p in c.get("paths", []) if isinstance(p, str)]
+        ids, unliked = {}, 0
+        if c.get("unlike"):
+            for p in paths:
+                tid = c.get("ids", {}).get(p) or self.ym.track_id_of(p)
+                if tid:
+                    ids[p] = str(tid)
+        removed, failed, rescan = removal.remove(paths, [self.ym.lib, TEMP], [self.ym.lib])
+        gone = [ids[p] for p in removed if p in ids]
+        if gone:
+            try:
+                self.ym.client().users_likes_tracks_remove(gone)
+                unliked = len(gone)
+                if self.ym.likes is not None:
+                    self.ym.likes = [x for x in self.ym.likes if x not in set(gone)]
+                for tid in gone:
+                    emit({"type": "ym-liked", "id": tid, "on": False})
+            except Exception as ex:
+                emit({"type": "ym-log", "msg": f"unlike failed: {ex}"})
+        emit({"type": "ym-removed", "paths": removed, "failed": failed, "rescan": rescan,
+              "unliked": unliked, "notFound": len([p for p in removed if p not in ids]) if c.get("unlike") else 0})
 
     def dl_loop(self):
         while True:
@@ -714,7 +775,7 @@ class Worker:
 
     def handle(self, c):
         cmd = c.get("cmd")
-        if cmd in ("search", "open", "playlists", "like", "status"):
+        if cmd in ("search", "open", "playlists", "like", "status", "remove"):
             self.browse_q.put(c)
         elif cmd in ("fetch", "download", "sync"):
             if cmd == "fetch" and c.get("mode") == "play":

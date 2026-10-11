@@ -16,6 +16,11 @@ the Serpantinum desktop. Quickshell window (app-id `glass-music`) + a small Pyth
   Ctrl+↑/↓ volume · Ctrl+S shuffle · Ctrl+R repeat · Alt+←/→ back/forward.
 - Double-click a song: play it with its album / artist / list as the queue. Right-click: play next,
   add to queue, favourite, add to playlist, never play in My Vibe, go to artist / album.
+- **Remove…** (right-click a song, an album, a queue entry or a downloaded Yandex song): library
+  songs go to the Trash with their `.lrc` (restorable), temp-cache ones are deleted; emptied
+  album / artist folders are cleaned up and the songs leave the queue. "Remove and unlike on
+  Yandex" also drops the Yandex like (found by the link tag the downloader writes, or by
+  matching your liked tracks' paths), otherwise the daily sync downloads liked songs again.
 - The whole library counts as liked. ☆ Favourite = MPD sticker `favourite` (a strong boost in My
   Vibe and its own style; old `love` stickers are migrated by music-smart); "Never play in My Vibe"
   = sticker `ban`.
@@ -38,7 +43,7 @@ the Serpantinum desktop. Quickshell window (app-id `glass-music`) + a small Pyth
 
 Layout: `qml/` (shell.qml = state + window; one file per component/page), `glassmusic/`
 (server.py = JSON-lines protocol, library.py = index + cache, search.py, thumbs.py, mpdclient.py,
-yandex.py = Yandex worker in its own venv), `systemd/` (the daily sync timer).
+yandex.py = Yandex worker in its own venv, removal.py = Trash / delete), `systemd/` (the daily sync timer).
 Caches: `~/.cache/glass-music/{library.json,thumbs/}` (rebuilt when MPD's db_update changes).
 
 Install / update: `./install.sh` (also creates `~/.local/share/glass-music/yandex-venv` with

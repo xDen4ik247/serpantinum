@@ -18,7 +18,7 @@ import threading
 import time
 import traceback
 
-from . import library, lyrics, search
+from . import library, lyrics, removal, search
 from .lyrics import parse_lrc  # noqa: F401  (re-exported for tests)
 from .mpdclient import MPD, MPDError, default_address
 from .thumbs import Thumbs
@@ -29,6 +29,7 @@ CACHE_DIR = os.environ.get("GLASS_MUSIC_CACHE",
 HISTORY = os.environ.get("GLASS_MUSIC_HISTORY", HOME + "/.local/share/music-smart/history.sqlite")
 SMART_STATE = os.environ.get("GLASS_MUSIC_SMART_STATE", HOME + "/.local/state/music-smart/state.json")
 # Yandex Music worker (glassmusic.yandex) runs in its own venv with yandex-music-downloader
+YM_TEMP = os.environ.get("GLASS_MUSIC_YM_TEMP", os.path.join(CACHE_DIR, "yandex-temp"))
 YM_PYTHON = os.environ.get("GLASS_MUSIC_YM_PYTHON", HOME + "/.local/share/glass-music/yandex-venv/bin/python")
 FAV = "favourite"     # MPD sticker shared with music-smart
 
@@ -327,6 +328,10 @@ class Server:
             t = m.get("type")
             if t == "ym-ready":
                 self.ym_index_q.put(m)           # new library files are indexed by MPD first
+            elif t == "ym-removed":
+                self.ym_index_q.put({"type": "ym-index", "dirs": m.get("rescan", [])})
+                emit(dict(m, type="removed"))
+                continue
             elif t == "ym-done" and m.get("paths"):
                 self.ym_index_q.put(dict(m, type="ym-index"))
             emit(m)
@@ -340,13 +345,17 @@ class Server:
             paths = [msg["path"]] if msg["type"] == "ym-ready" else msg.get("paths", [])
             rels = [os.path.relpath(p, self.music_dir) for p in paths
                     if self.music_dir and p.startswith(self.music_dir.rstrip("/") + "/")]
-            if rels:
+            dirs = {os.path.dirname(r) for r in rels}
+            if "dirs" in msg:            # removals: the folders that changed or disappeared
+                dirs = {os.path.relpath(d, self.music_dir) for d in msg["dirs"]
+                        if self.music_dir and d.startswith(self.music_dir.rstrip("/") + "/")}
+            if dirs:
                 try:
                     if m is None or m.stale():
                         m = MPD(self.address)
                     job = 0
                     # update the album folder: MPD skips a file path whose folder it doesn't know yet
-                    for d in sorted({os.path.dirname(r) for r in rels}):
+                    for d in sorted(dirs):
                         job = max(job, int(m.dict("update", d).get("updating_db", 0) or 0))
                     # a short poll, only while this update job runs (an `idle update` issued after
                     # the job already finished would wait for the next one)
@@ -362,6 +371,34 @@ class Server:
             if msg["type"] == "ym-ready":
                 msg["uri"] = rels[0] if rels else "file://" + msg["path"]
                 self.q.put(("ym", msg))
+
+    def remove_songs(self, files, unlike=False, ids=None):
+        """Remove songs from disk: library ones to the Trash, temp-cache ones deleted; with unlike,
+        the worker first removes them from the Yandex likes (or the daily sync brings them back)."""
+        paths, idmap = [], {}
+        for f in files:
+            p = f[7:] if f.startswith("file://") else (f if os.path.isabs(f) else os.path.join(self.music_dir, f))
+            if removal.inside(p, [self.music_dir, YM_TEMP]):
+                paths.append(p)
+                if ids and ids.get(f):
+                    idmap[p] = str(ids[f])
+        if not paths:
+            return
+        # take them out of the queue first (MPD names temp songs by their plain path)
+        gone = set(paths) | {os.path.relpath(p, self.music_dir) for p in paths}
+        items = MPD.songs(self.call(lambda m: m.cmd("playlistinfo"), idempotent=True))
+        ids_q = [s.get("Id") for s in items if s["file"] in gone or s["file"].removeprefix("file://") in gone]
+        if ids_q:
+            self.call(lambda m: m.batch([("deleteid", i) for i in ids_q if i]))
+        if unlike and self.ym_start():
+            self.ym_send({"cmd": "remove", "paths": paths, "unlike": True, "ids": idmap})
+            return
+        removed, failed, rescan = removal.remove(paths, [self.music_dir, YM_TEMP], [self.music_dir])
+        self.ym_index_q.put({"type": "ym-index", "dirs": rescan})
+        if not getattr(self, "_ym_indexer", False):
+            self._ym_indexer = True
+            threading.Thread(target=self.ym_indexer, daemon=True).start()
+        emit({"type": "removed", "paths": removed, "failed": failed, "unliked": 0, "notFound": 0})
 
     def ym_cancel_play(self):
         if self.ym_play:
@@ -510,6 +547,9 @@ class Server:
             self.call(lambda m: m.cmd("update"))
         elif cmd == "home":
             self.send_home()
+        elif cmd == "remove":
+            self.remove_songs([f for f in c.get("files", []) if isinstance(f, str)],
+                              bool(c.get("unlike")), c.get("ids"))
         elif cmd == "ym":
             inner = c.get("ym") or {}
             if inner.get("cmd") == "fetch" and inner.get("mode") == "play":

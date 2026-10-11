@@ -176,6 +176,7 @@ ShellRoot {
         property var ymLiked: ({})            // track id -> bool (changed this session)
         property var ymCovers: ({})           // queue uri -> remote cover
         property var ymPaths: ({})            // track id -> local file (downloaded this session)
+        property var ymGone: ({})             // local file -> true once removed this session
         readonly property var ymBusy: { for (const k in ymJobs) return ymJobs[k]; return null; }
 
         signal toast(string icon, string text)
@@ -212,6 +213,7 @@ ShellRoot {
             else if (m.type === "search") { if (m.rid === searchRid) searchRes = m; }
             else if (m.type === "lyrics") lyrics = m;
             else if (m.type === "toast") toast(m.icon, m.text);
+            else if (m.type === "removed") onRemoved(m);
             else if (m.type === "hello") { smartPath = m.smartState || smartPath; if (m.smartStyles) smartStylesPath = m.smartStyles; }
             else if (m.type === "error") console.warn("backend error:", m.error, m.trace || "");
             else if (m.type === "log") console.log("backend:", m.msg);
@@ -268,6 +270,7 @@ ShellRoot {
                 const p = Object.assign({}, ymPending); delete p[m.id]; ymPending = p;
                 const h = Object.assign({}, ymHave); h[m.id] = m.lib ? "lib" : "tmp"; ymHave = h;
                 const pp = Object.assign({}, ymPaths); pp[m.id] = m.path; ymPaths = pp;
+                if (ymGone[m.path]) { const g = Object.assign({}, ymGone); delete g[m.path]; ymGone = g; }
                 if (m.c) {
                     const c = Object.assign({}, ymCovers);
                     c[m.path] = c["file://" + m.path] = m.c;      // MPD reports added file:// songs by plain path
@@ -301,7 +304,12 @@ ShellRoot {
             ymPageRid += 1; ymPage = null;
             ymSend({ cmd: "open", kind: arg.slice(0, i), id: arg.slice(i + 1), rid: ymPageRid });
         }
-        function ymState(t) { return ymPending[t.id] ? "busy" : (ymHave[t.id] || t.have || ""); }
+        function ymState(t) {
+            if (ymPending[t.id]) return "busy";
+            const p = ymPaths[t.id] || t.path;
+            if (p && ymGone[p]) return "";
+            return ymHave[t.id] || t.have || "";
+        }
         function ymIsLiked(t) { return ymLiked[t.id] !== undefined ? ymLiked[t.id] : !!t.liked; }
         function ymFetch(tracks, at, mode) {
             const ok = tracks.filter(t => t.ok !== false);
@@ -344,6 +352,11 @@ ShellRoot {
             ];
             if (t.ar && t.ar.length) items.push({ sep: true }, { icon: "artist", text: "Go to artist", act: () => ymOpen("artist", t.ar[0].id) });
             if (t.alId) items.push({ icon: "album", text: "Go to album", act: () => ymOpen("album", t.alId) });
+            const st = ymState(t), uri = ymUri(t);
+            if ((st === "lib" || st === "tmp") && uri) {
+                const ids = {}; ids[uri] = t.id;
+                items.push({ sep: true }, removeItem([uri], t.t, ids, st === "tmp"));
+            }
             menu.open(items, item, mx, my);
         }
         function ymItemMenu(o, item, mx, my) {
@@ -351,6 +364,23 @@ ShellRoot {
                 { icon: "play", text: "Open", act: () => ymOpen(o.kind, o.id) },
                 { icon: "download", text: o.kind === "artist" ? "Save every album to library" : "Save to library", act: () => ymDownload(o.url, o.n) }
             ], item, mx, my);
+        }
+
+        // ---- removing songs from disk (library → Trash, temp cache → deleted)
+        function removeSongs(files, unlike, ids) { if (files && files.length) send({ cmd: "remove", files: files, unlike: !!unlike, ids: ids || {} }); }
+        function removeItem(files, title, ids, temp) {
+            return { icon: "delete", text: temp ? "Remove from temporary cache…" : "Remove from library…",
+                     sub: "remove", files: files, ids: ids || {}, temp: !!temp, title: title || "" };
+        }
+        function onRemoved(m) {
+            const g = Object.assign({}, ymGone);
+            for (const p of m.paths) g[p] = true;
+            ymGone = g;
+            const k = m.paths.length;
+            const temp = k && ym.temp && m.paths[0].startsWith(ym.temp + "/");
+            if (k) toast("delete", (temp ? "Removed " + n(k, "song") + " from the temporary cache" : "Moved " + n(k, "song") + " to the Trash")
+                + (m.unliked ? " · unliked on Yandex" : "") + (m.notFound ? " · " + m.notFound + " not found in your Yandex likes" : ""));
+            if (m.failed && m.failed.length) toast("warn", "Couldn’t remove " + n(m.failed.length, "file"));
         }
 
         // ---- helpers
@@ -541,7 +571,9 @@ ShellRoot {
                 { icon: bans[t.f] ? "vibe" : "cancel", text: bans[t.f] ? "Allow in My Vibe again" : "Never play in My Vibe", act: () => send({ cmd: "ban", file: t.f, on: !bans[t.f] }) },
                 { sep: true },
                 { icon: "artist", text: "Go to artist", act: () => goArtist(t.p) },
-                { icon: "album", text: "Go to album", act: () => goAlbum(t.k) }
+                { icon: "album", text: "Go to album", act: () => goAlbum(t.k) },
+                { sep: true },
+                removeItem([t.f], t.t)
             ];
             menu.open(items, item, mx, my);
         }
@@ -556,7 +588,9 @@ ShellRoot {
                 { icon: "playlist", text: "Add to playlist", sub: "playlists", files: filesOf(a.tr) },
                 { sep: true },
                 { icon: "artist", text: "Go to artist", act: () => goArtist(a.p) },
-                { icon: "album", text: "Open album", act: () => goAlbum(k) }
+                { icon: "album", text: "Open album", act: () => goAlbum(k) },
+                { sep: true },
+                removeItem(filesOf(a.tr), a.n)
             ], item, mx, my);
         }
         function queueMenu(entry, item, mx, my) {
@@ -568,7 +602,10 @@ ShellRoot {
             if (i >= 0) items.push({ sep: true },
                 { icon: isLiked(i) ? "star" : "star-outline", text: isLiked(i) ? "Remove from Favourites" : "Add to Favourites", act: () => toggleLike(i) },
                 { icon: "artist", text: "Go to artist", act: () => goTrackArtist(i) },
-                { icon: "album", text: "Go to album", act: () => goTrackAlbum(i) });
+                { icon: "album", text: "Go to album", act: () => goTrackAlbum(i) },
+                { sep: true }, removeItem([lib.tracks[i].f], lib.tracks[i].t));
+            else if (entry.f && ym.temp && entry.f.startsWith(ym.temp + "/"))
+                items.push({ sep: true }, removeItem([entry.f], entry.t, {}, true));
             menu.open(items, item, mx, my);
         }
         function appMenu(item, mx, my) {
@@ -738,6 +775,8 @@ ShellRoot {
         function vibe(style: string): void { app.vibePlay(style) }
         function ymSearch(q: string): void { app.go("search"); app.search(q); app.ymSearchNow() }
         function ymOpen(kind: string, id: string): void { app.ymOpen(kind, id) }
+        function remove(file: string, unlike: bool): void { app.removeSongs([file], unlike, {}) }
+        function removeDemo(): void { if (app.lib.tracks.length) { app.trackMenu(0, [], 0, app.rootItem, app.rootItem.width / 2, app.rootItem.height / 3); menu.run(app.removeItem([app.lib.tracks[0].f], app.lib.tracks[0].t)); } }
         function ymPlayResult(i: int): void { if (app.ymRes && app.ymRes.tracks.length > i) app.ymPlay([app.ymRes.tracks[i]], 0) }
         function ymPlayPage(i: int): void { if (app.ymPage && app.ymPage.tracks.length > i) app.ymPlay(app.ymPage.tracks, i) }
         function ymState(): string { return JSON.stringify({ signed: app.ym.signed, res: app.ymRes ? app.ymRes.tracks.length : -1, err: app.ymRes && app.ymRes.error ? app.ymRes.error : "", q: app.searchText, page: app.ymPage ? (app.ymPage.n || app.ymPage.error) : "", pageTracks: app.ymPage ? app.ymPage.tracks.length : 0, busy: app.ymBusyText(), storage: app.ym.conf ? app.ym.conf.storage : "" }) }

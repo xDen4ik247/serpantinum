@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from glassmusic import lyrics
+from glassmusic import lyrics, removal
 
 try:
     from glassmusic import yandex
@@ -31,6 +31,44 @@ class LyricsPathTest(unittest.TestCase):
             self.assertEqual(lyrics.load("/x", "http://example.org/s.mp3")["lines"], [])
         finally:
             shutil.rmtree(d)
+
+
+def _touch(path, data=b"x"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+
+
+class RemovalTest(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.lib = os.path.join(self.d, "lib")
+        self.tmp = os.path.join(self.d, "tmp")
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def test_album_and_artist_folders_go_when_empty(self):
+        a = os.path.join(self.tmp, "Artist", "Album")
+        for n in ("1 - a.m4a", "1 - a.lrc", "2 - b.m4a", "cover.jpg"):
+            _touch(os.path.join(a, n))
+        removed, failed, rescan = removal.remove([os.path.join(a, "1 - a.m4a")], [self.lib, self.tmp])
+        self.assertEqual((len(removed), failed, rescan), (1, [], [a]))     # album still has 2 - b
+        self.assertEqual(sorted(os.listdir(a)), ["2 - b.m4a", "cover.jpg"])
+        removed, failed, rescan = removal.remove([os.path.join(a, "2 - b.m4a")], [self.lib, self.tmp])
+        self.assertEqual(rescan, [os.path.join(self.tmp, "Artist")])
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_refuses_outside_roots_and_non_audio(self):
+        outside = os.path.join(self.d, "elsewhere", "x.m4a")
+        lrc = os.path.join(self.lib, "A", "x.lrc")
+        _touch(outside)
+        _touch(lrc)
+        removed, failed, _ = removal.remove([outside, lrc, os.path.join(self.lib, "../elsewhere/x.m4a")],
+                                            [self.lib, self.tmp])
+        self.assertEqual(removed, [])
+        self.assertEqual(len(failed), 3)
+        self.assertTrue(os.path.exists(outside) and os.path.exists(lrc))
 
 
 @unittest.skipIf(yandex is None, "needs the yandex venv")
@@ -62,6 +100,41 @@ class YandexTest(unittest.TestCase):
             with open(os.path.join(d, "1 - Song.lrc"), "w", encoding="utf-8") as fh:
                 fh.write("[00:00.20] changed\n")
             self.assertEqual(yandex.embed_tree(d)[1], 1)
+        finally:
+            shutil.rmtree(d)
+
+    @unittest.skipIf(not shutil.which("ffmpeg"), "needs ffmpeg to make a test file")
+    def test_remove_unlikes_by_link_tag(self):
+        d = tempfile.mkdtemp()
+        try:
+            song = os.path.join(d, "lib", "A", "B", "1 - s.m4a")
+            os.makedirs(os.path.dirname(song))
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+                            "-t", "0.3", "-c:a", "aac", song], check=True)
+            f = MP4(song)
+            f["\xa9cmt"] = "https://music.yandex.ru/album/5/track/777"
+            f.save()
+
+            class FakeClient:
+                unliked = []
+                def users_likes_tracks_remove(self, ids):
+                    FakeClient.unliked += ids
+            w = yandex.Worker.__new__(yandex.Worker)
+            w.ym = yandex.YM.__new__(yandex.YM)
+            w.ym.lib, w.ym.likes, w.ym._client = os.path.join(d, "lib"), ["777", "1"], FakeClient()
+            w.ym._liked_paths = {}
+            out = []
+            old_emit, yandex.emit = yandex.emit, out.append
+            try:
+                self.assertEqual(w.ym.track_id_of(song), "777")
+                w.remove({"paths": [song], "unlike": True})
+            finally:
+                yandex.emit = old_emit
+            self.assertEqual(FakeClient.unliked, ["777"])
+            self.assertEqual(w.ym.likes, ["1"])
+            done = [m for m in out if m["type"] == "ym-removed"][0]
+            self.assertEqual((done["paths"], done["unliked"]), ([song], 1))
+            self.assertFalse(os.path.exists(os.path.join(d, "lib", "A")))
         finally:
             shutil.rmtree(d)
 
