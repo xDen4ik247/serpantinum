@@ -12,7 +12,12 @@ mkdir -p "$DEST/app.new"
 cp -r glassmusic qml assets "$DEST/app.new/"
 find "$DEST/app.new" -name __pycache__ -prune -exec rm -rf {} +
 rm -f "$DEST/app.new/qml/shaders/"*.frag
-rm -rf "$DEST/app" && mv "$DEST/app.new" "$DEST/app"
+# swap in one step (an open window live-reloads; a gap without app/ breaks that reload)
+if [ -d "$DEST/app" ] && mv --exchange "$DEST/app.new" "$DEST/app" 2>/dev/null; then
+    rm -rf "$DEST/app.new"
+else
+    rm -rf "$DEST/app" && mv "$DEST/app.new" "$DEST/app"
+fi
 install -m 755 bin/glass-music "$HOME/.local/bin/glass-music"
 install -m 644 glass-music.desktop "$HOME/.local/share/applications/glass-music.desktop"
 install -m 644 assets/icon/glass-music.svg "$ICONS/glass-music.svg"

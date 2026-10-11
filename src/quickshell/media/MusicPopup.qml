@@ -679,6 +679,7 @@ Item {
             spacing: root.s(8)
             visible: root.hasPlayer && root.targetPlayer.volumeSupported
             Text {
+                id: volumeIcon
                 anchors.verticalCenter: parent.verticalCenter
                 text: {
                     let v = root.targetPlayer ? root.targetPlayer.volume : 0;
@@ -696,11 +697,17 @@ Item {
                         if (root.targetPlayer.volume > 0.001) { volumeRow.lastVolume = root.targetPlayer.volume; root.targetPlayer.volume = 0; }
                         else root.targetPlayer.volume = volumeRow.lastVolume > 0 ? volumeRow.lastVolume : 0.3;
                     }
+                    // wheel on the icon works too (the slider hides when the row is short of room)
+                    onWheel: (w) => { const d = w.angleDelta.y; if (d !== 0) root.changeVolume(d > 0 ? 0.05 : -0.05); }
                 }
             }
+            // Only the room the action buttons leave: the slider shrinks, then hides, instead of
+            // running under the ☆ / style / lyrics buttons (narrow column with the lyrics pane open).
             MusicSeekBar {
+                readonly property real room: bottomRow.width - actionsRow.width - volumeIcon.width - volumeRow.spacing - root.s(14)
                 anchors.verticalCenter: parent.verticalCenter
-                width: Math.max(root.s(60), Math.min(root.s(110), bottomRow.width - actionsRow.width - root.s(40)))
+                visible: room >= root.s(36)
+                width: Math.max(0, Math.min(root.s(110), room))
                 value: root.targetPlayer ? root.targetPlayer.volume : 0
                 from: 0
                 to: 1
@@ -754,7 +761,7 @@ Item {
                 width: root.s(28)
                 height: root.s(28)
                 cornerRadius: Math.round(width / 2)
-                buttonIcon: "󰍰"
+                buttonIcon: String.fromCodePoint(0xf0bc3)     // script-text: lyrics (the Rap style glyph is a mic)
                 iconFontSize: root.s(14)
                 accentColor: root.paneMode === "lyrics" ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.4 : 0.28) : (isHoveredOrHighlighted ? root.chipHover : root.chip)
                 textColor: root.paneMode === "lyrics" ? ThemeBackend.text : root.dim

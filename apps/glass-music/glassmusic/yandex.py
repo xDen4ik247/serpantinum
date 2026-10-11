@@ -10,6 +10,7 @@ Runs in its own venv (install.sh), separate from the dependency-free app backend
   python -m glassmusic.yandex serve        JSON-lines worker spawned by glassmusic.server
   python -m glassmusic.yandex sync         download new liked tracks (+ chosen playlists); the timer
   python -m glassmusic.yandex embed [DIR]  embed every .lrc that differs from its file's lyrics tag
+  python -m glassmusic.yandex lyrics       fetch missing synced lyrics for library songs (+ embed)
   python -m glassmusic.yandex login        read a token (or the sign-in redirect URL) from stdin
   python -m glassmusic.yandex status       account + settings as JSON
 """
@@ -40,6 +41,7 @@ CACHE = os.environ.get("GLASS_MUSIC_CACHE",
                        os.path.join(os.environ.get("XDG_CACHE_HOME", HOME + "/.cache"), "glass-music"))
 TEMP = os.environ.get("GLASS_MUSIC_YM_TEMP", os.path.join(CACHE, "yandex-temp"))
 LOCK = os.path.join(CACHE, "yandex-sync.lock")
+NO_LYRICS = os.path.join(CACHE, "yandex-no-lyrics.json")   # files Yandex has no synced lyrics for
 DOWNLOADER = os.environ.get("GLASS_MUSIC_YM_DOWNLOADER",
                             os.path.join(os.path.dirname(sys.executable), "yandex-music-downloader"))
 SITE = "https://music.yandex.ru"
@@ -665,6 +667,58 @@ class YM:
                     pass
         return n
 
+    def backfill_lyrics(self, progress=None, stop=None):
+        """Synced lyrics for library songs that have no .lrc (e.g. downloaded while Yandex's lyrics
+        server failed): fetch the LRC, write it next to the song and embed it. Songs Yandex has
+        no synced lyrics for are remembered and not asked again."""
+        try:
+            with open(NO_LYRICS, encoding="utf-8") as fh:
+                none = set(json.load(fh))
+        except (OSError, ValueError):
+            none = set()
+        todo = []
+        for d, dirs, files in os.walk(self.lib):
+            dirs[:] = [x for x in dirs if not x.startswith(".")]
+            names = set(files)
+            for n in files:
+                stem, ext = os.path.splitext(n)
+                p = os.path.join(d, n)
+                if ext.lower() in AUDIO and stem + ".lrc" not in names and p not in none:
+                    tid = self.track_id_of(p)
+                    if tid:
+                        todo.append((p, tid))
+                    else:
+                        none.add(p)
+        got = 0
+        for i in range(0, len(todo), 100):
+            if stop is not None and stop():
+                break
+            chunk = todo[i:i + 100]
+            for (p, _), t in zip(chunk, self.full_tracks([tid for _, tid in chunk])):
+                li = t.lyrics_info
+                if not (li and li.has_available_sync_lyrics):
+                    none.add(p)
+                    continue
+                try:
+                    text = t.get_lyrics(format_="LRC").fetch_lyrics()
+                except Exception:
+                    continue            # a server error: try again next time
+                if not text.strip():
+                    continue
+                core.write_via_temporary_file(text.encode("utf-8"), core.Path(os.path.splitext(p)[0] + ".lrc"))
+                if self.conf.get("embed_lyrics", True):
+                    try:
+                        embed_lrc(p)
+                    except Exception:
+                        pass
+                got += 1
+                if progress:
+                    progress("Lyrics", got, len(todo), os.path.basename(p))
+        os.makedirs(CACHE, exist_ok=True)
+        with open(NO_LYRICS, "w", encoding="utf-8") as fh:
+            json.dump(sorted(none), fh, ensure_ascii=False)
+        return got
+
     def sync(self, progress=None, stop=None):
         """Liked tracks + chosen playlists into the library, through the downloader by link."""
         os.makedirs(CACHE, exist_ok=True)
@@ -693,6 +747,10 @@ class YM:
                     if progress:
                         progress(name, i, n, f)
                 new += self.run_downloader(url, self.lib, on_line=line, stop=stop)
+            try:
+                self.backfill_lyrics(progress, stop)
+            except Exception as ex:
+                emit({"type": "ym-log", "msg": f"lyrics backfill: {ex}"})
             if self.conf.get("embed_lyrics", True):
                 embed_tree(self.lib)       # also lyrics that arrived without a new download
             self.conf["last_sync"] = int(time.time())
@@ -1044,6 +1102,9 @@ def main(argv):
     if cmd == "status":
         print(json.dumps({"signed": bool(ym.conf.get("token")), "login": ym.login() if ym.conf.get("token") else "",
                           "conf": public_conf(ym.conf), "temp": TEMP, "lib": ym.lib}, ensure_ascii=False, indent=1))
+        return 0
+    if cmd == "lyrics":
+        print(f"{ym.backfill_lyrics(lambda name, i, n, f: print(f'[{i}/{n}] {f}', flush=True))} lyrics added")
         return 0
     if cmd == "sync":
         if "--if-auto" in argv and not ym.conf.get("auto_sync", True):

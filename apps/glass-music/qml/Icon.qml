@@ -13,7 +13,7 @@ Text {
         "home": 0xf02dc, "home-outline": 0xf06a1, "search": 0xf0349, "library": 0xf1a22,
         "library-fill": 0xf0331, "playlist": 0xf0cb8, "artist": 0xf0803, "album": 0xf0025,
         "note": 0xf0387, "music": 0xf075a, "vol-high": 0xf057e, "vol-mid": 0xf0580, "vol-low": 0xf057f,
-        "vol-off": 0xf0581, "queue": 0xf0cb8, "lyrics": 0xf036e, "lyrics-fill": 0xf0370,
+        "vol-off": 0xf0581, "queue": 0xf0cb8, "lyrics": 0xf0bc3, "lyrics-fill": 0xf0bc2,
         "list": 0xf0279, "dots": 0xf01d8, "close": 0xf0156, "back": 0xf0141, "forward": 0xf0142,
         "clock": 0xf0150, "console": 0xf018d, "smart": 0xf049d, "mix": 0xf0674, "sparkle": 0xf0ae2,
         "history": 0xf02da, "fire": 0xf0238, "radio": 0xf0439, "headphones": 0xf02cb, "drag": 0xf01dd,
