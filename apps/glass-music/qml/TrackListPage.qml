@@ -273,6 +273,22 @@ Item {
             showCover: pg.kind !== "album"
             showAlbum: pg.kind !== "album"
         }
-        footer: Item { width: 1; height: 40 }
+        footer: Column {
+            width: list.width
+            topPadding: 28
+            bottomPadding: 40
+            Loader {
+                active: pg.kind === "album" && !!pg.album
+                x: 20
+                width: parent.width - 40
+                sourceComponent: YmLocalSection {
+                    app: pg.app
+                    kind: "album"
+                    name: pg.album.n
+                    artist: pg.album.ar
+                    files: pg.tracks.slice(0, 6).map(i => pg.app.lib.tracks[i].f)
+                }
+            }
+        }
     }
 }

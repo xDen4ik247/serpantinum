@@ -246,7 +246,49 @@ class YM:
                     p = os.path.join(root, b + s)
                     if os.path.isfile(p):
                         return p, kind
-        return "", ""
+        p = self.duplicate(t)
+        return (p, "lib") if p else ("", "")
+
+    # duplicates: the same song filed under another album (a single, a compilation, a reissue)
+    @staticmethod
+    def _norm(text):
+        return re.sub(r"[\W_]+", "", core.SAFE_PATH_CLEAR_RE.sub("_", text or "").casefold().replace("ё", "е"))
+
+    def dup_index(self):
+        """{(artist folder, song title): path} over the library, from the downloader's
+        Artist/Album/N - Title layout; rebuilt at most every 30 s."""
+        now = time.time()
+        if getattr(self, "_dup", None) is None or now - self._dup_at > 30:
+            idx = {}
+            for d, dirs, files in os.walk(self.lib):
+                dirs[:] = [x for x in dirs if not x.startswith(".")]
+                rel = os.path.relpath(d, self.lib).split(os.sep)
+                if len(rel) < 2:
+                    continue
+                artist = self._norm(rel[0])
+                for n in files:
+                    stem, ext = os.path.splitext(n)
+                    if ext.lower() in AUDIO:
+                        title = self._norm(re.sub(r"^\d+(?:\.\d+)? - ", "", stem))
+                        idx.setdefault((artist, title), os.path.join(d, n))
+            self._dup, self._dup_at = idx, now
+        return self._dup
+
+    def duplicate(self, t):
+        """A library file of the same song by the same artist (same title incl. version, so a
+        remix or live take is not a duplicate), or ""."""
+        title = self._norm(core.full_title(t))
+        if not title:
+            return ""
+        names = [a.name for a in (t.artists or []) if a.name]
+        for al in (t.albums or [])[:1]:
+            names += [a.name for a in (al.artists or []) if a.name]
+        idx = self.dup_index()
+        for n in names:
+            p = idx.get((self._norm(n), title))
+            if p and os.path.isfile(p):
+                return p
+        return ""
 
     @staticmethod
     def link(t):
@@ -403,6 +445,64 @@ class YM:
                     "c": "", "url": "", "tracks": [self.track_obj(t) for t in self.full_tracks(self.liked_ids(True))]}
         raise ValueError(kind)
 
+    def _link_ids(self, path):
+        """(album id, track id) from the downloader's link tag of a local file."""
+        try:
+            import mutagen
+            f = mutagen.File(path)
+            tags = f.tags if f is not None else None
+            vals = []
+            if tags is not None:
+                for k in ("\xa9cmt", "comment"):
+                    v = tags.get(k) if hasattr(tags, "get") else None
+                    if v:
+                        vals += [str(x) for x in (v if isinstance(v, list) else [v])]
+                if hasattr(tags, "getall"):
+                    vals += [str(fr.url) for fr in tags.getall("WOAF")]
+            for v in vals:
+                m = re.search(r"album/(\d+)/track/(\d+)", v)
+                if m:
+                    return m.group(1), m.group(2)
+        except Exception:
+            pass
+        return None, None
+
+    def resolve(self, kind, name, artist, paths):
+        """The Yandex album / artist of a local one: from a file's link tag or the liked tracks
+        (exact), else the best search match by normalized name."""
+        tid = None
+        for p in paths[:6]:
+            al, tid = self._link_ids(p)
+            if kind == "album" and al:
+                return al
+            if tid:
+                break
+            tid = self.liked_paths().get(os.path.splitext(os.path.realpath(p))[0])
+            if tid:
+                break
+        if tid:
+            t = self.full_tracks([tid])[0]
+            if kind == "album" and t.albums:
+                return str(t.albums[0].id)
+            if kind == "artist":
+                for a in t.artists or []:
+                    if self._norm(a.name) == self._norm(name):
+                        return str(a.id)
+        if kind == "album":
+            r = self.client().search(f"{artist} {name}", type_="album")
+            res = r.albums.results if r and r.albums else []
+            for a in res:
+                if self._norm(core.full_title(a)) == self._norm(name) or self._norm(a.title) == self._norm(name):
+                    if not artist or any(self._norm(x.name) == self._norm(artist) for x in (a.artists or [])):
+                        return str(a.id)
+            return None
+        r = self.client().search(name, type_="artist")
+        res = r.artists.results if r and r.artists else []
+        for a in res:
+            if self._norm(a.name) == self._norm(name):
+                return str(a.id)
+        return None
+
     def my_playlists(self):
         likes = self.client().users_playlists(3)
         out = [{"kind": "likes", "id": "likes", "n": "Liked on Yandex", "nt": len(self.liked_ids()),
@@ -415,7 +515,7 @@ class YM:
         return out
 
     # downloads -----------------------------------------------------------
-    def run_downloader(self, url, dest, on_line=None, stop=None, lyrics=True):
+    def run_downloader(self, url, dest, on_line=None, stop=None, lyrics=True, track_id=None):
         """yandex-music-downloader -u url; returns the files it wrote (absolute paths).
 
         A failing lyrics fetch fails the whole track in the downloader (Yandex's lyrics storage
@@ -423,7 +523,10 @@ class YM:
         q = int(self.conf.get("quality", 2))
         args = [DOWNLOADER, "--quality", str(q), "--skip-existing", "--lyrics-format", "lrc" if lyrics else "none",
                 "--tries", "3", "--retry-delay", "2",
-                "--dir", dest, "--token", self.conf.get("token", ""), "-u", url]
+                "--dir", dest, "--token", self.conf.get("token", "")]
+        # a single track by "track:album" keeps the album it was picked from; a bare track link
+        # makes the downloader file it under the track's first album (often a compilation)
+        args += ["--track-id", track_id] if track_id else ["-u", url]
         os.makedirs(dest, exist_ok=True)
         p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              start_new_session=True, env=dict(os.environ, PYTHONUNBUFFERED="1"))
@@ -453,7 +556,8 @@ class YM:
             self.clean_tmp(dest)
             if lyrics:
                 emit({"type": "ym-log", "msg": f"downloader failed ({' '.join(tail)[-200:]}); retrying without lyrics"})
-                return [x for x in wrote if os.path.isfile(x)] + self.run_downloader(url, dest, on_line, stop, lyrics=False)
+                return [x for x in wrote if os.path.isfile(x)] + self.run_downloader(url, dest, on_line, stop, lyrics=False,
+                                                                                     track_id=track_id)
             raise RuntimeError("downloader: " + (" ".join(tail)[-300:] or f"exit {rc}"))
         for path in wrote:
             if self.conf.get("embed_lyrics", True):
@@ -507,7 +611,10 @@ class YM:
         if not t.available:
             raise RuntimeError(f"“{core.full_title(t)}” is not available on Yandex Music")
         dest = self.lib if storage == "library" else TEMP
-        wrote = [p for p in self.run_downloader(self.link(t), dest, stop=stop) if p.lower().endswith(AUDIO)]
+        al = t.albums[0].id if t.albums else None
+        wrote = [p for p in self.run_downloader(self.link(t), dest, stop=stop, track_id=f"{t.id}:{al}" if al else str(t.id))
+                 if p.lower().endswith(AUDIO)]
+        self._dup = None
         path = wrote[0] if wrote else self.find(t)[0]
         if not path:
             if stop is not None and stop():
@@ -667,6 +774,14 @@ class Worker:
             emit({"type": "ym-playlists", "items": self.ym.my_playlists()})
         elif cmd == "status":
             self.status()
+        elif cmd == "resolve":
+            kind = c.get("kind")
+            yid = self.ym.resolve(kind, c.get("name", ""), c.get("artist", ""), c.get("paths", []))
+            out = {"type": "ym-local", "key": c.get("key", ""), "kind": kind, "found": bool(yid)}
+            if yid:
+                out.update(self.ym.open(kind, yid))
+                out["kind"] = kind
+            emit(out)
         elif cmd == "remove":
             self.remove(c)
         elif cmd == "like":
@@ -754,16 +869,69 @@ class Worker:
               "text": failed[0] if failed else ""})
 
     def download_job(self, c):
-        """Save a whole album / artist / playlist link to the library."""
+        """Save a whole album / artist / playlist to the library, track by track through the
+        downloader (each by its link), so songs already in the library under another album
+        are not downloaded twice."""
         job, url, title = c.get("job", 0), c.get("url", ""), c.get("title", "")
         if not url.startswith(SITE + "/"):
             raise ValueError("not a music.yandex.ru link")
-        def line(i, n, f):
-            emit({"type": "ym-progress", "job": job, "mode": "download", "done": i, "total": n, "text": f})
         emit({"type": "ym-progress", "job": job, "mode": "download", "done": 0, "total": 0, "text": title})
-        new = self.ym.run_downloader(url, self.ym.lib, on_line=line, stop=lambda: job in self.cancelled)
-        emit({"type": "ym-done", "job": job, "mode": "download", "ok": True, "n": len(new), "text": title,
-              "paths": new})
+        cl = self.ym.client()
+        tracks = []
+        if m := re.search(r"/album/(\d+)$", url):
+            a = cl.albums_with_tracks(m.group(1))
+            for vol in (a.volumes or []):
+                for t in vol:
+                    if t.albums:
+                        t.albums[0].volumes = a.volumes
+                    tracks.append(t)
+        elif m := re.search(r"/artist/(\d+)$", url):
+            page, seen = 0, set()
+            while True:
+                r = cl.artists_direct_albums(m.group(1), page=page, page_size=50)
+                albums = r.albums if r else []
+                for al in albums:
+                    if al.id in seen or not al.available:
+                        continue
+                    seen.add(al.id)
+                    full = cl.albums_with_tracks(al.id)
+                    for vol in (full.volumes or []):
+                        for t in vol:
+                            if t.albums:
+                                t.albums[0].volumes = full.volumes
+                            tracks.append(t)
+                if not r or not r.pager or (page + 1) * r.pager.per_page >= r.pager.total:
+                    break
+                page += 1
+        elif m := re.search(r"/playlists/([\w.-]+)$", url):
+            p = cl.playlist(m.group(1))
+            tracks = self.ym.full_tracks([ts.id for ts in (p.tracks or p.fetch_tracks())])
+        else:
+            raise ValueError("unsupported link")
+        new, have, failed = [], 0, []
+        stop = lambda: job in self.cancelled
+        for i, t in enumerate(tracks):
+            if stop():
+                break
+            self.ym.tracks[str(t.id)] = t
+            emit({"type": "ym-progress", "job": job, "mode": "download", "done": i, "total": len(tracks),
+                  "text": core.full_title(t)})
+            if self.ym.find(t)[1] == "lib":
+                have += 1
+                continue
+            if not t.available:
+                continue
+            try:
+                p = self.ym.fetch(t.id, "library", stop=stop)
+            except Exception as ex:
+                failed.append(str(ex))
+                continue
+            if p:
+                new.append(p)
+                emit({"type": "ym-ready", "job": job, "mode": "save", "idx": i, "at": 0, "id": str(t.id),
+                      "path": p, "lib": True, "t": core.full_title(t), "c": self.ym.cover(t.cover_uri)})
+        emit({"type": "ym-done", "job": job, "mode": "download", "ok": not failed, "n": len(new), "have": have,
+              "text": failed[0] if failed else title})
 
     def sync_job(self, job):
         def prog(name, i, n, f):
@@ -775,7 +943,7 @@ class Worker:
 
     def handle(self, c):
         cmd = c.get("cmd")
-        if cmd in ("search", "open", "playlists", "like", "status", "remove"):
+        if cmd in ("search", "open", "playlists", "like", "status", "remove", "resolve"):
             self.browse_q.put(c)
         elif cmd in ("fetch", "download", "sync"):
             if cmd == "fetch" and c.get("mode") == "play":

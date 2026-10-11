@@ -177,6 +177,7 @@ ShellRoot {
         property var ymCovers: ({})           // queue uri -> remote cover
         property var ymPaths: ({})            // track id -> local file (downloaded this session)
         property var ymGone: ({})             // local file -> true once removed this session
+        property var ymLocal: ({})            // local album / artist key -> its Yandex counterpart
         readonly property var ymBusy: { for (const k in ymJobs) return ymJobs[k]; return null; }
 
         signal toast(string icon, string text)
@@ -282,9 +283,10 @@ ShellRoot {
                 const j = Object.assign({}, ymJobs); delete j[m.job]; ymJobs = j;
                 if (!Object.keys(j).length) ymPending = ({});
                 if (!m.ok) toast("warn", m.text || "Yandex download failed");
-                else if (m.mode === "save" || m.mode === "download") toast("download", (m.n ? "Saved " + n(m.n, "track") + " to ~/Music" : "Already in your library") + (m.mode === "download" && m.text ? " · " + m.text : ""));
+                else if (m.mode === "save" || m.mode === "download") toast("download", (m.n ? "Saved " + n(m.n, "song") + " to ~/Music" : "Already in your library") + (m.have ? " · " + m.have + " you already had were skipped" : "") + (m.mode === "download" && m.text ? " · " + m.text : ""));
                 else if (m.mode === "sync") toast("sync", m.n ? "Yandex sync: " + n(m.n, "new track") : "Yandex sync: everything is already here");
             }
+            else if (m.type === "ym-local") { const l = Object.assign({}, ymLocal); l[m.key] = m; ymLocal = l; }
             else if (m.type === "ym-liked") { const l = Object.assign({}, ymLiked); l[m.id] = m.on; ymLiked = l; }
             else if (m.type === "ym-error") {
                 if (m.cmd === "search") { ymSearching = false; if (m.rid === ymRid) ymRes = { error: m.text, tracks: [], albums: [], artists: [], playlists: [] }; }
@@ -299,6 +301,12 @@ ShellRoot {
             ymSend({ cmd: "search", q: searchText, rid: ymRid });
         }
         function ymOpen(kind, id) { go("ym", kind + ":" + id); }
+        function ymResolve(kind, name, artist, files, key) {
+            if (!ym.signed || ymLocal[key]) return;
+            const root = ym.lib || "";
+            ymSend({ cmd: "resolve", kind: kind, name: name, artist: artist || "", key: key,
+                     paths: (files || []).slice(0, 6).map(f => f.startsWith("/") ? f : root + "/" + f) });
+        }
         function ymLoad(arg) {
             const i = arg.indexOf(":");
             ymPageRid += 1; ymPage = null;

@@ -213,6 +213,16 @@ Item {
                 }
             }
 
+            Item { width: 1; height: 30 }
+            YmLocalSection {
+                x: 18
+                width: parent.width - 36
+                app: pg.app
+                kind: "artist"
+                name: pg.arg
+                files: pg.all.slice(0, 6).map(i => pg.app.lib.tracks[i].f)
+            }
+
             Item { width: 1; height: 24; visible: pg.appears.length > 0 }
             Column {
                 visible: pg.appears.length > 0
