@@ -28,7 +28,7 @@ Item {
             width: 60; height: 60
             anchors.verticalCenter: parent.verticalCenter
             RectangularShadow { anchors.fill: parent; radius: 8; blur: 16; offset.y: 4; color: Qt.rgba(0, 0, 0, 0.35); visible: !!bar.t }
-            Cover { anchors.fill: parent; app: bar.app; radius: 8; albumKey: bar.t ? bar.t.k : "" }
+            Cover { anchors.fill: parent; app: bar.app; radius: 8; albumKey: bar.t ? bar.t.k : ""; url: bar.t ? "" : bar.app.ymCoverFor(bar.app.status.file) }
             TapHandler { onTapped: if (bar.t) bar.app.goAlbum(bar.t.k) }
             HoverHandler { cursorShape: Qt.PointingHandCursor }
         }

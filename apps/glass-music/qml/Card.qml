@@ -7,6 +7,7 @@ Item {
     id: card
     property var app
     property string coverKey: ""
+    property string coverUrl: ""
     property bool circle: false
     property string title: ""
     property string subtitle: ""
@@ -54,6 +55,7 @@ Item {
             visible: card.tileIcon === ""
             app: card.app
             albumKey: card.coverKey
+            url: card.coverUrl
             circle: card.circle
             radius: 10
         }

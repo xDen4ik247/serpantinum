@@ -71,7 +71,7 @@ ShellRoot {
             onRead: data => console.warn("backend:", data)
         }
         onExited: (code, status) => { if (!app.closing) app.fatal = "The music backend stopped (exit " + code + ")." }
-        onStarted: app.send({ cmd: "hello" })
+        onStarted: { app.send({ cmd: "hello" }); app.ymSend({ cmd: "status" }); }
     }
 
     FileView {
@@ -160,6 +160,24 @@ ShellRoot {
         property int searchRid: 0
         property bool searchFocus: false
 
+        // Yandex Music (glassmusic.yandex worker, behind the backend): search/browse, then every
+        // play / save goes through yandex-music-downloader to a local file that MPD plays.
+        property var ym: ({ signed: false, conf: {} })
+        property var ymRes: null              // search results for searchText
+        property int ymRid: 0
+        property bool ymSearching: false
+        property var ymPage: null             // the open Yandex album / artist / playlist / likes
+        property int ymPageRid: 0
+        property var ymPlaylists: []
+        property var ymJobs: ({})             // job -> latest progress
+        property int ymJob: 0
+        property var ymPending: ({})          // track id -> true while it downloads
+        property var ymHave: ({})             // track id -> "lib" | "tmp" (downloaded this session)
+        property var ymLiked: ({})            // track id -> bool (changed this session)
+        property var ymCovers: ({})           // queue uri -> remote cover
+        property var ymPaths: ({})            // track id -> local file (downloaded this session)
+        readonly property var ymBusy: { for (const k in ymJobs) return ymJobs[k]; return null; }
+
         signal toast(string icon, string text)
         signal focusSearch()
 
@@ -198,6 +216,7 @@ ShellRoot {
             else if (m.type === "error") console.warn("backend error:", m.error, m.trace || "");
             else if (m.type === "log") console.log("backend:", m.msg);
             else if (m.type === "mpd" && !m.ok) toast("warn", "MPD unavailable: " + m.error);
+            else if (m.type.startsWith("ym-")) ymReceive(m);
         }
 
         function setLibrary(m) {
@@ -231,6 +250,107 @@ ShellRoot {
             let h = 0;
             for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) % 360;
             return Qt.hsla(h / 360, 0.45, 0.5, 1);
+        }
+
+        // ---- Yandex Music
+        function ymSend(c) { send({ cmd: "ym", ym: c }); }
+        function ymReceive(m) {
+            if (m.type === "ym-status") {
+                const was = ym.signed;
+                ym = m;
+                if (m.signed && !was) { ymSend({ cmd: "playlists" }); if (searchText.trim() !== "") ymSearchNow(); }
+            }
+            else if (m.type === "ym-search") { if (m.rid === ymRid) { ymRes = m; ymSearching = false; } }
+            else if (m.type === "ym-page") { if (m.rid === ymPageRid) ymPage = m; }
+            else if (m.type === "ym-playlists") ymPlaylists = m.items;
+            else if (m.type === "ym-progress") { const j = Object.assign({}, ymJobs); j[m.job] = m; ymJobs = j; }
+            else if (m.type === "ym-ready") {
+                const p = Object.assign({}, ymPending); delete p[m.id]; ymPending = p;
+                const h = Object.assign({}, ymHave); h[m.id] = m.lib ? "lib" : "tmp"; ymHave = h;
+                const pp = Object.assign({}, ymPaths); pp[m.id] = m.path; ymPaths = pp;
+                if (m.c) {
+                    const c = Object.assign({}, ymCovers);
+                    c[m.path] = c["file://" + m.path] = m.c;      // MPD reports added file:// songs by plain path
+                    if (ym.lib && m.path.startsWith(ym.lib + "/")) c[m.path.slice(ym.lib.length + 1)] = m.c;
+                    ymCovers = c;
+                }
+            }
+            else if (m.type === "ym-done") {
+                const j = Object.assign({}, ymJobs); delete j[m.job]; ymJobs = j;
+                if (!Object.keys(j).length) ymPending = ({});
+                if (!m.ok) toast("warn", m.text || "Yandex download failed");
+                else if (m.mode === "save" || m.mode === "download") toast("download", (m.n ? "Saved " + n(m.n, "track") + " to ~/Music" : "Already in your library") + (m.mode === "download" && m.text ? " · " + m.text : ""));
+                else if (m.mode === "sync") toast("sync", m.n ? "Yandex sync: " + n(m.n, "new track") : "Yandex sync: everything is already here");
+            }
+            else if (m.type === "ym-liked") { const l = Object.assign({}, ymLiked); l[m.id] = m.on; ymLiked = l; }
+            else if (m.type === "ym-error") {
+                if (m.cmd === "search") { ymSearching = false; if (m.rid === ymRid) ymRes = { error: m.text, tracks: [], albums: [], artists: [], playlists: [] }; }
+                else if (m.cmd === "open") { if (m.rid === ymPageRid) ymPage = { error: m.text, tracks: [] }; }
+                else toast("warn", "Yandex Music: " + m.text);
+            }
+            else if (m.type === "ym-log") console.log("yandex:", m.msg);
+        }
+        function ymSearchNow() {
+            if (!ym.signed || searchText.trim() === "") return;
+            ymRid += 1; ymSearching = true;
+            ymSend({ cmd: "search", q: searchText, rid: ymRid });
+        }
+        function ymOpen(kind, id) { go("ym", kind + ":" + id); }
+        function ymLoad(arg) {
+            const i = arg.indexOf(":");
+            ymPageRid += 1; ymPage = null;
+            ymSend({ cmd: "open", kind: arg.slice(0, i), id: arg.slice(i + 1), rid: ymPageRid });
+        }
+        function ymState(t) { return ymPending[t.id] ? "busy" : (ymHave[t.id] || t.have || ""); }
+        function ymIsLiked(t) { return ymLiked[t.id] !== undefined ? ymLiked[t.id] : !!t.liked; }
+        function ymFetch(tracks, at, mode) {
+            const ok = tracks.filter(t => t.ok !== false);
+            if (!ok.length) { toast("warn", "Not available on Yandex Music"); return; }
+            at = Math.max(0, ok.indexOf(tracks[at || 0]));
+            ymJob += 1;
+            const p = Object.assign({}, ymPending);
+            for (const t of ok) if (!(ymHave[t.id] || t.have) || mode === "save") p[t.id] = true;
+            ymPending = p;
+            ymSend({ cmd: "fetch", mode: mode, job: ymJob, ids: ok.map(t => t.id), at: at });
+            if (mode !== "play") toast(mode === "save" ? "download" : "queue",
+                (mode === "save" ? "Saving " : mode === "next" ? "Playing next · " : "Adding to queue · ") + (ok.length > 1 ? n(ok.length, "track") : ok[0].t));
+        }
+        function ymPlay(tracks, at) { ymFetch(tracks, at, "play"); }
+        function ymDownload(url, title) { ymJob += 1; ymSend({ cmd: "download", job: ymJob, url: url, title: title }); toast("download", "Saving " + title + " to ~/Music…"); }
+        function ymSync() { ymJob += 1; ymSend({ cmd: "sync", job: ymJob }); }
+        function ymCancelAll() { for (const k in ymJobs) ymSend({ cmd: "cancel", job: parseInt(k) }); ymJobs = ({}); ymPending = ({}); }
+        function ymLike(t) { ymSend({ cmd: "like", id: t.id, on: !ymIsLiked(t) }); }
+        function ymSet(k, v) { const s = {}; s[k] = v; ymSend({ cmd: "settings", set: s }); }
+        function ymUri(t) {
+            const p = t ? (ymPaths[t.id] || t.path) : "";
+            if (!p) return "";
+            return ym.lib && p.startsWith(ym.lib + "/") ? p.slice(ym.lib.length + 1) : p;
+        }
+        function ymCoverFor(uri) { return uri && ymCovers[uri] ? ymCovers[uri] : ""; }
+        function ymBusyText() {
+            const b = ymBusy;
+            if (!b) return "";
+            const what = b.mode === "sync" ? "Syncing" : b.mode === "play" ? "Getting" : "Downloading";
+            return what + (b.total ? " " + (b.done + (b.mode === "play" || b.mode === "save" || b.mode === "next" || b.mode === "add" ? 1 : 0)) + "/" + b.total : "") + (b.text ? " · " + b.text : "…");
+        }
+        function ymTrackMenu(t, ctx, at, item, mx, my) {
+            const items = [
+                { icon: "play", text: "Play", act: () => ymPlay(ctx && ctx.length ? ctx : [t], ctx && ctx.length ? at : 0) },
+                { icon: "next-up", text: "Play next", act: () => ymFetch([t], 0, "next") },
+                { icon: "playlist-plus", text: "Add to queue", act: () => ymFetch([t], 0, "add") },
+                { icon: ymState(t) === "lib" ? "check" : "download", text: ymState(t) === "lib" ? "In your library" : "Save to library", act: () => { if (ymState(t) !== "lib") ymFetch([t], 0, "save"); } },
+                { sep: true },
+                { icon: ymIsLiked(t) ? "heart" : "heart-outline", text: ymIsLiked(t) ? "Remove from Yandex likes" : "Like on Yandex", act: () => ymLike(t) }
+            ];
+            if (t.ar && t.ar.length) items.push({ sep: true }, { icon: "artist", text: "Go to artist", act: () => ymOpen("artist", t.ar[0].id) });
+            if (t.alId) items.push({ icon: "album", text: "Go to album", act: () => ymOpen("album", t.alId) });
+            menu.open(items, item, mx, my);
+        }
+        function ymItemMenu(o, item, mx, my) {
+            menu.open([
+                { icon: "play", text: "Open", act: () => ymOpen(o.kind, o.id) },
+                { icon: "download", text: o.kind === "artist" ? "Save every album to library" : "Save to library", act: () => ymDownload(o.url, o.n) }
+            ], item, mx, my);
         }
 
         // ---- helpers
@@ -372,8 +492,9 @@ ShellRoot {
         function search(q) {
             searchText = q;
             searchRid += 1;
-            if (q.trim() === "") { searchRes = null; return; }
+            if (q.trim() === "") { searchRes = null; ymRes = null; ymTimer.stop(); return; }
             send({ cmd: "search", q: q, rid: searchRid });
+            if (ym.signed) ymTimer.restart();
         }
 
         // ---- playback commands
@@ -454,7 +575,10 @@ ShellRoot {
             menu.open([
                 { icon: "console", text: "Open terminal player", act: () => openTerminalPlayer() },
                 { icon: "playlist-plus", text: "Save queue as playlist", sub: "savequeue" },
-                { icon: "refresh", text: "Rescan library", act: () => { send({ cmd: "rescan" }); toast("refresh", "Rescanning ~/Music…"); } }
+                { icon: "refresh", text: "Rescan library", act: () => { send({ cmd: "rescan" }); toast("refresh", "Rescanning ~/Music…"); } },
+                { sep: true },
+                { icon: "sync", text: "Sync Yandex likes now", act: () => { if (ym.signed) ymSync(); else go("yandex"); } },
+                { icon: "cog", text: "Yandex Music & downloads", act: () => go("yandex") }
             ], item, mx, my);
         }
 
@@ -464,6 +588,9 @@ ShellRoot {
             Qt.callLater(Qt.quit);
         }
     }
+
+    // Yandex search waits for a pause in typing (each one is a network round trip)
+    Timer { id: ymTimer; interval: 380; onTriggered: app.ymSearchNow() }
 
     // position: extrapolated locally between MPD events; ticks only while playing
     Timer {
@@ -609,6 +736,11 @@ ShellRoot {
         // open the album of the playing track (bar island click-through: glass-music --current)
         function openCurrent(): void { if (app.ready) app.openCurrent(); else app.openCurrentPending = true }
         function vibe(style: string): void { app.vibePlay(style) }
+        function ymSearch(q: string): void { app.go("search"); app.search(q); app.ymSearchNow() }
+        function ymOpen(kind: string, id: string): void { app.ymOpen(kind, id) }
+        function ymPlayResult(i: int): void { if (app.ymRes && app.ymRes.tracks.length > i) app.ymPlay([app.ymRes.tracks[i]], 0) }
+        function ymPlayPage(i: int): void { if (app.ymPage && app.ymPage.tracks.length > i) app.ymPlay(app.ymPage.tracks, i) }
+        function ymState(): string { return JSON.stringify({ signed: app.ym.signed, res: app.ymRes ? app.ymRes.tracks.length : -1, err: app.ymRes && app.ymRes.error ? app.ymRes.error : "", q: app.searchText, page: app.ymPage ? (app.ymPage.n || app.ymPage.error) : "", pageTracks: app.ymPage ? app.ymPage.tracks.length : 0, busy: app.ymBusyText(), storage: app.ym.conf ? app.ym.conf.storage : "" }) }
         function pickStyle(style: string): void { app.vibeStyle = style }
         function quit(): void { app.close() }
         // renders only this window's own content to a PNG (no screen capture, no clipboard)

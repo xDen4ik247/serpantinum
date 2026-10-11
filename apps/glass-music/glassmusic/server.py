@@ -18,7 +18,8 @@ import threading
 import time
 import traceback
 
-from . import library, search
+from . import library, lyrics, search
+from .lyrics import parse_lrc  # noqa: F401  (re-exported for tests)
 from .mpdclient import MPD, MPDError, default_address
 from .thumbs import Thumbs
 
@@ -27,6 +28,8 @@ CACHE_DIR = os.environ.get("GLASS_MUSIC_CACHE",
                            os.path.join(os.environ.get("XDG_CACHE_HOME", HOME + "/.cache"), "glass-music"))
 HISTORY = os.environ.get("GLASS_MUSIC_HISTORY", HOME + "/.local/share/music-smart/history.sqlite")
 SMART_STATE = os.environ.get("GLASS_MUSIC_SMART_STATE", HOME + "/.local/state/music-smart/state.json")
+# Yandex Music worker (glassmusic.yandex) runs in its own venv with yandex-music-downloader
+YM_PYTHON = os.environ.get("GLASS_MUSIC_YM_PYTHON", HOME + "/.local/share/glass-music/yandex-venv/bin/python")
 FAV = "favourite"     # MPD sticker shared with music-smart
 
 _out_lock = threading.Lock()
@@ -37,32 +40,6 @@ def emit(obj):
     with _out_lock:
         sys.stdout.write(data + "\n")
         sys.stdout.flush()
-
-
-def parse_lrc(text):
-    tag = re.compile(r"\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]")
-    offset = 0.0
-    m = re.search(r"\[offset:\s*([+-]?\d+)\]", text, re.I)
-    if m:
-        offset = int(m.group(1)) / 1000.0
-    out = []
-    for line in text.splitlines():
-        times = [int(a) * 60 + float(b.replace(":", ".")) for a, b in tag.findall(line)]
-        if not times:
-            continue
-        words = re.sub(r"<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>", "", tag.sub("", line)).strip()
-        for t in times:
-            out.append({"t": round(max(0.0, t - offset), 3), "x": words})
-    out.sort(key=lambda r: r["t"])
-    tidy = []
-    for r in out:
-        if not r["x"]:
-            if not tidy and r["t"] < 0.5:
-                continue
-            if tidy and not tidy[-1]["x"]:
-                continue
-        tidy.append(r)
-    return tidy
 
 
 class Server:
@@ -78,6 +55,10 @@ class Server:
         self.thumbs = Thumbs(CACHE_DIR, emit)
         self.queue_files = []
         self.backlog = []
+        self.ym = None             # Yandex worker process (started on first use)
+        self.ym_play = None        # {"job", "before"} of the Yandex play job that owns the queue
+        self.ym_next = {}          # job -> tracks already inserted after the current one
+        self.ym_index_q = queue.Queue()
 
     # ── MPD plumbing ─────────────────────────────────────────────────────────
     def conn(self):
@@ -270,6 +251,7 @@ class Server:
         files = [f for f in files if f]
         if not files:
             return
+        self.ym_cancel_play()
         # Like Spotify: the shuffle toggle (MPD random) is global; the Shuffle button turns it
         # on and starts anywhere. If the queue already is this context, just jump.
         index = random.randrange(len(files)) if shuffle else max(0, min(index, len(files) - 1))
@@ -307,6 +289,114 @@ class Server:
         except OSError as ex:
             emit({"type": "toast", "icon": "warn", "text": f"music-smart: {ex}"})
 
+
+    # ── Yandex Music (glassmusic.yandex worker) ──────────────────────────────
+    def ym_start(self):
+        if self.ym is not None and self.ym.poll() is None:
+            return True
+        if not os.path.exists(YM_PYTHON):
+            emit({"type": "ym-status", "available": False, "signed": False,
+                  "error": "Yandex Music support is not installed (run install.sh)"})
+            return False
+        env = dict(os.environ, PYTHONPATH=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   PYTHONUNBUFFERED="1", GLASS_MUSIC_DIR=self.music_dir or "", GLASS_MUSIC_CACHE=CACHE_DIR)
+        self.ym = subprocess.Popen([YM_PYTHON, "-m", "glassmusic.yandex", "serve"], env=env, text=True,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        threading.Thread(target=self.ym_reader, args=(self.ym,), daemon=True).start()
+        if not getattr(self, "_ym_indexer", False):
+            self._ym_indexer = True
+            threading.Thread(target=self.ym_indexer, daemon=True).start()
+        return True
+
+    def ym_send(self, c):
+        if not self.ym_start():
+            return
+        try:
+            self.ym.stdin.write(json.dumps(c, ensure_ascii=False) + "\n")
+            self.ym.stdin.flush()
+        except (OSError, ValueError):
+            self.ym = None
+            emit({"type": "toast", "icon": "warn", "text": "The Yandex Music worker stopped; try again"})
+
+    def ym_reader(self, proc):
+        for line in proc.stdout:
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            t = m.get("type")
+            if t == "ym-ready":
+                self.ym_index_q.put(m)           # new library files are indexed by MPD first
+            elif t == "ym-done" and m.get("paths"):
+                self.ym_index_q.put(dict(m, type="ym-index"))
+            emit(m)
+
+    def ym_indexer(self):
+        """Library downloads must be in MPD's database before they can be queued: run `update`
+        on the new file and wait for that update job (idle "update"), then hand it to the main loop."""
+        m = None
+        while True:
+            msg = self.ym_index_q.get()
+            paths = [msg["path"]] if msg["type"] == "ym-ready" else msg.get("paths", [])
+            rels = [os.path.relpath(p, self.music_dir) for p in paths
+                    if self.music_dir and p.startswith(self.music_dir.rstrip("/") + "/")]
+            if rels:
+                try:
+                    if m is None or m.stale():
+                        m = MPD(self.address)
+                    job = 0
+                    # update the album folder: MPD skips a file path whose folder it doesn't know yet
+                    for d in sorted({os.path.dirname(r) for r in rels}):
+                        job = max(job, int(m.dict("update", d).get("updating_db", 0) or 0))
+                    # a short poll, only while this update job runs (an `idle update` issued after
+                    # the job already finished would wait for the next one)
+                    deadline = time.time() + 60
+                    while time.time() < deadline:
+                        cur = int(m.dict("status").get("updating_db", 0) or 0)
+                        if not cur or cur > job:
+                            break
+                        time.sleep(0.1)
+                except (MPDError, ConnectionError, OSError) as ex:
+                    m = None
+                    emit({"type": "log", "msg": f"mpd update: {ex}"})
+            if msg["type"] == "ym-ready":
+                msg["uri"] = rels[0] if rels else "file://" + msg["path"]
+                self.q.put(("ym", msg))
+
+    def ym_cancel_play(self):
+        if self.ym_play:
+            self.ym_send({"cmd": "cancel", "job": self.ym_play["job"]})
+            self.ym_play = None
+
+    def ym_ready(self, m):
+        """A downloaded track for a play / next / add job: put it where it belongs in the queue."""
+        uri, mode, job = m["uri"], m.get("mode"), m.get("job")
+        if os.environ.get("GLASS_MUSIC_DEBUG"):
+            emit({"type": "log", "msg": f"ym_ready job={job} mode={mode} idx={m.get('idx')} at={m.get('at')} uri={uri} own={self.ym_play}"})
+        if mode == "play":
+            if not self.ym_play or self.ym_play["job"] != job:
+                return                   # superseded by another play
+            if m.get("idx") == m.get("at"):
+                r = self.call(lambda c: c.batch([("clear",), ("add", uri), ("play", "0")]))
+                self.queue_files = [uri]
+                if len(r) < 3:
+                    emit({"type": "toast", "icon": "warn", "text": "MPD couldn’t play the downloaded file"})
+            else:
+                if m["idx"] < m["at"]:   # tracks before the clicked one go in front of it, in order
+                    pos = self.ym_play["before"]
+                    self.call(lambda c: c.cmd("addid", uri, str(pos)))
+                    self.ym_play["before"] += 1
+                else:
+                    self.call(lambda c: c.cmd("addid", uri))
+                self.queue_files = []
+        elif mode == "next":
+            k = self.ym_next.get(job, 0)
+            st = self.call(lambda c: c.dict("status"), idempotent=True)
+            self.call(lambda c: c.cmd("addid", uri, "+%d" % k) if "song" in st else c.cmd("addid", uri))
+            self.ym_next[job] = k + 1
+        elif mode == "add":
+            self.call(lambda c: c.cmd("addid", uri))
+
     # ── commands ─────────────────────────────────────────────────────────────
     def handle(self, c):
         cmd = c.get("cmd")
@@ -327,14 +417,7 @@ class Server:
                                  if k in self.album_of and self.album_of[k]["c"]])
         elif cmd == "lyrics":
             f = c.get("file", "")
-            lines = []
-            try:
-                with open(os.path.join(self.music_dir, os.path.splitext(f)[0] + ".lrc"),
-                          encoding="utf-8", errors="replace") as fh:
-                    lines = parse_lrc(fh.read())
-            except OSError:
-                pass
-            emit({"type": "lyrics", "file": f, "lines": lines})
+            emit(dict(lyrics.load(self.music_dir, f), type="lyrics", file=f))
         elif cmd == "play":
             self.play_files(c.get("files", []), int(c.get("index", 0)), bool(c.get("shuffle")))
         elif cmd == "add":
@@ -427,6 +510,12 @@ class Server:
             self.call(lambda m: m.cmd("update"))
         elif cmd == "home":
             self.send_home()
+        elif cmd == "ym":
+            inner = c.get("ym") or {}
+            if inner.get("cmd") == "fetch" and inner.get("mode") == "play":
+                self.ym_cancel_play()
+                self.ym_play = {"job": inner.get("job"), "before": 0}
+            self.ym_send(inner)
         elif cmd == "spawn":
             what = c.get("what")
             if what == "terminal":
@@ -458,6 +547,11 @@ class Server:
         while True:
             kind, data = self.backlog.pop(0) if self.backlog else self.q.get()
             if kind == "quit" or (kind == "cmd" and data.get("cmd") == "quit"):
+                if self.ym is not None:
+                    try:
+                        self.ym.stdin.close()
+                    except OSError:
+                        pass
                 break
             try:
                 if kind == "cmd":
@@ -482,6 +576,8 @@ class Server:
                     self.on_event(list(changed))
                 elif kind == "home" and self.lib is not None:
                     self.send_home()
+                elif kind == "ym":
+                    self.ym_ready(data)
             except (MPDError, ConnectionError, OSError) as ex:
                 emit({"type": "error", "error": str(ex)})
             except Exception as ex:

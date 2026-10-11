@@ -17,6 +17,11 @@ Item {
     readonly property var tracks: res ? res.tracks : []
     readonly property var topRes: res ? res.top : null
     readonly property bool wide: width > 860
+    property int ymLimit: 6
+    Connections { target: pg.app; function onSearchTextChanged() { pg.ymLimit = 6; } }
+    readonly property var ymr: app.ymRes
+    readonly property var ymTracks: ymr && ymr.tracks ? ymr.tracks : []
+    readonly property bool ymAny: !!ymr && (ymTracks.length + ymr.albums.length + ymr.artists.length + ymr.playlists.length) > 0
 
     Flickable {
         id: fl
@@ -123,7 +128,7 @@ Item {
 
             // ---- nothing found
             Column {
-                visible: pg.hasQuery && pg.res !== null && !pg.topRes
+                visible: pg.hasQuery && pg.res !== null && !pg.topRes && !pg.ymAny && !pg.app.ymSearching
                 width: parent.width
                 topPadding: 60
                 spacing: 8
@@ -164,12 +169,127 @@ Item {
                 }
             }
 
+            // ---- Yandex Music: everything else (play = download first, then MPD plays it)
+            Column {
+                visible: pg.hasQuery
+                width: parent.width
+                spacing: 6
+                Row {
+                    x: 10
+                    spacing: 10
+                    Icon { anchors.verticalCenter: parent.verticalCenter; app: pg.app; name: "cloud"; size: 24; color: pg.app.th.accent }
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        Text { text: "Yandex Music"; color: pg.app.th.text; font.family: pg.app.th.font; font.pixelSize: 24; font.weight: Font.Bold }
+                        Text {
+                            text: !pg.app.ym.signed ? "Sign in to search everything on Yandex Music"
+                                : pg.app.ymSearching && !pg.ymAny ? "Searching…"
+                                : pg.ymr && pg.ymr.error ? pg.ymr.error
+                                : "Playing a song downloads it " + (pg.app.ym.conf && pg.app.ym.conf.storage === "temp" ? "to the temporary cache" : "into ~/Music") + " first"
+                            color: pg.ymr && pg.ymr.error ? pg.app.th.bad : pg.app.th.sub1
+                            font.family: pg.app.th.font
+                            font.pixelSize: 13
+                        }
+                    }
+                }
+                Chip {
+                    x: 10
+                    visible: !pg.app.ym.signed
+                    app: pg.app
+                    text: "Sign in to Yandex Music"
+                    onClicked: pg.app.go("yandex")
+                }
+                Repeater {
+                    model: Math.min(pg.ymLimit, pg.ymTracks.length)
+                    YmTrackRow {
+                        required property int index
+                        app: pg.app
+                        width: parent.width
+                        t: pg.ymTracks[index]
+                        ctx: [pg.ymTracks[index]]
+                        at: 0
+                        num: String(index + 1)
+                    }
+                }
+                LinkText {
+                    x: 10
+                    visible: pg.ymTracks.length > pg.ymLimit
+                    app: pg.app
+                    text: "Show all " + pg.ymTracks.length + " songs"
+                    color: hovered ? pg.app.th.text : pg.app.th.sub1
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
+                    onClicked: pg.ymLimit = 20
+                }
+            }
+            Shelf {
+                id: ymArtists
+                app: pg.app
+                width: parent.width
+                visible: pg.hasQuery && count > 0
+                title: "Artists on Yandex"
+                count: pg.ymr && pg.ymr.artists ? pg.ymr.artists.length : 0
+                delegate: Card {
+                    required property int index
+                    readonly property var a: pg.ymr.artists[index]
+                    app: pg.app
+                    width: ymArtists.cardW
+                    circle: true
+                    coverUrl: a.c
+                    title: a.n
+                    subtitle: "Artist"
+                    onClicked: pg.app.ymOpen("artist", a.id)
+                    onPlay: pg.app.ymOpen("artist", a.id)
+                    onRightClicked: (x, y) => pg.app.ymItemMenu(a, pg.app.rootItem, x, y)
+                }
+            }
+            Shelf {
+                id: ymAlbums
+                app: pg.app
+                width: parent.width
+                visible: pg.hasQuery && count > 0
+                title: "Albums on Yandex"
+                count: pg.ymr && pg.ymr.albums ? pg.ymr.albums.length : 0
+                delegate: Card {
+                    required property int index
+                    readonly property var a: pg.ymr.albums[index]
+                    app: pg.app
+                    width: ymAlbums.cardW
+                    coverUrl: a.c
+                    title: a.n
+                    subtitle: (a.y ? a.y + " • " : "") + a.s
+                    onClicked: pg.app.ymOpen("album", a.id)
+                    onPlay: pg.app.ymOpen("album", a.id)
+                    onRightClicked: (x, y) => pg.app.ymItemMenu(a, pg.app.rootItem, x, y)
+                }
+            }
+            Shelf {
+                id: ymLists
+                app: pg.app
+                width: parent.width
+                visible: pg.hasQuery && count > 0
+                title: "Playlists on Yandex"
+                count: pg.ymr && pg.ymr.playlists ? pg.ymr.playlists.length : 0
+                delegate: Card {
+                    required property int index
+                    readonly property var a: pg.ymr.playlists[index]
+                    app: pg.app
+                    width: ymLists.cardW
+                    coverUrl: a.c
+                    title: a.n
+                    subtitle: pg.app.n(a.nt, "song") + (a.s ? " • " + a.s : "")
+                    onClicked: pg.app.ymOpen("playlist", a.id)
+                    onPlay: pg.app.ymOpen("playlist", a.id)
+                    onRightClicked: (x, y) => pg.app.ymItemMenu(a, pg.app.rootItem, x, y)
+                }
+            }
+
             Shelf {
                 id: artistsShelf
                 app: pg.app
                 width: parent.width
                 visible: pg.hasQuery && count > 0
-                title: "Artists"
+                title: "Artists in your library"
                 count: pg.res ? pg.res.artists.length : 0
                 delegate: Card {
                     required property int index
@@ -189,7 +309,7 @@ Item {
                 app: pg.app
                 width: parent.width
                 visible: pg.hasQuery && count > 0
-                title: "Albums"
+                title: "Albums in your library"
                 count: pg.res ? pg.res.albums.length : 0
                 rows: 2
                 delegate: Card {

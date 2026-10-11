@@ -1,11 +1,12 @@
 import QtQuick
 
-// Album art for an album key: the lazily cached 256 px thumbnail (or the original cover
+// Album art for an album key (or a remote `url`): the lazily cached 256 px thumbnail (or the original cover
 // when `hires`), rounded/cropped in one shader pass, with a tinted placeholder meanwhile.
 Item {
     id: c
     property var app
     property string albumKey: ""
+    property string url: ""               // a remote cover (Yandex Music results) instead of an album key
     property bool hires: false
     property real radius: 8
     property bool circle: false
@@ -13,7 +14,7 @@ Item {
     property bool shadow: false
     readonly property var album: albumKey !== "" ? app.albumByKey[albumKey] : undefined
     readonly property var thumb: albumKey !== "" ? app.thumbs[albumKey] : undefined
-    readonly property string src: !album || !album.c ? "" : ((hires || !app.thumbsEnabled) ? "file://" + album.c : (thumb ? "file://" + thumb.p : ""))
+    readonly property string src: url !== "" ? url : !album || !album.c ? "" : ((hires || !app.thumbsEnabled) ? "file://" + album.c : (thumb ? "file://" + thumb.p : ""))
     readonly property bool ready: img.status === Image.Ready
     readonly property real r: circle ? Math.min(width, height) / 2 : radius
 
@@ -37,9 +38,18 @@ Item {
             color: c.app.th.alpha(c.app.th.text, 0.35)
         }
     }
+    // remote covers: the image CDN sometimes refuses one of many parallel HTTP/2 streams; retry
+    property int retries: 0
+    onSrcChanged: retries = 0
+    Timer {
+        id: retry
+        interval: 700 + c.retries * 900
+        onTriggered: { c.retries += 1; img.source = ""; img.source = Qt.binding(() => c.src); }
+    }
     Image {
         id: img
         visible: false
+        onStatusChanged: if (status === Image.Error && c.url !== "" && c.retries < 3) retry.restart()
         source: c.src
         asynchronous: true
         cache: true

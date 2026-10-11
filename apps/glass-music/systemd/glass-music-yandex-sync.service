@@ -1,0 +1,11 @@
+[Unit]
+Description=Glass Music: download new Yandex Music likes (and chosen playlists) into ~/Music
+After=network-online.target mpd.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+Environment=PYTHONPATH=%h/.local/share/glass-music/app
+ExecStart=%h/.local/share/glass-music/yandex-venv/bin/python -m glassmusic.yandex sync --if-auto

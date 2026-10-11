@@ -38,6 +38,7 @@ Item {
         width: 42; height: 42; radius: 6
         app: q.app
         albumKey: q.t ? q.t.k : ""
+        url: q.t || !q.entry ? "" : q.app.ymCoverFor(q.entry.f)
         dim: hover.hovered ? 0.45 : 0
         Icon {
             anchors.centerIn: parent

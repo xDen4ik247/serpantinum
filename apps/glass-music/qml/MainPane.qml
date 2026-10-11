@@ -55,6 +55,8 @@ Item {
     Component { id: albumsC; AlbumsPage {} }
     Component { id: listC; TrackListPage {} }
     Component { id: artistC; ArtistPage {} }
+    Component { id: ymC; YmPage {} }
+    Component { id: yandexC; YandexPage {} }
 
     function show() {
         const p = app.nav.page;
@@ -62,7 +64,7 @@ Item {
         if (k === pageKey || !app.ready) return;
         pageKey = k;
         const comp = p === "home" ? homeC : p === "search" ? searchC : p === "artists" ? artistsC
-            : p === "albums" ? albumsC : p === "artist" ? artistC : listC;
+            : p === "albums" ? albumsC : p === "artist" ? artistC : p === "ym" ? ymC : p === "yandex" ? yandexC : listC;
         const old = page;
         const item = comp.createObject(holder, { app: pane.app, arg: pane.app.nav.arg || "", topPad: pane.headerH });
         if (!item) { console.warn("page failed:", p, comp.errorString()); return; }
@@ -151,7 +153,45 @@ Item {
             width: Math.min(420, header.width - navBtns.width - 110)
         }
 
+        Rectangle {
+            id: dlPill
+            visible: !!pane.app.ymBusy
+            anchors { right: moreBtn.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
+            height: 34
+            radius: 17
+            width: Math.min(300, dlRow.implicitWidth + 24)
+            color: pane.app.th.alpha(pane.app.th.base, dlHover.hovered ? 0.65 : 0.45)
+            Row {
+                id: dlRow
+                x: 12
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 8
+                Icon {
+                    app: pane.app; name: "download"; size: 18; color: pane.app.th.accent
+                    anchors.verticalCenter: parent.verticalCenter
+                    SequentialAnimation on opacity {
+                        running: dlPill.visible
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.4; duration: 700; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+                    }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, 250)
+                    text: pane.app.ymBusyText()
+                    elide: Text.ElideRight
+                    color: pane.app.th.text
+                    font.family: pane.app.th.font
+                    font.pixelSize: 13
+                }
+            }
+            HoverHandler { id: dlHover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { onTapped: pane.app.go("yandex") }
+        }
+
         IconButton {
+            id: moreBtn
             anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
             app: pane.app; icon: "dots"; size: 34; tip: "More"
             Rectangle { anchors.fill: parent; radius: width / 2; color: pane.app.th.alpha(pane.app.th.base, 0.45); z: -1 }

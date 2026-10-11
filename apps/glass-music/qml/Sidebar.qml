@@ -112,6 +112,23 @@ Item {
                     onClicked: { side.app.search(""); side.app.go("search"); }
                 }
 
+                Item { width: 1; height: 10 }
+                SectionLabel { app: side.app; text: "Yandex Music"; visible: !side.collapsed }
+                SideItem {
+                    app: side.app; collapsed: side.collapsed; icon: "heart"; tint: Qt.hsla(0.0, 0.62, 0.55, 1)
+                    title: "Liked on Yandex"
+                    subtitle: side.app.ym.signed ? "Search Yandex from Search · Ctrl+F" : "Sign in to search all of Yandex Music"
+                    active: side.app.nav.page === "ym" && side.app.nav.arg === "likes:likes"
+                    onClicked: { if (side.app.ym.signed) side.app.ymOpen("likes", "likes"); else side.app.go("yandex"); }
+                }
+                SideItem {
+                    app: side.app; collapsed: side.collapsed; icon: side.app.ymBusy ? "download" : "cog"; tint: side.app.th.surface2
+                    title: "Downloads & sync"
+                    subtitle: side.app.ymBusy ? side.app.ymBusyText() : (side.app.ym.conf && side.app.ym.conf.storage === "temp" ? "Temporary storage · " : "Saved to ~/Music · ") + (side.app.ym.signed ? (side.app.ym.name || "signed in") : "not signed in")
+                    active: side.app.nav.page === "yandex"
+                    onClicked: side.app.go("yandex")
+                }
+
                 Item { width: 1; height: 10; visible: side.app.playlists.length > 0 }
                 SectionLabel { app: side.app; text: "Playlists"; visible: !side.collapsed && side.app.playlists.length > 0 }
                 Repeater {

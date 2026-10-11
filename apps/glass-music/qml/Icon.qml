@@ -24,7 +24,9 @@ Text {
         "electronic": 0xf147d, "pop": 0xf1056, "chill": 0xf0594, "next-up": 0xf0661, "waveform": 0xf147d,
         "clear": 0xf0413, "skip": 0xf04ad, "cancel": 0xf073a,
         "star": 0xf04ce, "star-outline": 0xf04d2, "vibe": 0xf0674, "compass": 0xf018b, "reggae": 0xf1055,
-        "tag": 0xf04f9, "dice": 0xf076e, "info": 0xf02fd
+        "tag": 0xf04f9, "dice": 0xf076e, "info": 0xf02fd,
+        "download": 0xf01da, "cloud": 0xf015f, "cloud-check": 0xf0160, "check": 0xf012c, "sync": 0xf04e6,
+        "folder": 0xf024b, "timer-sand": 0xf051f, "save": 0xf0193, "logout": 0xf0343, "login": 0xf0342, "cog": 0xf0493
     })
     text: glyphs[name] !== undefined ? String.fromCodePoint(glyphs[name]) : ""
     font.family: app ? app.th.icons : "Symbols Nerd Font Mono"

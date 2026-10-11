@@ -1,0 +1,10 @@
+[Unit]
+Description=Glass Music: daily Yandex Music likes sync
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
