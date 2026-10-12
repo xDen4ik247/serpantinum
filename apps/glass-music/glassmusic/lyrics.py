@@ -2,9 +2,12 @@
 (MP4 ©lyr, ID3 USLT, FLAC Vorbis LYRICS), else a plain .txt next to it.
 
 load() returns {"lines": [{"t": seconds, "x": text, "w": [[t, char offset], ...]?}],
-"synced": bool, "source": "lrc" | "embedded" | "txt" | ""}. Unsynced lyrics have t = -1
-and an empty x marks a stanza break. Dependency-free; reads at most a few MB per file."""
+"synced": bool, "source": "lrc" | "embedded" | "txt" | "", "origin": where a fetched text came
+from ("LRCLIB", "Yandex Music"; "" for the user's own files), "hash": text_hash(lines)}.
+Unsynced lyrics have t = -1 and an empty x marks a stanza break. Texts whose hash is in `skip`
+(marked wrong by the user) are passed over. Dependency-free; reads at most a few MB per file."""
 
+import hashlib
 import os
 import re
 import struct
@@ -13,6 +16,20 @@ _TAG = re.compile(r"\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]")
 _WORD = re.compile(r"<(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)>")
 _META = re.compile(r"^\s*\[[a-zA-Z#]+:[^\]]*\]\s*$")
 _MAX_TAG_BYTES = 64 << 20
+# files written by the lyrics resolver (lyricsfetch) carry "[re:Glass Music · <source>]"
+MARK = "Glass Music"
+_ORIGIN = re.compile(r"^\s*\[re:\s*" + MARK + r"\s*·\s*([^\]]+)\]", re.M)
+
+
+def text_hash(lines):
+    """Identity of a lyrics text, independent of timing and of .lrc vs tag copies."""
+    words = "\n".join(" ".join(r["x"].lower().split()) for r in lines if r["x"])
+    return hashlib.sha1(words.encode("utf-8")).hexdigest()[:16]
+
+
+def origin_of(text):
+    m = _ORIGIN.search(text or "")
+    return m.group(1).strip() if m else ""
 
 
 def _secs(m, s):
@@ -250,36 +267,42 @@ def _read(path):
         return None
 
 
-def load(music_dir, rel):
-    """Best lyrics for the track at music_dir/rel."""
-    empty = {"lines": [], "synced": False, "source": ""}
+def song_path(music_dir, rel):
+    """Absolute path of a library-relative song (or a file:// one); "" for streams."""
     if rel.startswith("file:///"):        # a file outside the library (Yandex temp downloads)
-        path = rel[7:]
-    elif not rel or "://" in rel:
+        return rel[7:]
+    if not rel or "://" in rel:
+        return ""
+    return os.path.join(music_dir, rel)
+
+
+def load_path(path, skip=()):
+    """Best lyrics for a song file: synced .lrc, synced tag, then plain ones."""
+    empty = {"lines": [], "synced": False, "source": "", "origin": "", "hash": ""}
+    if not path:
         return empty
-    else:
-        path = os.path.join(music_dir, rel)
     stem = os.path.splitext(path)[0]
     fallback = None
-    text = _read(stem + ".lrc")
-    if text is not None:
+
+    def pack(text, lines, synced, source):
+        return {"lines": lines, "synced": synced, "source": source, "origin": origin_of(text),
+                "hash": text_hash(lines)}
+
+    for source, text in (("lrc", lambda: _read(stem + ".lrc")), ("embedded", lambda: embedded(path)),
+                         ("txt", lambda: _read(stem + ".txt"))):
+        text = text()
+        if not text or not text.strip():
+            continue
         lines, synced = parse_any(text)
+        if not lines or text_hash(lines) in skip:
+            continue
         if synced:
-            return {"lines": lines, "synced": True, "source": "lrc"}
-        if lines:
-            fallback = {"lines": lines, "synced": False, "source": "lrc"}
-    text = embedded(path)
-    if text.strip():
-        lines, synced = parse_any(text)
-        if synced:
-            return {"lines": lines, "synced": True, "source": "embedded"}
-        if lines and not fallback:
-            fallback = {"lines": lines, "synced": False, "source": "embedded"}
-    if fallback:
-        return fallback
-    text = _read(stem + ".txt")
-    if text and text.strip():
-        lines, synced = parse_any(text)
-        if lines:
-            return {"lines": lines, "synced": synced, "source": "txt"}
-    return empty
+            return pack(text, lines, True, source)
+        if not fallback:
+            fallback = pack(text, lines, False, source)
+    return fallback or empty
+
+
+def load(music_dir, rel, skip=()):
+    """Best lyrics for the track at music_dir/rel."""
+    return load_path(song_path(music_dir, rel), skip)

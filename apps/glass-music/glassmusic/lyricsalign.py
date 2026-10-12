@@ -1,4 +1,4 @@
-"""Lyrics <-> transcript alignment and transcript -> lyric lines. Dependency-free (stdlib only),
+"""Plain lyrics <-> Whisper word timestamps alignment (auto-sync). Dependency-free (stdlib only),
 so it runs both in the app backend (tests) and inside the Whisper helper process.
 
 words: [[start, end, text, seg0], ...] from Whisper word timestamps; seg0 marks the first word of a
@@ -16,11 +16,6 @@ import unicodedata
 _CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
 _PUNCT = re.compile(r"[^\w\s぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]", re.U)
 WORD_S = 0.30          # typical sung word length used to back off from a later word in the line
-HALLUCINATIONS = (
-    "thank you", "thanks for watching", "thank you for watching", "subtitles by", "please subscribe",
-    "продолжение следует", "субтитры", "редактор субтитров", "спасибо за просмотр",
-    "ご視聴ありがとうございました", "字幕",
-)
 
 
 def norm(s):
@@ -248,44 +243,3 @@ def to_lrc_lines(lines, times):
     while out and not out[-1][1]:
         out.pop()
     return out
-
-
-def transcript_lines(words, max_words=9, gap_s=0.7):
-    """Lyric-like lines from Whisper words: break on pauses, sentence ends, length and segments."""
-    lines, cur, start, last_end = [], [], None, None
-    for w in words:
-        t, e, text = w[0], w[1], w[2].strip()
-        seg0 = bool(w[3]) if len(w) > 3 else False
-        if not text:
-            continue
-        brk = cur and (seg0 or (last_end is not None and t - last_end >= gap_s) or len(cur) >= max_words
-                       or (len(cur) >= 4 and re.search(r"[.!?。！？]$", cur[-1])))
-        if brk:
-            lines.append((start, _join(cur)))
-            cur, start = [], None
-        if start is None:
-            start = t
-        cur.append(text)
-        last_end = e
-    if cur:
-        lines.append((start, _join(cur)))
-    # drop known hallucinations and long runs of the same line
-    out, run = [], 0
-    for t, x in lines:
-        n = norm(x).strip()
-        if not n or any(n == h or n.startswith(h + " ") for h in HALLUCINATIONS):
-            continue
-        run = run + 1 if out and norm(out[-1][1]).strip() == n else 1
-        if run > 4:
-            continue
-        out.append((round(t, 2), x))
-    return out
-
-
-def _join(ws):
-    s = ""
-    for w in ws:
-        if s and not (_CJK.match(w[:1]) and _CJK.search(s[-1:])):
-            s += " "
-        s += w
-    return re.sub(r"\s+([,.!?])", r"\1", s).strip()

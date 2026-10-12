@@ -667,6 +667,35 @@ class YM:
                     pass
         return n
 
+    def find_lyrics(self, path, artist, title, duration):
+        """Lyrics of one song: its own Yandex track (link tag / likes), else the first catalogue
+        hit with the same title and artist and a duration within 3 s. {"lrc"} and/or {"text"}."""
+        from .lyricsfetch import matches
+        tid = self.track_id_of(path) if path and os.path.exists(path) else None
+        t = self.full_tracks([tid])[0] if tid else None
+        if t is None and title:
+            meta = {"artist": artist, "title": title, "duration": duration}
+            r = self.client().search(f"{artist} {title}".strip(), type_="track")
+            for c in (r.tracks.results if r and r.tracks else [])[:10]:
+                names = ", ".join(a.name for a in (c.artists or []) if a.name)
+                dur = (c.duration_ms or 0) / 1000.0
+                if matches(meta, core.full_title(c), names, dur) or matches(meta, c.title, names, dur):
+                    t = c
+                    break
+        if t is None:
+            return {}
+        out, li = {"id": str(t.id)}, t.lyrics_info
+        for fmt, key, ok in (("LRC", "lrc", li and li.has_available_sync_lyrics),
+                             ("TEXT", "text", li and li.has_available_text_lyrics)):
+            if ok:
+                try:
+                    out[key] = t.get_lyrics(format_=fmt).fetch_lyrics()
+                except Exception:
+                    pass                 # the lyrics server sometimes fails: LRCLIB is next
+            if out.get("lrc"):
+                break
+        return out
+
     def backfill_lyrics(self, progress=None, stop=None):
         """Synced lyrics for library songs that have no .lrc (e.g. downloaded while Yandex's lyrics
         server failed): fetch the LRC, write it next to the song and embed it. Songs Yandex has
@@ -842,6 +871,9 @@ class Worker:
             emit(out)
         elif cmd == "remove":
             self.remove(c)
+        elif cmd == "lyrics":            # the app's lyrics resolver (glassmusic.lyricsfetch)
+            emit(dict(self.ym.find_lyrics(c.get("path", ""), c.get("artist", ""), c.get("title", ""),
+                                          c.get("duration", 0)), type="ym-lyrics", rid=c.get("rid", 0)))
         elif cmd == "like":
             tid, on = str(c.get("id")), bool(c.get("on", True))
             cl = self.ym.client()
@@ -1001,7 +1033,7 @@ class Worker:
 
     def handle(self, c):
         cmd = c.get("cmd")
-        if cmd in ("search", "open", "playlists", "like", "status", "remove", "resolve"):
+        if cmd in ("search", "open", "playlists", "like", "status", "remove", "resolve", "lyrics"):
             self.browse_q.put(c)
         elif cmd in ("fetch", "download", "sync"):
             if cmd == "fetch" and c.get("mode") == "play":

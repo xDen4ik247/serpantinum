@@ -18,7 +18,7 @@ import threading
 import time
 import traceback
 
-from . import library, lyrics, removal, search
+from . import library, lyrics, lyricsfetch, removal, search
 from .lyrics import parse_lrc  # noqa: F401  (re-exported for tests)
 from .mpdclient import MPD, MPDError, default_address
 from .thumbs import Thumbs
@@ -60,6 +60,9 @@ class Server:
         self.ym_play = None        # {"job", "before"} of the Yandex play job that owns the queue
         self.ym_next = {}          # job -> tracks already inserted after the current one
         self.ym_index_q = queue.Queue()
+        self.lyr = None            # lyrics resolver (glassmusic.lyricsfetch), made on first use
+        self.lyr_view = ""         # the song whose lyrics the window shows
+        self.lyr_meta = {}         # file -> tags of songs outside the library (from MPD)
 
     # ── MPD plumbing ─────────────────────────────────────────────────────────
     def conn(self):
@@ -165,6 +168,58 @@ class Server:
                 # music-smart logs the finished play on this same event; read history a bit later
                 threading.Timer(2.0, lambda: self.q.put(("home", None))).start()
             self.last_songid = out["id"]
+            try:
+                self.lyr_prefetch(out)
+            except (MPDError, ConnectionError, OSError):
+                pass
+
+    # ── lyrics: own files first, the resolver looks further in the background ────
+    def lyr_init(self):
+        if self.lyr is None:
+            self.lyr = lyricsfetch.Resolver(
+                self.music_dir or HOME + "/Music", CACHE_DIR, on_found=self.lyr_found,
+                ym_send=lambda c: self.q.put(("cmd", {"cmd": "ym", "ym": c})),   # via the main loop
+                log=lambda msg: emit({"type": "log", "msg": msg}))
+            self.lyr.ym_ok = lambda: os.path.exists(YM_PYTHON) and lyricsfetch.signed_in()
+        return self.lyr
+
+    def lyr_meta_of(self, f):
+        i = self.files.get(f, -1)
+        if i >= 0 and self.lib:
+            t = self.lib["tracks"][i]
+            return {"artist": t.get("a", ""), "title": t.get("t", ""), "album": t.get("al", ""),
+                    "duration": t.get("d", 0)}
+        return self.lyr_meta.get(f)
+
+    def lyr_prefetch(self, st):
+        """A new song started: look up lyrics for it and the next two (each song once, cached)."""
+        f = st.get("file")
+        if not f:
+            return
+        if f not in self.files:
+            self.lyr_meta[f] = {"artist": st.get("artist", ""), "title": st.get("title", ""),
+                                "album": st.get("album", ""), "duration": st.get("duration", 0)}
+        r = self.lyr_init()
+        r.want(lyrics.song_path(self.music_dir, f), self.lyr_meta_of(f))
+        if st.get("pos", -1) >= 0:
+            p = st["pos"]
+            for s in MPD.songs(self.call(lambda m: m.cmd("playlistinfo", "%d:%d" % (p + 1, p + 3)),
+                                         idempotent=True)):
+                if s["file"] in self.files:
+                    r.want(lyrics.song_path(self.music_dir, s["file"]), self.lyr_meta_of(s["file"]))
+
+    def send_lyrics(self, f, look=True, force=False):
+        r = self.lyr_init()
+        path = lyrics.song_path(self.music_dir, f)
+        self.lyr_view = f
+        if look and path:
+            r.want(path, self.lyr_meta_of(f), front=True, force=force)
+        emit(dict(r.load(path), type="lyrics", file=f))
+
+    def lyr_found(self, path, result, changed):
+        """Resolver thread: a lookup ended; refresh the window if it shows that song."""
+        if self.lyr_view and lyrics.song_path(self.music_dir, self.lyr_view) == path:
+            emit(dict(result, type="lyrics", file=self.lyr_view))
 
     def send_queue(self):
         items = MPD.songs(self.call(lambda m: m.cmd("playlistinfo"), idempotent=True))
@@ -326,6 +381,10 @@ class Server:
             except ValueError:
                 continue
             t = m.get("type")
+            if t == "ym-lyrics" or (t == "ym-error" and m.get("cmd") == "lyrics"):
+                if self.lyr is not None:
+                    self.lyr.on_ym(m)            # an answer for the lyrics resolver
+                continue
             if t == "ym-ready":
                 self.ym_index_q.put(m)           # new library files are indexed by MPD first
             elif t == "ym-removed":
@@ -453,8 +512,15 @@ class Server:
             self.thumbs.request([(k, self.album_of[k]["c"]) for k in c.get("keys", [])
                                  if k in self.album_of and self.album_of[k]["c"]])
         elif cmd == "lyrics":
+            self.send_lyrics(c.get("file", ""))
+        elif cmd == "lyricsfind":        # "Find lyrics" / "Look again": ask the sources now
+            self.send_lyrics(c.get("file", ""), force=True)
+        elif cmd == "lyricswrong":       # "These lyrics are wrong": next source / candidate
             f = c.get("file", "")
-            emit(dict(lyrics.load(self.music_dir, f), type="lyrics", file=f))
+            path = lyrics.song_path(self.music_dir, f)
+            if path and self.lyr_init().reject(path, self.lyr_meta_of(f)):
+                emit({"type": "toast", "icon": "lyrics", "text": "Looking for other lyrics…"})
+            self.send_lyrics(f, look=False)
         elif cmd == "play":
             self.play_files(c.get("files", []), int(c.get("index", 0)), bool(c.get("shuffle")))
         elif cmd == "add":
