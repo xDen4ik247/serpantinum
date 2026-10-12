@@ -240,11 +240,14 @@ Item {
     Process {
         id: niriEventStream
         running: false
-        command: ["niri", "msg", "--json", "event-stream"]
+        // serp-niri-state (Rust, glass) prints the workspace state itself; niri msg is the fallback
+        command: ["sh", "-c", "command -v serp-niri-state >/dev/null 2>&1 && exec serp-niri-state; exec niri msg --json event-stream"]
         stdout: SplitParser {
             splitMarker: "\n"
             onRead: data => {
-                if (data.trim().length > 0) {
+                if (data.startsWith("{\"workspaces\"")) {
+                    niriPoller.apply(data);
+                } else if (data.trim().length > 0) {
                     niriDebounceTimer.restart();
                 }
             }
@@ -264,34 +267,35 @@ Item {
             "-c",
             "workspaces=$(niri msg -j workspaces 2>/dev/null || echo '[]'); windows=$(niri msg -j windows 2>/dev/null || echo '[]'); echo \"{\\\"workspaces\\\": $workspaces, \\\"windows\\\": $windows}\""
         ]
+        function apply(text) {
+            try {
+                let data = JSON.parse(text);
+                let wsList = data.workspaces || [];
+                let winList = data.windows || [];
+                let occ = {};
+                for (let i = 0; i < winList.length; i++) {
+                    let win = winList[i];
+                    if (win.workspace_id !== undefined && win.workspace_id !== null) {
+                        occ[win.workspace_id] = true;
+                    }
+                }
+                let activeIdx = 0;
+                for (let j = 0; j < wsList.length; j++) {
+                    let w = wsList[j];
+                    let idx = (w.idx !== undefined ? w.idx : (w.id !== undefined ? w.id : 1)) - 1;
+                    if (w.is_focused || w.is_active) {
+                        activeIdx = idx;
+                    }
+                    if (w.active_window_id !== null || occ[w.id] || occ[w.idx]) {
+                        occ[idx] = true;
+                    }
+                }
+                root.niriActiveIndex = activeIdx;
+                root.niriOccupiedMap = occ;
+            } catch (e) {}
+        }
         stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    let data = JSON.parse(this.text);
-                    let wsList = data.workspaces || [];
-                    let winList = data.windows || [];
-                    let occ = {};
-                    for (let i = 0; i < winList.length; i++) {
-                        let win = winList[i];
-                        if (win.workspace_id !== undefined && win.workspace_id !== null) {
-                            occ[win.workspace_id] = true;
-                        }
-                    }
-                    let activeIdx = 0;
-                    for (let j = 0; j < wsList.length; j++) {
-                        let w = wsList[j];
-                        let idx = (w.idx !== undefined ? w.idx : (w.id !== undefined ? w.id : 1)) - 1;
-                        if (w.is_focused || w.is_active) {
-                            activeIdx = idx;
-                        }
-                        if (w.active_window_id !== null || occ[w.id] || occ[w.idx]) {
-                            occ[idx] = true;
-                        }
-                    }
-                    root.niriActiveIndex = activeIdx;
-                    root.niriOccupiedMap = occ;
-                } catch (e) {}
-            }
+            onStreamFinished: niriPoller.apply(this.text)
         }
     }
 

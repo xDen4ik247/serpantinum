@@ -140,7 +140,7 @@ case "$G_WALLPAPERS" in few|full|none) ;; *) echo "--wallpapers: few, full or no
 case "${G_OPT_POWER:-auto}" in auto|yes|no) ;; *) echo "--power: auto, yes or no" >&2; exit 2 ;; esac
 
 # ------------------------------------------------------------------ modules
-for m in lib base system dotfiles shell services apps extras; do
+for m in lib base system dotfiles rust shell services apps extras; do
     # shellcheck disable=SC1090
     source "$G_MODULES/$m.sh" || { echo "serp-glass: can't load $G_MODULES/$m.sh" >&2; exit 1; }
 done
@@ -369,7 +369,7 @@ else
 fi
 
 g_step "dotfiles"
-g_dotfiles_install; g_manifest_save
+g_dotfiles_install; g_rust_install; g_manifest_save
 
 g_step "shell: glass changes to Serpantinum"
 g_shell_install; g_manifest_save

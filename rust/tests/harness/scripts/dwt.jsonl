@@ -1,0 +1,30 @@
+{"outputs": {"eDP-1": {"name": "eDP-1", "make": "Test", "model": "Panel", "serial": null, "physical_size": [300, 190], "modes": [{"width": 2880, "height": 1800, "refresh_rate": 120000, "is_preferred": true}, {"width": 2880, "height": 1800, "refresh_rate": 60001, "is_preferred": true}], "current_mode": 0, "is_custom_mode": false, "vrr_supported": true, "vrr_enabled": false, "logical": {"x": 0, "y": 0, "width": 1920, "height": 1200, "scale": 1.5, "transform": "Normal"}}}}
+{"WorkspacesChanged": {"workspaces": [{"id": 1, "idx": 1, "name": null, "output": "eDP-1", "is_urgent": false, "is_active": true, "is_focused": true, "active_window_id": 1}]}}
+{"WindowsChanged": {"windows": [{"id": 1, "title": "zsh", "app_id": "kitty", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1150.0], "window_size": [960, 1150], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}]}}
+{"sleep": 0.6}
+{"WindowOpenedOrChanged": {"window": {"id": 2, "title": "Game", "app_id": "some.game", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [1920.0, 1200.0], "window_size": [1920, 1200], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}}}
+{"WindowFocusChanged": {"id": 2}}
+{"sleep": 0.6}
+{"WindowLayoutsChanged": {"changes": [[2, {"pos_in_scrolling_layout": [1, 1], "tile_size": [1919.0, 1199.0], "window_size": [1919, 1199], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}]]}}
+{"WindowFocusChanged": {"id": 1}}
+{"WindowFocusChanged": {"id": 2}}
+{"sleep": 0.6}
+{"WindowFocusChanged": {"id": 1}}
+{"sleep": 0.6}
+{"WindowOpenedOrChanged": {"window": {"id": 3, "title": "Some Game", "app_id": "steam_app_12345", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [800.0, 600.0], "window_size": [800, 600], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}}}
+{"sleep": 0.6}
+{"WindowOpenedOrChanged": {"window": {"id": 4, "title": "movie.mkv", "app_id": "mpv", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [1920.0, 1200.0], "window_size": [1920, 1200], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}}}
+{"sleep": 0.6}
+{"WindowOpenedOrChanged": {"window": {"id": 5, "title": "Retro Racer", "app_id": "wine", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [1024.0, 768.0], "window_size": [1024, 768], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}}}
+{"sleep": 0.6}
+{"ConfigLoaded": {"failed": false}}
+{"sleep": 0.6}
+{"WindowFocusChanged": {"id": null}}
+{"sleep": 0.6}
+{"WindowOpenedOrChanged": {"window": {"id": 6, "title": "G2", "app_id": "game2", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [1920.0, 1200.0], "window_size": [1920, 1200], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}}}
+{"sleep": 0.1}
+{"WindowClosed": {"id": 6}}
+{"WindowFocusChanged": {"id": 1}}
+{"sleep": 0.6}
+{"WindowOpenedOrChanged": {"window": {"id": 7, "title": "G3", "app_id": "game3", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [1920.0, 1200.0], "window_size": [1920, 1200], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [0.0, 0.0]}}}}
+{"sleep": 1.0}

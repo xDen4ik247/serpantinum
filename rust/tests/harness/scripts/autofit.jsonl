@@ -1,0 +1,31 @@
+{"WorkspacesChanged": {"workspaces": [{"id": 1, "idx": 1, "name": null, "output": "eDP-1", "is_urgent": false, "is_active": true, "is_focused": true, "active_window_id": null}, {"id": 2, "idx": 2, "name": null, "output": "eDP-1", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null}]}}
+{"WindowsChanged": {"windows": [{"id": 10, "title": "w10", "app_id": "kitty", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}]}}
+{"sleep": 0.5}
+{"WindowOpenedOrChanged": {"window": {"id": 11, "title": "w11", "app_id": "kitty", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [2, 1], "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"WindowFocusChanged": {"id": 11}}
+{"sleep": 0.5}
+{"WindowOpenedOrChanged": {"window": {"id": 12, "title": "w12", "app_id": "kitty", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [3, 1], "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"WindowFocusChanged": {"id": 12}}
+{"sleep": 0.5}
+{"WindowFocusChanged": {"id": 10}}
+{"sleep": 0.3}
+{"WindowClosed": {"id": 12}}
+{"sleep": 0.5}
+{"WindowLayoutsChanged": {"changes": [[11, {"pos_in_scrolling_layout": [1, 2], "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}]]}}
+{"sleep": 0.5}
+{"WindowOpenedOrChanged": {"window": {"id": 20, "title": "w20", "app_id": "kitty", "pid": 1, "workspace_id": 2, "is_focused": false, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.5}
+{"WindowOpenedOrChanged": {"window": {"id": 21, "title": "w21", "app_id": "kitty", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": true, "is_urgent": false, "layout": {"pos_in_scrolling_layout": null, "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"WindowFocusChanged": {"id": 21}}
+{"sleep": 1.5}
+{"WindowOpenedOrChanged": {"window": {"id": 13, "title": "w13", "app_id": "kitty", "pid": 1, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [2, 1], "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"WindowFocusChanged": {"id": 13}}
+{"sleep": 1.5}
+{"sleep": 1.0}
+{"WorkspaceActivated": {"id": 2, "focused": true}}
+{"WindowOpenedOrChanged": {"window": {"id": 22, "title": "w22", "app_id": "kitty", "pid": 1, "workspace_id": 2, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [2, 1], "tile_size": [900.0, 1100.0], "window_size": [898, 1098], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"WindowFocusChanged": {"id": 22}}
+{"sleep": 0.5}
+{"WindowClosed": {"id": 22}}
+{"WindowClosed": {"id": 20}}
+{"sleep": 0.5}

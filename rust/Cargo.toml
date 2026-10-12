@@ -1,0 +1,61 @@
+[package]
+name = "glass-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust helpers for the Serpantinum glass desktop on niri (event-driven replacements for the bash/Python pollers)"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lib]
+name = "glass"
+path = "src/lib.rs"
+
+[[bin]]
+name = "serp-niri-state"
+path = "src/bin/serp-niri-state.rs"
+
+[[bin]]
+name = "serp-focus"
+path = "src/bin/serp-focus.rs"
+
+[[bin]]
+name = "serp-wellbeing"
+path = "src/bin/serp-wellbeing.rs"
+
+[[bin]]
+name = "serp-sysdata"
+path = "src/bin/serp-sysdata.rs"
+
+[[bin]]
+name = "serp-kblocks"
+path = "src/bin/serp-kblocks.rs"
+
+[[bin]]
+name = "niri-autofit"
+path = "src/bin/niri-autofit.rs"
+
+[[bin]]
+name = "niri-dwt-toggle"
+path = "src/bin/niri-dwt-toggle.rs"
+
+[[bin]]
+name = "sleep-guard"
+path = "src/bin/sleep-guard.rs"
+
+[[bin]]
+name = "power-mode"
+path = "src/bin/power-mode.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+libc = "0.2"
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
+rusqlite = "0.37"
+dbus = { version = "0.9", features = ["stdfd"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

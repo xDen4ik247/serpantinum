@@ -9,6 +9,8 @@ G_PKGS_BASE=(
     starship zoxide eza bat fzf pkgfile ttf-jetbrains-mono-nerd
     # tools the scripts call
     rsync patch diffutils jq curl inotify-tools libnotify imagemagick uv
+    # the Rust helpers (rust/: shell pollers, niri daemons, sleep-guard, power-mode)
+    rust
     # python for the helpers (system site-packages; ~/.venvs/default reuses them)
     python python-gobject python-numpy python-rich python-yaml python-pillow
     # music

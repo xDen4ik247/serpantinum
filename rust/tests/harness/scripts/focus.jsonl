@@ -1,0 +1,41 @@
+{"WorkspacesChanged": {"workspaces": [{"id": 1, "idx": 1, "name": null, "output": "eDP-1", "is_urgent": false, "is_active": true, "is_focused": true, "active_window_id": 1}, {"id": 2, "idx": 2, "name": null, "output": "eDP-1", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null}]}}
+{"WindowsChanged": {"windows": [{"id": 1, "title": "zsh", "app_id": "kitty", "pid": 101, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}, {"id": 2, "title": "Docs \u2014 Mozilla Firefox", "app_id": "firefox", "pid": 102, "workspace_id": 1, "is_focused": false, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [2, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}]}}
+{"sleep": 0.5}
+{"WindowOpenedOrChanged": {"window": {"id": 1, "title": "\u25d0 claude", "app_id": "kitty", "pid": 101, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 1, "title": "\u25d3 claude", "app_id": "kitty", "pid": 101, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 1, "title": "\u25d1 claude", "app_id": "kitty", "pid": 101, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 2, "title": "Other tab \u2014 Mozilla Firefox", "app_id": "firefox", "pid": 102, "workspace_id": 1, "is_focused": false, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [2, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowFocusChanged": {"id": 2}}
+{"sleep": 0.25}
+{"WindowLayoutsChanged": {"changes": [[2, {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}]]}}
+{"sleep": 0.25}
+{"WorkspaceActivated": {"id": 2, "focused": true}}
+{"WindowFocusChanged": {"id": null}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 3, "title": "Glass Music", "app_id": "org.quickshell", "pid": 103, "workspace_id": 2, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 4, "title": null, "app_id": null, "pid": 104, "workspace_id": 2, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [2, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 5, "title": "tab\there \"quoted\" back\\slash | pipe", "app_id": "weird", "pid": 105, "workspace_id": 2, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [3, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 6, "title": "line one\nline two", "app_id": "multi", "pid": 106, "workspace_id": 2, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [4, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowClosed": {"id": 6}}
+{"WindowFocusChanged": {"id": 5}}
+{"sleep": 0.25}
+{"WindowClosed": {"id": 5}}
+{"WindowClosed": {"id": 4}}
+{"WindowClosed": {"id": 3}}
+{"WindowFocusChanged": {"id": null}}
+{"sleep": 0.25}
+{"WorkspaceActivated": {"id": 1, "focused": true}}
+{"WindowFocusChanged": {"id": 2}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 2, "title": "Other tab \u2014 Mozilla Firefox", "app_id": "firefox", "pid": 102, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.25}
+{"WindowOpenedOrChanged": {"window": {"id": 2, "title": "\u041f\u0440\u0438\u043c\u0435\u0440 \u2014 Mozilla Firefox", "app_id": "firefox", "pid": 102, "workspace_id": 1, "is_focused": true, "is_floating": false, "is_urgent": false, "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [960.0, 1148.0], "window_size": [958, 1146], "tile_pos_in_workspace_view": null, "window_offset_in_tile": [1.0, 1.0]}}}}
+{"sleep": 0.6}

@@ -28,7 +28,8 @@ Item {
 
     Process {
         id: focusDaemon
-        command: ["bash", "-c", "exec " + Caching.serpantinumDir + "/scripts/current_focus.sh"]
+        // serp-focus (Rust, glass) reads the focus from niri's event stream; current_focus.sh is the fallback
+        command: ["sh", "-c", "[ -n \"$NIRI_SOCKET\" ] && command -v serp-focus >/dev/null 2>&1 && exec serp-focus; exec \"$0\"", Caching.serpantinumDir + "/scripts/current_focus.sh"]
         running: typeof Caching !== "undefined" && Caching.serpantinumDir !== undefined && Caching.serpantinumDir !== ""
         stdout: SplitParser {
             onRead: data => root.updateFocus(data)

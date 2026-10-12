@@ -148,7 +148,7 @@ if [ "$COMMAND" == "stop" ]; then
         pid="$(cat "/tmp/serpantinumd.pid" 2>/dev/null)"
     fi
 
-    pkill -TERM -f "focus_daemon.py" 2>/dev/null
+    pkill -TERM -f "focus_daemon.py|(^|/)serp-wellbeing$" 2>/dev/null
     if [ -n "$MAIN_QML" ]; then
         pkill -TERM -f "quickshell.*$MAIN_QML" 2>/dev/null
     fi
@@ -161,7 +161,7 @@ if [ "$COMMAND" == "stop" ]; then
         pkill -KILL -f "serpantinumd" 2>/dev/null
     fi
 
-    pkill -KILL -f "focus_daemon.py" 2>/dev/null
+    pkill -KILL -f "focus_daemon.py|(^|/)serp-wellbeing$" 2>/dev/null
     if [ -n "$MAIN_QML" ]; then
         pkill -KILL -f "quickshell.*$MAIN_QML" 2>/dev/null
     fi
@@ -198,7 +198,7 @@ if [ "$COMMAND" == "start" ]; then
             exit 1
         fi
 
-        pkill -KILL -f "focus_daemon.py" 2>/dev/null
+        pkill -KILL -f "focus_daemon.py|(^|/)serp-wellbeing$" 2>/dev/null
         if [ -n "$MAIN_QML" ]; then
             pkill -KILL -f "quickshell.*$MAIN_QML" 2>/dev/null
         fi
@@ -235,7 +235,7 @@ if [ "$COMMAND" == "start" ]; then
         done
 
         local focus_pid
-        for focus_pid in $(pgrep -f "focus_daemon.py" 2>/dev/null); do
+        for focus_pid in $(pgrep -f "focus_daemon.py|(^|/)serp-wellbeing$" 2>/dev/null); do
             targets+=("$focus_pid")
         done
 

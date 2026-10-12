@@ -122,7 +122,8 @@ Item {
     Process {
         id: kbWatcher
         running: true
-        command: ["bash", Caching.qsDir + "/watchers/kb_locks.sh", "watch"]
+        // glass: serp-kblocks (Rust) when installed; kb_locks.sh otherwise
+        command: ["sh", "-c", "command -v serp-kblocks >/dev/null 2>&1 && exec serp-kblocks watch; exec bash \"$0\" watch", Caching.qsDir + "/watchers/kb_locks.sh"]
         stdout: SplitParser {
             onRead: data => {
                 let line = data.trim();
