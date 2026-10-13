@@ -4,6 +4,7 @@ import QtQuick.Controls
 import Quickshell
 import "../"
 import "../reusables"
+import "../bar" as BarGlass
 
 Rectangle {
     id: typeRoot
@@ -27,6 +28,9 @@ Rectangle {
     readonly property bool isDragging: cardHover.draggingH || cardHover.draggingV
     readonly property bool isHovered: cardHover.containsMouse || cardHover.pressed || isDragging
     readonly property bool isPopup: delegateWrapper && delegateWrapper.isPopupContext ? true : false
+    // Popups follow the bar's liquid glass (bar.glass): niri blurs what is behind the card
+    // (NotificationPopups.qml blurRegion), the card paints the bar islands' tint and rim.
+    readonly property bool glass: isPopup && Boolean(Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.glass)
 
     property color accentColor: urgency === 2 ? ThemeBackend.red : ThemeBackend.blue
     property string fullSummary: ""
@@ -338,6 +342,7 @@ Rectangle {
 
     Rectangle {
         id: cardShadow
+        visible: !typeRoot.glass
         anchors.fill: parent
         anchors.topMargin: s(1.5) + Math.max(0, typeRoot.dragY * 0.4)
         anchors.bottomMargin: -(s(1.5) + Math.max(0, typeRoot.dragY * 0.4))
@@ -388,6 +393,21 @@ Rectangle {
         return "";
     }
 
+    BarGlass.GlassPill {
+        id: glassCard
+        visible: typeRoot.glass
+        anchors.fill: parent
+        radius: visualItem.radius
+        tintAlpha: typeRoot.urgency === 2 ? 0.7 : 0.55
+        lit: cardHover.containsMouse
+        scale: visualItem.scale
+        opacity: visualItem.opacity
+        transform: Translate {
+            x: typeRoot.dragX
+            y: typeRoot.dragY
+        }
+    }
+
     Rectangle {
         id: visualItem
         anchors.fill: parent
@@ -396,7 +416,9 @@ Rectangle {
         implicitHeight: cardContent.implicitHeight + s(20)
 
         property color baseColor: typeRoot.readState === false ? Qt.lighter(ThemeBackend.surface1, 1.05) : ThemeBackend.surface1
-        color: (cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? Qt.darker(baseColor, 1.1) : (cardHover.containsMouse && !cardHover.draggingH && !cardHover.draggingV ? Qt.lighter(baseColor, 1.05) : baseColor)
+        color: typeRoot.glass
+            ? ((cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? Qt.alpha(ThemeBackend.crust, 0.12) : (cardHover.containsMouse && !cardHover.draggingH && !cardHover.draggingV ? Qt.alpha(ThemeBackend.text, 0.05) : "transparent"))
+            : ((cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? Qt.darker(baseColor, 1.1) : (cardHover.containsMouse && !cardHover.draggingH && !cardHover.draggingV ? Qt.lighter(baseColor, 1.05) : baseColor))
 
         scale: (cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? 0.98 : 1.0
 
@@ -534,12 +556,17 @@ Rectangle {
                         anchors.bottomMargin: -s(1.5)
                         radius: parent.boxRadius
                         color: Qt.rgba(0, 0, 0, 0.12)
+                        visible: !typeRoot.glass
                     }
 
                     Rectangle {
                         anchors.fill: parent
                         radius: parent.boxRadius
-                        color: typeRoot.urgency === 2 ? Qt.tint(ThemeBackend.surface2, Qt.rgba(urgencyGlow.deepRed.r, urgencyGlow.deepRed.g, urgencyGlow.deepRed.b, 0.12)) : ThemeBackend.surface2
+                        color: typeRoot.glass
+                            ? (typeRoot.urgency === 2 ? Qt.rgba(urgencyGlow.deepRed.r, urgencyGlow.deepRed.g, urgencyGlow.deepRed.b, 0.16) : Qt.alpha(ThemeBackend.text, 0.08))
+                            : (typeRoot.urgency === 2 ? Qt.tint(ThemeBackend.surface2, Qt.rgba(urgencyGlow.deepRed.r, urgencyGlow.deepRed.g, urgencyGlow.deepRed.b, 0.12)) : ThemeBackend.surface2)
+                        border.width: typeRoot.glass ? 1 : 0
+                        border.color: Qt.alpha(ThemeBackend.text, 0.14)
 
                         Behavior on color { ColorAnimation { duration: 200 } }
                     }
@@ -687,7 +714,7 @@ Rectangle {
                             visible: typeRoot.canExpand
                             size: s(28)
                             cornerRadius: s(7)
-                            accentColor: ThemeBackend.surface2
+                            accentColor: typeRoot.glass ? Qt.alpha(ThemeBackend.text, 0.10) : ThemeBackend.surface2
                             iconColor: isHoveredOrHighlighted ? ThemeBackend.text : ThemeBackend.subtext1
                             autoToggle: false
                             flipped: typeRoot.expandProgress > 0.5
@@ -739,7 +766,7 @@ Rectangle {
                             font.family: ThemeBackend.fontFamily
                             font.weight: Font.Normal
                             font.pixelSize: typeRoot.isPopup ? s(12) : s(11)
-                            color: ThemeBackend.subtext0
+                            color: typeRoot.glass ? ThemeBackend.subtext1 : ThemeBackend.subtext0
                             elide: Text.ElideRight
                             maximumLineCount: 1
                             opacity: Math.max(0.0, 1.0 - typeRoot.expandProgress * 2.5)
@@ -755,7 +782,7 @@ Rectangle {
                             font.family: ThemeBackend.fontFamily
                             font.weight: Font.Normal
                             font.pixelSize: typeRoot.isPopup ? s(12) : s(11)
-                            color: ThemeBackend.subtext0
+                            color: typeRoot.glass ? ThemeBackend.subtext1 : ThemeBackend.subtext0
                             wrapMode: Text.Wrap
                             textFormat: Text.StyledText
                             opacity: Math.max(0.0, (typeRoot.expandProgress - 0.2) / 0.8)
@@ -811,7 +838,7 @@ Rectangle {
                                     textFontSize: typeRoot.isPopup ? s(12) : s(11)
                                     buttonIcon: typeRoot.getActionIcon(modelData.id, modelData.text)
                                     iconFontSize: s(11)
-                                    accentColor: isPrimary ? typeRoot.accentColor : ThemeBackend.surface2
+                                    accentColor: isPrimary ? typeRoot.accentColor : (typeRoot.glass ? Qt.alpha(ThemeBackend.text, 0.12) : ThemeBackend.surface2)
                                     textColor: isPrimary ? ThemeBackend.crust : ThemeBackend.subtext1
                                     onTriggered: {
                                         var n = delegateWrapper ? delegateWrapper.realNotif : null;

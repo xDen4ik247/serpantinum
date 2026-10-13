@@ -108,6 +108,30 @@ PanelWindow {
         item: popupContainer
     }
 
+    // Liquid glass (bar.glass): niri blurs what is behind each card. Window coordinates are
+    // computed from the delegates, because an `item:` region would not see the list moving
+    // them (slide-in, stacking, swipe). Cards register themselves in glassItems.
+    readonly property bool glassOn: Boolean(Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.glass)
+    property var glassItems: []
+    function glassAdd(d) { glassItems = glassItems.concat([d]); }
+    function glassRemove(d) { glassItems = glassItems.filter(x => x !== d); }
+
+    readonly property point glassOrigin: Qt.point(popupContainer.x + popupList.x, popupContainer.y + popupList.y)
+    readonly property point glassScroll: Qt.point(popupList.contentX, popupList.contentY)
+
+    BackgroundEffect.blurRegion: glassOn ? glassRegion : null
+    Region {
+        id: glassRegion
+        GlassSlot { win: popupWindow; idx: 0 }
+        GlassSlot { win: popupWindow; idx: 1 }
+        GlassSlot { win: popupWindow; idx: 2 }
+        GlassSlot { win: popupWindow; idx: 3 }
+        GlassSlot { win: popupWindow; idx: 4 }
+        GlassSlot { win: popupWindow; idx: 5 }
+        GlassSlot { win: popupWindow; idx: 6 }
+        GlassSlot { win: popupWindow; idx: 7 }
+    }
+
     property bool dndEnabled: {
         let n = Config.getSetting("notifications", { "dnd": false, "position": "top right" });
         return Boolean(n && n.dnd);
@@ -205,6 +229,15 @@ PanelWindow {
                     width: ListView.view.width
 
                     property bool isSuppressedByDnd: popupWindow.dndEnabled && model.urgency !== 2
+
+                    readonly property bool glassShown: popupWindow.glassOn && !isSuppressedByDnd && opacity > 0.35
+                        && !!typeLoader.item && typeLoader.item.glass === true
+                        && Math.abs(typeLoader.item.dragX) < width * 0.3
+                    readonly property real glassDx: typeLoader.item ? typeLoader.item.dragX : 0
+                    readonly property real glassDy: typeLoader.item ? typeLoader.item.dragY : 0
+                    readonly property real glassRadius: ThemeBackend.borderRadius
+                    Component.onCompleted: popupWindow.glassAdd(delegateWrapper)
+                    Component.onDestruction: popupWindow.glassRemove(delegateWrapper)
 
                     implicitHeight: isSuppressedByDnd ? 0 : (typeLoader.item ? typeLoader.item.implicitHeight : popupWindow.s(70))
                     height: implicitHeight

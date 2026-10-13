@@ -38,7 +38,7 @@ Notification {
                 text: "󰋽"
                 font.family: ThemeBackend.fontFamily
                 font.pixelSize: s(22)
-                color: ThemeBackend.subtext0
+                color: faceRoot.glass ? faceRoot.accentColor : ThemeBackend.subtext0
             }
         }
     ]
@@ -50,7 +50,7 @@ Notification {
             font.family: ThemeBackend.fontFamily
             font.weight: Font.Bold
             font.pixelSize: s(11)
-            color: ThemeBackend.subtext0
+            color: faceRoot.glass ? ThemeBackend.subtext1 : ThemeBackend.subtext0
             elide: Text.ElideRight
         }
     ]
