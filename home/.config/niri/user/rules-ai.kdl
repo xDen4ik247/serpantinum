@@ -18,8 +18,8 @@ layer-rule {
 window-rule {
     match app-id="^ai-chat$"
     open-floating true
-    default-column-width { fixed 860; }
-    default-window-height { fixed 640; }
+    default-column-width { fixed 1000; }
+    default-window-height { fixed 720; }
     // liquid-glass look (blur, rim, shadow): the shared glass rule in rules.kdl
     geometry-corner-radius 16
     clip-to-geometry true

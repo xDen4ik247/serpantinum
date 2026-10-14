@@ -5,7 +5,7 @@ binds {
     Mod+Shift+X hotkey-overlay-title="Japanese OCR + translate a screen area" { spawn "jocr" "--region" "--ui" "--translate"; }
     // aifeat: dictation (Whisper on the NPU), assistant chat, clipboard actions, Japanese reading helper.
     Mod+Z hotkey-overlay-title="Dictation: start/stop (Whisper on NPU, types text)" { spawn "aidict" "toggle"; }
-    Mod+A hotkey-overlay-title="AI assistant chat" { spawn "ai-chat"; }
+    Mod+A hotkey-overlay-title="AI assistant (opencode, local model; /en /sum /fix on clipboard)" { spawn "ai-chat"; }
     Mod+Shift+A hotkey-overlay-title="AI actions on clipboard/selection" { spawn "aipanel" "actions"; }
     Mod+Shift+Z hotkey-overlay-title="Japanese reading helper (furigana, gloss, grammar)" { spawn "aipanel" "reader"; }
 }

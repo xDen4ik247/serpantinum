@@ -20,7 +20,15 @@ import wave
 import numpy as np
 
 HOME = os.path.expanduser("~")
-RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "aifeat")
+_XRD = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+RUN = os.path.join(_XRD, "aifeat")
+# The service can start before the compositor exports its environment; without WAYLAND_DISPLAY
+# wtype fails ("Wayland connection failed") and every dictation lands on the clipboard instead.
+if not os.environ.get("WAYLAND_DISPLAY"):
+    import glob
+    _w = sorted(p for p in glob.glob(os.path.join(_XRD, "wayland-[0-9]*")) if not p.endswith(".lock"))
+    if _w:
+        os.environ["WAYLAND_DISPLAY"] = os.path.basename(_w[0])
 SOCK = os.path.join(RUN, "dict.sock")
 PILL_STATE = os.path.join(RUN, "pill.json")
 WAV = os.path.join(RUN, "dict.wav")
@@ -47,9 +55,25 @@ def log(*a):
 def get_lang():
     try:
         v = open(LANG_FILE).read().strip()
-        return v if v in ("en", "ru", "ja") else "auto"
+        return v if v in ("en", "ru", "ja", "auto") else "layout"
     except OSError:
+        return "layout"
+
+
+def layout_lang():
+    """Language of the active fcitx5 input method: keyboard-us -> en, keyboard-ru -> ru, mozc -> ja.
+    Forcing a wrong language makes Whisper translate, and short clips auto-detect badly."""
+    try:
+        im = subprocess.run(["fcitx5-remote", "-n"], capture_output=True, text=True, timeout=1).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
         return "auto"
+    if im in ("mozc", "anthy", "kkc", "skk"):
+        return "ja"
+    if im.startswith("keyboard-ru"):
+        return "ru"
+    if im.startswith("keyboard-"):
+        return "en"
+    return "auto"
 
 
 def set_lang(v):
@@ -101,16 +125,56 @@ def idle_loop():
 # ---------------------------------------------------------------- pill
 def pill(phase, **kw):
     S["phase"] = phase
-    d = {"phase": phase, "lang": get_lang(), "t0": S["rec_t0"], **kw}
+    d = {"phase": phase, "lang": S.get("lang") or get_lang(), "t0": S["rec_t0"], **kw}
     tmp = PILL_STATE + ".tmp"
     with open(tmp, "w") as f:
         json.dump(d, f, ensure_ascii=False)
     os.replace(tmp, PILL_STATE)
+    if fcitx_bubble(phase, kw):
+        return
     p = S["pill"]
     if phase != "idle" and (p is None or p.poll() is not None):
         env = dict(os.environ, AIDICT_STATE=PILL_STATE)
         S["pill"] = subprocess.Popen(["qs", "-p", PILL_UI], env=env, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+BARS = "▁▂▃▄▅▆▇"
+_shown = {"text": None, "ok": True}
+
+
+def fcitx_bubble(phase, kw):
+    """Show the state in fcitx5's own popup at the text cursor (aibubble addon). False if unavailable."""
+    if not _shown["ok"]:
+        return False
+    if phase == "recording":
+        lvl, t = kw.get("level", 0), time.time() - S["rec_t0"]
+        bars = "".join(BARS[max(0, min(6, int(lvl * 7 * (1 - abs(i - 2) / 3.5))))] for i in range(5))
+        tag = {"en": "EN", "ru": "RU", "ja": "日本語"}.get(S.get("lang"), "AUTO")
+        text = f"●  Listening · {tag}   {bars}   {int(t // 60)}:{int(t % 60):02d}"
+    elif phase == "transcribing":
+        text = "◌  Transcribing…"
+    elif phase == "done":
+        t = kw.get("text", "")
+        text = ("✓  " if kw.get("how") != "clipboard" else "⎘  Copied · ") + (t[:60] + "…" if len(t) > 60 else t)
+    elif phase == "error":
+        text = "·  " + kw.get("text", "Error")
+    else:
+        text = ""
+    if text == _shown["text"]:
+        return True
+    _shown["text"] = text
+    args = ["busctl", "--user", "call", "org.fcitx.Fcitx5", "/aibubble", "org.aifeat.Bubble1"]
+    args += ["Show", "s", text] if text else ["Hide"]
+    try:
+        r = subprocess.run(args, capture_output=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        r = None
+    if r is None or r.returncode != 0:
+        log("aibubble unavailable, using the pill:", r.stderr.decode(errors="replace").strip() if r else "timeout")
+        _shown["ok"] = False
+        return False
+    return True
 
 
 def level_loop():
@@ -132,7 +196,7 @@ def level_loop():
         if time.time() - S["rec_t0"] > MAX_SEC:
             threading.Thread(target=stop, daemon=True).start()
             return
-        time.sleep(0.08)
+        time.sleep(0.12)
 
 
 # ---------------------------------------------------------------- recording
@@ -148,6 +212,7 @@ def start():
                                      "--media-role", "Communication", WAV],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         S["rec_t0"] = time.time()
+        S["lang"] = layout_lang() if get_lang() == "layout" else get_lang()
         pill("recording", level=0)
     preload()
     threading.Thread(target=level_loop, daemon=True).start()
@@ -221,7 +286,7 @@ def stop():
         if S["loading"]:
             S["loading"].join()
         pipe = load()
-        lang = get_lang()
+        lang = S.get("lang") or get_lang()
         kw = {"task": "transcribe", "return_timestamps": False}
         if lang != "auto":
             kw["language"] = f"<|{lang}|>"
@@ -300,7 +365,7 @@ def handle(cmd):
     if c == "cancel":
         return cancel()
     if c == "lang":
-        if arg in ("auto", "en", "ru", "ja"):
+        if arg in ("layout", "auto", "en", "ru", "ja"):
             set_lang(arg)
         return {"ok": True, "lang": get_lang()}
     if c == "unload":
@@ -313,7 +378,7 @@ def handle(cmd):
         S["rec_t0"] = time.time()
         for i in range(30):
             pill("recording", level=round(0.5 + 0.4 * math.sin(i / 2), 3))
-            time.sleep(0.08)
+            time.sleep(0.15)
         pill("transcribing")
         r = transcribe_file(arg.split()[0])
         time.sleep(0.6)

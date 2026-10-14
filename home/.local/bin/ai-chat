@@ -1,6 +1,12 @@
 #!/bin/bash
 # ai-chat — Mod+A: floating liquid-glass assistant (kitty, app-id "ai-chat").
+# Default: opencode TUI on the local model (~/.config/opencode: "chat" agent, /en /sum /fix ... commands).
+# `ai-chat --classic`: the old rich TUI (~/.local/share/aifeat/chat.py).
 # If it is already open, focus it instead of starting a second one (~/.local/bin/niri-focus-or-run).
+if [ "$1" = "--classic" ]; then
+    cmd=("$HOME/.venvs/default/bin/python" "$HOME/.local/share/aifeat/chat.py")
+else
+    cmd=(opencode "$HOME/.local/share/aifeat/workspace")
+fi
 exec "$HOME/.local/bin/niri-focus-or-run" ai-chat -- \
-    kitty --class ai-chat --title "Assistant" -o window_padding_width=14 -o remember_window_size=no \
-    "$HOME/.venvs/default/bin/python" "$HOME/.local/share/aifeat/chat.py"
+    kitty --class ai-chat --title "Assistant" -o window_padding_width=10 -o remember_window_size=no "${cmd[@]}"
