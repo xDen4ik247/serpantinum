@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# serp-clock-sync — apply the Serpantinum 12h/24h clock setting (settings.json general.clock12h,
+# default true) to everything outside the shell: starship prompt, btop, GTK apps, SDDM greeter.
+# Run by the Settings > General toggle; safe to run by hand.
+set -u
+SETTINGS="$HOME/.config/serpantinum/settings.json"
+v="$(jq -r 'if .general.clock12h == false then "false" else "true" end' "$SETTINGS" 2>/dev/null || echo true)"
+if [[ "$v" == "false" ]]; then
+    fmt24=1; starship_fmt='%H:%M'; btop_fmt='%H:%M'; gtk='24h'
+else
+    fmt24=0; starship_fmt='%-I:%M %p'; btop_fmt='%-I:%M %p'; gtk='12h'
+fi
+
+st="$HOME/.config/starship.toml"
+[[ -f "$st" ]] && sed -i -E "s|^time_format = .*|time_format = \"$starship_fmt\"|" "$st"
+
+bt="$HOME/.config/btop/btop.conf"
+[[ -f "$bt" ]] && sed -i -E "s|^clock_format = .*|clock_format = \"$btop_fmt\"|" "$bt"
+
+command -v gsettings >/dev/null && gsettings set org.gnome.desktop.interface clock-format "$gtk" 2>/dev/null
+
+[[ -x "$HOME/.local/bin/greeter-sync" ]] && "$HOME/.local/bin/greeter-sync" >/dev/null 2>&1
+exit 0

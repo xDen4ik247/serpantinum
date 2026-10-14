@@ -57,7 +57,9 @@ done
 # images depend on wallpaper + avatar; theme.conf.user also on palette + local options
 imgkey="$(stat -c '%n %s %Y' "$wp" ${avatar:+"$avatar"} 2>/dev/null | md5sum | cut -c1-16)"
 local_conf=(); [[ -f "$LOCAL" ]] && local_conf=("$LOCAL")
-key="$imgkey-$(stat -c '%n %s %y' "$pal" "${local_conf[@]}" 2>/dev/null | md5sum | cut -c1-16)"
+clock12h="$(jq -r 'if .general.clock12h == false then "false" else "true" end' "$SETTINGS" 2>/dev/null || echo true)"
+[[ "$clock12h" == "false" ]] || clock12h=true
+key="$imgkey-$(echo "$clock12h"; stat -c '%n %s %y' "$pal" "${local_conf[@]}" 2>/dev/null | md5sum | cut -c1-16)"
 if [[ $FORCE -eq 0 && -f "$OUT/.stamp" && "$(cat "$OUT/.stamp")" == "$key" && -f "$OUT/bg-blur.jpg" ]]; then
     exit 0
 fi
@@ -118,6 +120,7 @@ c() { jq -r --arg k "$1" --arg d "$2" '.[$k] // $d' "$pal" 2>/dev/null || echo "
     echo "accentInk=\"$(c sapphire '#004f54')\""
     echo "error=\"$(c red '#ffb4ab')\""
     lbl="$(opt deviceLabel)"; [[ -n "$lbl" ]] && echo "deviceLabel=\"$lbl\""
+    echo "clock12h=$clock12h"
     echo "stamp=\"$(date +%s)\""
 } > "$tmp/theme.conf.user"
 

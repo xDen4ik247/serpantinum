@@ -73,7 +73,7 @@ style = "fg:3"
 
 [time]
 disabled = false
-time_format = "%H:%M"
+time_format = "%-I:%M %p"
 format = "[$time]($style)"
 style = "fg:8"
 

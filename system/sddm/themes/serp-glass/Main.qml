@@ -38,6 +38,7 @@ Item {
     readonly property string fontSans: cfg("font", "Google Sans")
     readonly property string fontIcon: cfg("iconFont", "JetBrainsMono Nerd Font")
     readonly property string deviceLabel: cfg("deviceLabel", "")
+    readonly property bool clock12h: cfg("clock12h", "true") !== "false"
 
     // Nerd Font (Material Design) glyphs
     readonly property string icLock:    "\u{F033E}"
@@ -273,7 +274,7 @@ Item {
                     font.letterSpacing: -root.u * (6 - 3 * root.t)
                     font.features: { "tnum": 1 }
                     color: root.cText
-                    text: Qt.formatTime(clock.now, "HH:mm")
+                    text: Qt.formatTime(clock.now, root.clock12h ? "h:mm AP" : "HH:mm")
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter

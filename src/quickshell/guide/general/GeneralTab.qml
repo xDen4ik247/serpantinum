@@ -41,7 +41,8 @@ Item {
         "screenshotCaptureOnRelease": false,
         "weatherInterval": 15,
         "weatherUnit": "metric",
-        "quickactions": true
+        "quickactions": true,
+        "clock12h": true
     }
 
     property var generalSettings: Config.getSetting("general", defaultGeneralSettings)
@@ -50,6 +51,7 @@ Item {
     property real sfxVolume: generalSettings.sfxVolume !== undefined ? generalSettings.sfxVolume : 100
     property bool screenshotCaptureOnRelease: generalSettings.screenshotCaptureOnRelease !== undefined ? generalSettings.screenshotCaptureOnRelease : false
     property bool quickactions: generalSettings.quickactions !== undefined ? generalSettings.quickactions : true
+    property bool clock12h: generalSettings.clock12h !== undefined ? generalSettings.clock12h : true
     property int weatherInterval: generalSettings.weatherInterval !== undefined ? generalSettings.weatherInterval : 15
     property string weatherUnit: generalSettings.weatherUnit !== undefined ? generalSettings.weatherUnit : "metric"
     property bool isLocEditOpen: false
@@ -87,6 +89,7 @@ Item {
             generalTabRoot.sfxVolume = gs.sfxVolume !== undefined ? gs.sfxVolume : 100;
             generalTabRoot.screenshotCaptureOnRelease = gs.screenshotCaptureOnRelease !== undefined ? gs.screenshotCaptureOnRelease : false;
             generalTabRoot.quickactions = gs.quickactions !== undefined ? gs.quickactions : true;
+            generalTabRoot.clock12h = gs.clock12h !== undefined ? gs.clock12h : true;
             generalTabRoot.weatherInterval = gs.weatherInterval !== undefined ? gs.weatherInterval : 15;
             generalTabRoot.weatherUnit = gs.weatherUnit !== undefined ? gs.weatherUnit : "metric";
             generalTabRoot.generalSettings = gs;
@@ -117,6 +120,7 @@ Item {
         current.sfxVolume = generalTabRoot.sfxVolume;
         current.screenshotCaptureOnRelease = generalTabRoot.screenshotCaptureOnRelease;
         current.quickactions = generalTabRoot.quickactions;
+        current.clock12h = generalTabRoot.clock12h;
         current.weatherInterval = generalTabRoot.weatherInterval;
         current.weatherUnit = generalTabRoot.weatherUnit;
         Config.setSetting("general", current);
@@ -321,6 +325,26 @@ Item {
                     onValueChanged: function(index, value) {
                         generalTabRoot.currentLanguage = generalTabRoot.languageCodes[index];
                         generalTabRoot.updateGeneralSettings();
+                    }
+                }
+            }
+
+            SettingsRow {
+                rootObj: generalTabRoot.rootObj
+                icon: "󰅐"
+                title: I18n.t("guide.general.clock12h.title", "12-hour clock")
+                description: I18n.t("guide.general.clock12h.desc", "Show time as 6:18 PM everywhere (bar, lock screen, login screen, terminal). Off = 18:18")
+
+                Toggle {
+                    checked: generalTabRoot.clock12h
+                    accentColor: ThemeBackend.mauve
+                    baseColor: ThemeBackend.surface1
+                    handleColor: ThemeBackend.crust
+                    handleOffColor: ThemeBackend.text
+                    onToggled: function(c) {
+                        generalTabRoot.clock12h = c;
+                        generalTabRoot.updateGeneralSettings();
+                        Quickshell.execDetached(["bash", "-c", "sleep 0.4; exec \"$HOME/.local/bin/serp-clock-sync\""]);
                     }
                 }
             }

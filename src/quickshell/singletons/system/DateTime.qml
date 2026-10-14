@@ -10,16 +10,32 @@ Item {
     property int _lastDay: -1
     property string _lastLang: ""
 
+    // Global 12h/24h switch (Settings > General). Default: 12-hour.
+    readonly property bool clock12h: {
+        if (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.general && Config.rawSettings.general.clock12h !== undefined)
+            return !!Config.rawSettings.general.clock12h;
+        return true;
+    }
+
+    // Force the hour/AM-PM part of a pattern to the chosen mode (12h: "h:mm AP", 24h: "HH:mm").
+    function applyMode(fmt, twelve) {
+        let f = (fmt && fmt !== "") ? fmt : "HH:mm";
+        f = f.replace(/\s*[aA][pP]?/g, "");
+        f = f.replace(/[hH]+/g, twelve ? "h" : "HH");
+        if (twelve) f += " AP";
+        return f;
+    }
+
     readonly property string timeFormat: {
+        let raw = "HH:mm";
         if (typeof Config !== "undefined" && Config.rawSettings) {
             if (Config.rawSettings.bar && Config.rawSettings.bar.time && Config.rawSettings.bar.time.format !== undefined) {
-                return Config.rawSettings.bar.time.format;
-            }
-            if (Config.rawSettings.general && Config.rawSettings.general.time_format !== undefined) {
-                return Config.rawSettings.general.time_format;
+                raw = Config.rawSettings.bar.time.format;
+            } else if (Config.rawSettings.general && Config.rawSettings.general.time_format !== undefined) {
+                raw = Config.rawSettings.general.time_format;
             }
         }
-        return "HH:mm:ss";
+        return applyMode(raw, clock12h);
     }
 
     readonly property string hourFormat: {
@@ -49,7 +65,7 @@ Item {
         return "";
     }
 
-    readonly property bool is12Hour: amPmFormat !== "" || hourFormat === "hh" || hourFormat === "h"
+    readonly property bool is12Hour: clock12h
     readonly property bool hasSeconds: secondFormat !== "" || timeFormat.indexOf("ss") !== -1 || timeFormat.indexOf("s") !== -1
 
     property string time: ""

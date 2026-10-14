@@ -201,6 +201,10 @@
         "title": "Change the volume of sfx effects",
         "desc": "Doesn't affect system audio outputs"
       },
+      "clock12h": {
+        "title": "12-hour clock",
+        "desc": "Show time as 6:18 PM everywhere (bar, lock screen, login screen, terminal). Off = 18:18"
+      },
       "quickactions": {
         "title": "Quickactions",
         "desc": "Enable floating quickactions overlay"

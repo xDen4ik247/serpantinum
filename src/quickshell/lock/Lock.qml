@@ -55,6 +55,8 @@ Scope {
         root.updateDeInfo();
         root.updateScreenCount();
         Quickshell.execDetached(["rm", "-f", Caching.getRunDir("lock") + "/locked"]);
+        // a shell restarted mid-lock never sees the unlock, so make sure fcitx5 is back
+        Quickshell.execDetached(["systemctl", "--user", "start", "fcitx5.service"]);
     }
 
     Component.onDestruction: {
@@ -290,10 +292,14 @@ Scope {
         locked: false
         onLockedChanged: {
             let lockFile = Caching.getRunDir("lock") + "/locked";
+            // fcitx5 is paused while locked: Alt+Shift (its layout switch) on the lock screen
+            // left niri's red "dead lock" screen; the password is typed on niri's plain us layout
             if (locked) {
                 Quickshell.execDetached(["touch", lockFile]);
+                Quickshell.execDetached(["systemctl", "--user", "stop", "fcitx5.service"]);
             } else {
                 Quickshell.execDetached(["rm", "-f", lockFile]);
+                Quickshell.execDetached(["systemctl", "--user", "start", "fcitx5.service"]);
             }
         }
 
@@ -1119,14 +1125,8 @@ Scope {
                                 visible: opacity > 0.01
 
                                 property var currentTime: new Date()
-                                property string timeFormat: {
-                                    if (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.time && Config.rawSettings.bar.time.format !== undefined) {
-                                        return Config.rawSettings.bar.time.format;
-                                    }
-                                    return "HH:mm:ss";
-                                }
-                                readonly property bool is12h: timeFormat.includes("h") || timeFormat.toLowerCase().includes("ap")
-                                readonly property string hourFmt: is12h ? (timeFormat.includes("hh") ? "hh" : "h") : (timeFormat.includes("H") && !timeFormat.includes("HH") ? "H" : "HH")
+                                readonly property bool is12h: DateTime.is12Hour
+                                readonly property string hourFmt: is12h ? "h" : "HH"
 
                                 Component.onCompleted: {
                                     updateClock();

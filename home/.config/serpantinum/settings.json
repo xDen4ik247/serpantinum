@@ -7,7 +7,8 @@
     "weatherUnit": "metric",
     "sfxVolume": 18,
     "screenshotCaptureOnRelease": true,
-    "quickactions": true
+    "quickactions": true,
+    "clock12h": true
   },
   "syspanel": {
     "clipExpandProgress": 0,
@@ -20,7 +21,7 @@
     "opacity": 100,
     "style": "modular",
     "time": {
-      "format": "HH:mm"
+      "format": "h:mm AP"
     },
     "autohide": false,
     "autohideTimeout": 1000,
@@ -135,7 +136,7 @@
         "isCustom": false
       }
     },
-    "manualInhibit": false,
+    "manualInhibit": true,
     "customActions": [
       {
         "id": "suspend-guarded",
@@ -154,10 +155,10 @@
     ]
   },
   "notifications": {
-    "dnd": true,
+    "dnd": false,
     "position": "top right",
     "sound": true,
-    "soundFile": "/home/user/.local/share/serpantinum/src/assets/sounds/notifications/Sneak.mp3"
+    "soundFile": "/home/user/.local/share/serpantinum/src/assets/sounds/notifications/Botanica.wav"
   },
   "display": {
     "monitors": {
@@ -196,6 +197,6 @@
     "attachToBar": true
   },
   "inputs": {
-    "passwordReveal": false
+    "passwordReveal": true
   }
 }
