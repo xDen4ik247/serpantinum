@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# ime-mode — switch Mozc's input mode (via the aibubble fcitx5 addon). fcitx5 shows the new mode
+# in its popup at the text cursor.
+#   ime-mode hiragana|katakana|half-katakana|latin|direct   set it (turns Mozc on first if needed)
+#   ime-mode toggle                                           hiragana <-> full katakana (Mod+Alt+K)
+#   ime-mode cycle                                            hiragana -> katakana -> latin -> back
+set -u
+call() { busctl --user call org.fcitx.Fcitx5 /aibubble org.aifeat.Bubble1 "$@"; }
+if [ "$(fcitx5-remote -n 2>/dev/null)" != mozc ]; then
+    fcitx5-remote -s mozc; sleep 0.2
+fi
+cur=$(call SubMode 2>/dev/null | sed -E 's/^s "(.*)"$/\1/')
+case "${1:-toggle}" in
+    hiragana)       want=hiragana ;;
+    katakana)       want=katakana_full ;;
+    half-katakana)  want=katakana_half ;;
+    latin)          want=alpha_half ;;
+    direct)         want=direct ;;
+    toggle)         [ "$cur" = "Full Katakana" ] && want=hiragana || want=katakana_full ;;
+    cycle)          case "$cur" in Hiragana) want=katakana_full ;; "Full Katakana") want=alpha_half ;; *) want=hiragana ;; esac ;;
+    *) echo "usage: ime-mode hiragana|katakana|half-katakana|latin|direct|toggle|cycle" >&2; exit 2 ;;
+esac
+call Action s "mozc-mode-$want" >/dev/null
+# fcitx5 doesn't announce Mozc mode changes itself: flash the new mode at the cursor
+case "$want" in
+    hiragana) msg="あ  Hiragana" ;; katakana_full) msg="ア  Katakana" ;; katakana_half) msg="ｱ  Half Katakana" ;;
+    alpha_half) msg="A  Latin" ;; *) msg="A  Direct" ;;
+esac
+call Show s "$msg" >/dev/null
+( sleep 1.1; call Hide >/dev/null ) &

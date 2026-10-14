@@ -16,6 +16,7 @@ binds {
     Mod+H hotkey-overlay-title="Serpantinum settings" { spawn "serpantinum" "msg" "toggle" "guide"; }
     Mod+W hotkey-overlay-title="Wallpaper picker" { spawn "serpantinum" "msg" "toggle" "wallpaper"; }
     Mod+L hotkey-overlay-title="Lock screen" { spawn "serpantinum" "lock"; }
+    Mod+Alt+K hotkey-overlay-title="Japanese: toggle hiragana / katakana (Mozc)" { spawn "/home/user/.local/bin/ime-mode" "toggle"; }
     Mod+Alt+I hotkey-overlay-title="Fix input method (restart fcitx5 + Mozc)" { spawn "/home/user/.local/bin/ime-fix"; }
     XF86PowerOff hotkey-overlay-title=null { spawn "serpantinum" "lock"; }
     Mod+Alt+R hotkey-overlay-title="Restart Serpantinum" { spawn "serpantinum" "reload"; }
@@ -71,15 +72,15 @@ binds {
     Mod+7 { focus-workspace 7; }
     Mod+8 { focus-workspace 8; }
     Mod+9 { focus-workspace 9; }
-    Mod+Shift+1 { move-window-to-workspace 1 focus=false; }
-    Mod+Shift+2 { move-window-to-workspace 2 focus=false; }
-    Mod+Shift+3 { move-window-to-workspace 3 focus=false; }
-    Mod+Shift+4 { move-window-to-workspace 4 focus=false; }
-    Mod+Shift+5 { move-window-to-workspace 5 focus=false; }
-    Mod+Shift+6 { move-window-to-workspace 6 focus=false; }
-    Mod+Shift+7 { move-window-to-workspace 7 focus=false; }
-    Mod+Shift+8 { move-window-to-workspace 8 focus=false; }
-    Mod+Shift+9 { move-window-to-workspace 9 focus=false; }
+    Mod+Shift+1 { move-window-to-workspace 1; }
+    Mod+Shift+2 { move-window-to-workspace 2; }
+    Mod+Shift+3 { move-window-to-workspace 3; }
+    Mod+Shift+4 { move-window-to-workspace 4; }
+    Mod+Shift+5 { move-window-to-workspace 5; }
+    Mod+Shift+6 { move-window-to-workspace 6; }
+    Mod+Shift+7 { move-window-to-workspace 7; }
+    Mod+Shift+8 { move-window-to-workspace 8; }
+    Mod+Shift+9 { move-window-to-workspace 9; }
 
     // ── Mouse wheel ──
     Mod+WheelScrollDown cooldown-ms=150 { focus-workspace-down; }
