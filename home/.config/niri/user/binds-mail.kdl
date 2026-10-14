@@ -1,0 +1,4 @@
+// Keybinds owned by the mail feature (see config.kdl include order).
+binds {
+    Mod+I hotkey-overlay-title="Mail: open Glass Mail (or focus it)" { spawn "/home/user/.local/bin/glass-mail"; }
+}

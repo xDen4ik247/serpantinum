@@ -28,6 +28,7 @@ echo ":: Serpantinum source (installed tree -> src/)"
 echo ":: dotfiles -> home/"
 copy .config/niri/config.kdl
 copy .config/niri/user
+rm -f "$R"/home/.config/niri/user/*.png   # screenshots/stickers kept next to the config, never published
 copy .config/kitty/user.conf
 copy .config/fcitx5/profile
 copy .config/fcitx5/config
@@ -43,6 +44,7 @@ copy .zshenv
 copy .zprofile
 copy .local/share/applications/jp-quiz.desktop
 copy .local/share/applications/glass-music.desktop
+copy .local/share/applications/glass-mail.desktop
 
 # Serpantinum settings without the exact location
 python3 - "$H/.config/serpantinum/settings.json" "$R/home/.config/serpantinum/settings.json" <<'EOF'
@@ -73,11 +75,11 @@ copy .config/systemd/user/mpd-mpris.service.d
 echo ":: scripts (~/.local/bin, our own only)"
 # niri-autofit, niri-dwt-toggle, sleep-guard, power-mode and the serp-* helpers are Rust binaries now:
 # their sources live in rust/ (the old Python/bash versions in rust/reference/), nothing to copy.
-for s in fcitx-layout ime-fix serp-tweaks niri-keys \
+for s in fcitx-layout ime-fix ime-mode serp-tweaks niri-keys \
          music-ctl music-player music-smart \
          gcal-setup gcal-sync \
          ai ai-chat aidict aipanel ai-notes ai-notes-panel anki-add jocr \
-         greeter-sync jp-quiz glass-music niri-focus-or-run; do
+         greeter-sync serp-clock-sync jp-quiz glass-music glass-mail niri-focus-or-run; do
     copy ".local/bin/$s"
 done
 
@@ -93,7 +95,7 @@ copy .local/share/npu-ocr/jocr
 copy .local/share/npu-ocr/ui
 
 echo ":: apps (committed files of ~/Projects/<app> only)"
-for app in jp-quiz glass-music; do
+for app in jp-quiz glass-music glass-mail; do
     if git -C "$H/Projects/$app" rev-parse -q --verify HEAD >/dev/null 2>&1; then
         rm -rf "$R/apps/$app" && mkdir -p "$R/apps/$app"
         git -C "$H/Projects/$app" archive HEAD | tar -x -C "$R/apps/$app"

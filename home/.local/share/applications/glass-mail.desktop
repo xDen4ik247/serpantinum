@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=Glass Mail
+GenericName=Mail
+Comment=Read and write mail — Gmail, Yandex, Mail.ru, Outlook or any IMAP account
+Exec=glass-mail %u
+Icon=glass-mail
+Terminal=false
+Categories=Network;Email;
+Keywords=mail;email;inbox;gmail;yandex;imap;
+MimeType=x-scheme-handler/mailto;
+StartupWMClass=glass-mail
+StartupNotify=false
+Actions=compose;
+
+[Desktop Action compose]
+Name=New message
+Exec=glass-mail --compose

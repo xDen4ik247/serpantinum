@@ -28,6 +28,7 @@ window-rule {
     match app-id="^gcal-setup$"         // Connect Google Calendar (rules-calendar.kdl)
     match app-id="^music-player$"       // rmpc library player (rules-music.kdl)
     match app-id="^glass-music$"        // Glass Music app (rules-music.kdl)
+    match app-id="^glass-mail$"         // Glass Mail app (rules-mail.kdl)
     match app-id="^jp-quiz$"            // JP Quiz (rules-quiz.kdl)
     background-effect {
         blur true

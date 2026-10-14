@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# glass-mail — open Glass Mail as a normal niri app (app-id "glass-mail"), or focus it when it
+# is already running. Close it like any window (Mod+Q).
+#   glass-mail --open ACC FOLDER UID   open a message (desktop notifications use this)
+#   glass-mail --mailto mailto:…       compose (default mail handler for mailto: links)
+#   glass-mail --compose               new message
+APP="${GLASS_MAIL_APP:-$HOME/.local/share/glass-mail/app}"
+TITLE="${GLASS_MAIL_TITLE:-Glass Mail}"
+APP_ID="${GLASS_MAIL_APP_ID:-glass-mail}"
+CALL=()
+case "${1:-}" in
+    --open) CALL=(openMessage "$2" "$3" "$4") ;;
+    --mailto) CALL=(mailto "$2") ;;
+    mailto:*) CALL=(mailto "$1") ;;
+    --compose) CALL=(compose) ;;
+esac
+ipc() { quickshell ipc -p "$APP/qml" call glassmail "$@" >/dev/null 2>&1; }
+FOCUS=$(command -v niri-focus-or-run || echo "$HOME/.local/bin/niri-focus-or-run")
+if [ -x "$FOCUS" ] && "$FOCUS" --title "$TITLE" "$APP_ID"; then
+    [ ${#CALL[@]} -gt 0 ] && ipc "${CALL[@]}"
+    exit 0
+fi
+if [ ${#CALL[@]} -gt 0 ]; then
+    # start, then deliver the request once the window answers IPC
+    ( for _ in $(seq 1 80); do sleep 0.25; ipc state && break; done; sleep 1.5; ipc "${CALL[@]}" ) &
+fi
+export GLASS_MAIL_APP="$APP" GLASS_MAIL_TITLE="$TITLE" QS_APP_ID="$APP_ID"
+exec quickshell -n -p "$APP/qml"

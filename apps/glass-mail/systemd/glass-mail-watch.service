@@ -1,0 +1,18 @@
+[Unit]
+Description=Glass Mail watcher: instant new mail + login codes (IMAP IDLE, one sleeping connection per account)
+After=graphical-session.target network-online.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=%h/.local/share/glass-mail/app
+# the Rust watcher when installed, else the Python one
+ExecStart=/bin/sh -c 'B=%h/.local/share/glass-mail/app/bin/glass-mail-backend; [ -x "$$B" ] && exec "$$B" watch; exec /usr/bin/python3 -m glassmail.watch'
+Restart=always
+RestartSec=10
+Nice=10
+# the notification's "Open" action outlives a restart of this service
+KillMode=process
+
+[Install]
+WantedBy=graphical-session.target

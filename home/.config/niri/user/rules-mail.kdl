@@ -1,0 +1,17 @@
+// Window rules owned by the mail feature.
+
+// Glass Mail (glass-mail, ~/Projects/glass-mail; Mod+I): the mail app. A regular tiled window
+// (in Alt-Tab / overview). The app paints a translucent Matugen tint; niri blurs what is behind
+// it and draws the kitty-style hairline rim and soft shadow (the shared glass rule in rules.kdl).
+window-rule {
+    match app-id=r#"^glass-mail$"#
+    geometry-corner-radius 20
+    clip-to-geometry true
+}
+
+
+// Test runs (GLASS_MAIL_TITLE="Glass Mail (test)") never steal keyboard focus.
+window-rule {
+    match app-id=r#"^glass-mail(-test)?$"# title=r#"\(test\)$"#
+    open-focused false
+}

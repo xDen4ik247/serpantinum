@@ -1,0 +1,25 @@
+[package]
+name = "glass-mail-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Glass Mail backend (Rust port of glassmail/): IMAP/SMTP, cache, reader view, login codes, local AI, IDLE watcher"
+publish = false
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+regex = "1"
+fancy-regex = "0.14"
+rusqlite = { version = "0.37", features = ["functions"] }
+native-tls = "0.2"
+mail-parser = { version = "0.11", features = ["full_encoding"] }
+encoding_rs = "0.8"
+base64 = "0.22"
+indexmap = "2"
+sha1_smol = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
