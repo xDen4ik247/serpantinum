@@ -102,7 +102,8 @@ PanelWindow {
     focusable: false
     color: "transparent"
 
-    implicitWidth: s(350)
+    readonly property real cardWidth: glassOn ? s(372) : s(350)
+    implicitWidth: cardWidth
 
     mask: Region {
         item: popupContainer
@@ -161,7 +162,7 @@ PanelWindow {
 
         Item {
             id: popupContainer
-            width: popupWindow.s(350)
+            width: popupWindow.cardWidth
             height: popupList.height
 
             x: popupWindow.isPreset ? (popupWindow.isCenter ? (popupWindow.width - width) / 2 : (popupWindow.isLeft ? 0 : (popupWindow.width - width))) : ((popupWindow.width - width) * (popupWindow.horizontalPosition / 100.0))
@@ -173,7 +174,7 @@ PanelWindow {
                 height: Math.min(popupWindow.height, contentHeight)
                 verticalLayoutDirection: (popupWindow.isPreset ? popupWindow.isBottom : (popupWindow.verticalPosition > 50)) ? ListView.BottomToTop : ListView.TopToBottom
                 model: NotificationManager.activePopupsModel
-                spacing: popupWindow.s(12)
+                spacing: popupWindow.glassOn ? popupWindow.s(10) : popupWindow.s(12)
                 interactive: false
                 clip: false
                 boundsBehavior: Flickable.StopAtBounds
@@ -181,9 +182,10 @@ PanelWindow {
                 add: Transition {
                     ParallelAnimation {
                         NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 220; easing.type: Easing.OutCubic }
+                        NumberAnimation { property: "scale"; from: popupWindow.glassOn ? 0.9 : 1.0; to: 1.0; duration: 460; easing.type: Easing.OutBack; easing.overshoot: 1.3 }
                         NumberAnimation {
                             property: "x"
-                            from: (popupWindow.isPreset ? (popupWindow.isCenter ? 0 : (popupWindow.isLeft ? -1 : 1)) : (popupWindow.horizontalPosition < 33 ? -1 : (popupWindow.horizontalPosition > 66 ? 1 : 0))) * popupWindow.s(350) * 0.35
+                            from: (popupWindow.isPreset ? (popupWindow.isCenter ? 0 : (popupWindow.isLeft ? -1 : 1)) : (popupWindow.horizontalPosition < 33 ? -1 : (popupWindow.horizontalPosition > 66 ? 1 : 0))) * popupWindow.cardWidth * 0.35
                             to: 0
                             duration: 250
                             easing.type: Easing.OutCubic
@@ -203,7 +205,7 @@ PanelWindow {
                         NumberAnimation { property: "opacity"; to: 0.0; duration: 180; easing.type: Easing.OutCubic }
                         NumberAnimation {
                             property: "x"
-                            to: (popupWindow.isPreset ? (popupWindow.isCenter ? 0 : (popupWindow.isLeft ? -1 : 1)) : (popupWindow.horizontalPosition < 33 ? -1 : (popupWindow.horizontalPosition > 66 ? 1 : 0))) * popupWindow.s(350) * 0.35
+                            to: (popupWindow.isPreset ? (popupWindow.isCenter ? 0 : (popupWindow.isLeft ? -1 : 1)) : (popupWindow.horizontalPosition < 33 ? -1 : (popupWindow.horizontalPosition > 66 ? 1 : 0))) * popupWindow.cardWidth * 0.35
                             duration: 200
                             easing.type: Easing.OutCubic
                         }
@@ -235,7 +237,7 @@ PanelWindow {
                         && Math.abs(typeLoader.item.dragX) < width * 0.3
                     readonly property real glassDx: typeLoader.item ? typeLoader.item.dragX : 0
                     readonly property real glassDy: typeLoader.item ? typeLoader.item.dragY : 0
-                    readonly property real glassRadius: ThemeBackend.borderRadius
+                    readonly property real glassRadius: (typeLoader.item && typeLoader.item.cardRadius !== undefined ? typeLoader.item.cardRadius : ThemeBackend.borderRadius) * scale
                     Component.onCompleted: popupWindow.glassAdd(delegateWrapper)
                     Component.onDestruction: popupWindow.glassRemove(delegateWrapper)
 
@@ -291,19 +293,20 @@ PanelWindow {
                     Loader {
                         id: typeLoader
                         width: parent.width
-                        source: {
+                        readonly property string src: {
                             let app = (model.appName || "").toLowerCase();
                             if (app === "weather") return "types/Weather.qml";
                             if (app === "screenshot" || app === "screen recorder") return "types/Screenshot.qml";
+                            if (popupWindow.glassOn) return "LiquidCard.qml";
                             return "types/Default.qml";
                         }
-                        onLoaded: {
-                            if (item) {
-                                item.model = delegateWrapper.msgModel;
-                                item.root = popupRoot;
-                                item.delegateWrapper = delegateWrapper;
-                            }
+                        // hand the card its data as initial properties, so it has its final height on
+                        // the first frame: ListView does not re-place the cards below one that grows later
+                        function load() {
+                            setSource(src, { "model": delegateWrapper.msgModel, "root": popupRoot, "delegateWrapper": delegateWrapper });
                         }
+                        Component.onCompleted: load()
+                        onSrcChanged: load()
                     }
                 }
             }

@@ -86,13 +86,7 @@ Rectangle {
         let notifDate = new Date(timestamp);
         let diffSec = Math.floor((now.getTime() - notifDate.getTime()) / 1000);
 
-        let fmt = (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar && Config.rawSettings.bar.time && Config.rawSettings.bar.time.format !== undefined) ? Config.rawSettings.bar.time.format : "HH:mm";
-        let timePart = "HH:mm";
-        if (fmt.includes("hh:")) {
-            timePart = Qt.formatDateTime(notifDate, "hh:mm AP");
-        } else {
-            timePart = Qt.formatDateTime(notifDate, "HH:mm");
-        }
+        let timePart = Qt.formatDateTime(notifDate, (typeof DateTime !== "undefined" && !DateTime.is12Hour) ? "HH:mm" : "h:mm AP");
 
         if (diffSec < 60) {
             timeText = "Just now";

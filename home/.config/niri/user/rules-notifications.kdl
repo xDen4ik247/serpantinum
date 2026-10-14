@@ -1,0 +1,12 @@
+// Window/layer rules owned by the notification popups.
+//
+// Serpantinum's popups (layer "qs-popups", notifications/NotificationPopups.qml) ask for blur
+// only behind each card through ext-background-effect, so no `blur true` here. Apple-style
+// Liquid Glass is vivid: a bit more saturation than the bar, very little noise.
+layer-rule {
+    match namespace="^qs-popups$"
+    background-effect {
+        saturation 2.1
+        noise 0.02
+    }
+}
