@@ -22,6 +22,8 @@ Screenshots: coming later.
 | Login | liquid-glass SDDM greeter that follows the wallpaper and palette | `system/sddm/` |
 | Input | fcitx5 as one self-restarting service, Mozc starts in hiragana, Mod+Alt+I repairs it | `home/.config/fcitx5/`, `ime-fix` |
 | Power | `power-mode auto|perf|save`, lazy widgets, on-demand LLM, runtime PM | `power-mode`, `system/etc/` |
+| Mail | Glass Mail (Mod+I): IMAP with app passwords, always-on IDLE watcher, login codes to the clipboard | `apps/glass-mail/` |
+| Rust | niri is Rust, so the always-running parts are too: app backends and shell helpers ([comparison](rust.md)) | `rust/`, `apps/*/backend`, `apps/jp-quiz/engine` |
 
 ## Repository layout
 
@@ -29,9 +31,10 @@ Screenshots: coming later.
 src/            Serpantinum itself (upstream + the glass changes, one commit per feature)
 home/           dotfiles relative to $HOME (paths written as /home/user — replace with your own)
 system/         root-owned parts: SDDM theme + installer, udev/sysctl power tweaks, package list
-apps/           JP Quiz and Glass Music
+apps/           JP Quiz, Glass Music and Glass Mail
+rust/           the Rust shell helpers (originals in rust/reference/, tests in rust/tests/)
 install/        glass.sh + glass-modules/ (the glass installer, next to upstream's install.sh + modules/)
-docs/glass/     this file
+docs/glass/     this file, rust.md (Python/bash vs Rust)
 tools/          sync-from-system.sh (machine -> repo), check-secrets.sh (run before every commit)
 ```
 
