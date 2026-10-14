@@ -1,7 +1,11 @@
 import QtQuick
+import QtQuick.Effects
+import QtQuick.Window
 
-// The right island: the open message in a calm reader view (HTML rewritten into themed text
-// and images by the backend), attachments, the rest of the conversation, quick reply.
+// The right island: the open message in a calm reader view, attachments, the rest of the
+// conversation, quick reply. HTML mails show as the web would draw them (a picture made by
+// glass-mail-web, with clickable links); "Text" switches to the themed text view, which plain
+// mails always use.
 Item {
     id: rd
     property var app
@@ -10,6 +14,25 @@ Item {
     readonly property var m: app.msg
     readonly property var r: app.cur
     readonly property real bodyW: Math.min(flick.width - 64, 820)
+
+    // ---- web view requests: on open, on "Show images", on Web/Text, and when the width settles
+    readonly property bool webMode: !!(rd.m && !rd.m.error && rd.m.kind === "html" && !rd.app.textView && !rd.app.webOff)
+                                    && rd.app.webState !== "failed" && !body.translated
+    property real lastWebW: 0
+    function askWeb() {
+        const w = Math.round(rd.bodyW);
+        if (w < 200 || !rd.app.wantsWeb()) return;
+        rd.lastWebW = w;
+        rd.app.requestWeb(w, Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1);
+    }
+    Timer { id: webTimer; interval: 250; onTriggered: rd.askWeb() }
+    Connections {
+        target: rd.app
+        function onMsgChanged() { Qt.callLater(rd.askWeb); }
+        function onShowImagesChanged() { Qt.callLater(rd.askWeb); }
+        function onTextViewChanged() { Qt.callLater(rd.askWeb); }
+    }
+    onBodyWChanged: if (rd.webMode && Math.abs(rd.bodyW - rd.lastWebW) > 16) webTimer.restart()
 
     Glass {
         anchors.fill: parent
@@ -281,7 +304,7 @@ Item {
                 width: parent.width
                 height: 46
                 radius: 14
-                visible: !!(rd.m && rd.m.remote > 0 && !rd.app.showImages)
+                visible: !!(rd.m && !rd.app.showImages && (rd.m.remote > 0 || (rd.webMode && webBox.w && webBox.w.remote > 0)))
                 color: rd.app.th.alpha(rd.app.th.accent2, 0.12)
                 Icon { id: imgOff; x: 14; app: rd.app; name: "image-off"; size: 19; color: rd.app.th.accent2; anchors.verticalCenter: parent.verticalCenter }
                 Text {
@@ -362,9 +385,109 @@ Item {
                 font.pixelSize: 15
             }
 
-            // body
+            // Web / Text for HTML mails
+            Row {
+                spacing: 6
+                visible: !!(rd.m && !rd.m.error && rd.m.kind === "html" && !rd.app.webOff && !body.translated)
+                Chip { app: rd.app; height: 28; text: "Web"; active: !rd.app.textView; onClicked: rd.app.textView = false }
+                Chip { app: rd.app; height: 28; text: "Text"; active: rd.app.textView; onClicked: rd.app.textView = true }
+            }
+
+            // the web view: the mail as drawn by WebKit, links laid over it
+            Item {
+                id: webBox
+                visible: rd.webMode
+                width: parent.width
+                readonly property var w: rd.app.web && rd.r && rd.app.web.key === rd.app.key(rd.r) ? rd.app.web : null
+                // while a new width is being drawn, shrink the old picture to fit
+                readonly property real k: w ? Math.min(1, width / Math.max(1, w.w)) : 1
+                height: w ? Math.ceil(w.h * k) + (w.cut ? 44 : 0) : 120
+
+                // loading: soft placeholder lines
+                Column {
+                    visible: !webBox.w
+                    spacing: 12
+                    width: parent.width
+                    Repeater {
+                        model: [0.92, 0.78, 0.85, 0.55]
+                        Rectangle {
+                            required property real modelData
+                            width: webBox.width * modelData
+                            height: 14
+                            radius: 7
+                            color: rd.app.th.alpha(rd.app.th.text, 0.07)
+                            SequentialAnimation on opacity {
+                                loops: Animation.Infinite
+                                running: !webBox.w && webBox.visible
+                                NumberAnimation { from: 1; to: 0.4; duration: 650; easing.type: Easing.InOutSine }
+                                NumberAnimation { from: 0.4; to: 1; duration: 650; easing.type: Easing.InOutSine }
+                            }
+                        }
+                    }
+                }
+
+                Image {
+                    id: webImg
+                    visible: false
+                    source: webBox.w ? "file://" + webBox.w.png : ""
+                    width: webBox.w ? webBox.w.w * webBox.k : 0
+                    height: webBox.w ? webBox.w.h * webBox.k : 0
+                    asynchronous: true
+                    smooth: true
+                    mipmap: webBox.k < 1
+                    cache: false
+                }
+                // designed mails sit on white paper with round corners; prose blends into the glass
+                MultiEffect {
+                    source: webImg
+                    width: webImg.width
+                    height: webImg.height
+                    visible: !!webBox.w && webImg.status === Image.Ready
+                    maskEnabled: !!(webBox.w && webBox.w.paper)
+                    maskSource: paperMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                }
+                Item {
+                    id: paperMask
+                    width: webImg.width
+                    height: webImg.height
+                    layer.enabled: true
+                    visible: false
+                    Rectangle { anchors.fill: parent; radius: 14; color: "black" }
+                }
+                Repeater {
+                    model: webBox.w ? webBox.w.links : []
+                    MouseArea {
+                        required property var modelData
+                        x: modelData[0] * webBox.k
+                        y: modelData[1] * webBox.k
+                        width: modelData[2] * webBox.k
+                        height: modelData[3] * webBox.k
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onEntered: rd.hoverLink = modelData[4]
+                        onExited: if (rd.hoverLink === modelData[4]) rd.hoverLink = ""
+                        onClicked: rd.app.openLink(modelData[4])
+                    }
+                }
+                Text {
+                    visible: !!(webBox.w && webBox.w.cut)
+                    anchors { left: parent.left; bottom: parent.bottom; bottomMargin: 12 }
+                    text: "This message is very long. <a href='#'>Open it in the browser</a> for the rest."
+                    textFormat: Text.StyledText
+                    linkColor: rd.app.th.accent
+                    color: rd.app.th.sub1
+                    font.family: rd.app.th.font
+                    font.pixelSize: 13
+                    onLinkActivated: rd.app.openInBrowser()
+                    HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                }
+            }
+
+            // body (text view)
             Repeater {
-                model: rd.m && rd.m.blocks && !body.translated ? rd.m.blocks : []
+                model: rd.m && rd.m.blocks && !body.translated && !rd.webMode ? rd.m.blocks : []
                 delegate: Loader {
                     required property var modelData
                     width: body.width

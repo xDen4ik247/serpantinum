@@ -465,7 +465,7 @@ impl Server {
                 let hub = h.clone();
                 std::thread::spawn(move || pick(&hub, rid));
             }
-            "att-open" | "att-save" | "browser" | "source" => {
+            "att-open" | "att-save" | "browser" | "source" | "web" => {
                 let a = self.acc(&st(c, "acc"))?;
                 let hub = h.clone();
                 let c2 = c.clone();
@@ -475,6 +475,11 @@ impl Server {
                     uid: num(&c["uid"]),
                     then: Box::new(move |raw| match cmd.as_str() {
                         "browser" => browser(&hub, raw, &c2),
+                        "web" => {
+                            // drawing takes a moment: off the account's worker
+                            let (hub, c2) = (hub.clone(), c2.clone());
+                            std::thread::spawn(move || web_view(&hub, raw, &c2));
+                        }
                         "source" => source(raw),
                         _ => attachment(&hub, raw, &c2),
                     }),
@@ -802,6 +807,24 @@ fn browser(h: &Hub, raw: Option<Vec<u8>>, c: &Value) {
     if std::fs::write(&p, page).is_ok() {
         xdg_open(&p.to_string_lossy());
     }
+}
+
+/// The reader's web view of an HTML mail (glass-mail-web): a picture + link boxes.
+fn web_view(h: &Hub, raw: Option<Vec<u8>>, c: &Value) {
+    let mut out = match raw {
+        None => json!({"ok": false, "error": "Couldn’t get that message from the server"}),
+        Some(raw) => {
+            let page = mime::web_html(&raw, truthy(&c["images"]), &crate::web::css(&c["colors"]));
+            let mut v = crate::web::render(&page, c["width"].as_f64().unwrap_or(720.0), c["zoom"].as_f64().unwrap_or(1.0));
+            v["remote"] = json!(crate::web::remote_refs(&page));
+            v
+        }
+    };
+    if let Some(o) = out.as_object_mut() {
+        o.insert("type".into(), json!("web"));
+        o.insert("rid".into(), c["rid"].clone());
+    }
+    h.emit(out);
 }
 
 fn source(raw: Option<Vec<u8>>) {

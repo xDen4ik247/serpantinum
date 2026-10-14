@@ -17,6 +17,13 @@ if command -v cargo >/dev/null && cargo build --release --quiet --manifest-path 
 else
     echo "cargo missing or the build failed: Glass Mail runs on the Python backend"
 fi
+# the web view of HTML mails (WebKitGTK; without it HTML mails show in the text view)
+if [ -x "$DEST/app.new/bin/glass-mail-backend" ] && pkg-config --exists webkit2gtk-4.1 2>/dev/null \
+    && cargo build --release --quiet --manifest-path web/Cargo.toml; then
+    install -D -m 755 web/target/release/glass-mail-web "$DEST/app.new/bin/glass-mail-web"
+else
+    echo "webkit2gtk-4.1 missing or the build failed: HTML mails use the text view"
+fi
 find "$DEST/app.new" -name __pycache__ -prune -exec rm -rf {} +
 rm -f "$DEST/app.new/qml/shaders/"*.frag
 # swap in one step (an open window live-reloads; a gap without app/ breaks that reload)

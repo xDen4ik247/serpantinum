@@ -1,7 +1,7 @@
 //! Login / verification codes in mail ("Your code is 482913"), found without AI (port of codes.py).
 //!
-//! Every number-like token (4–8 digits, "123 456", "123-456", G-123456, 6–8 letter+digit codes)
-//! gets a score: near a code word it rises; things that look like money, dates, years, phone
+//! Every number-like token (4–8 digits, "123 456", "123-456", G-123456, 6–8 letter+digit codes,
+//! 5-character Steam Guard style codes right after "Login Code") gets a score: near a code word it rises; things that look like money, dates, years, phone
 //! numbers, order / tracking numbers fall. The best candidate above the threshold wins. Only mail
 //! that talks about codes at all is considered. Slicing is by characters, like Python's.
 use fancy_regex::Regex as FRegex;
@@ -62,6 +62,7 @@ fn res() -> &'static Res {
             r"|\d{3}[ -]\d{3}",
             r"|\d{4,8}",
             r"|(?=[A-Z0-9]{6,8}\b)(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,8}",
+            r"|(?=[A-Z0-9]{5}\b)[A-Z0-9]{5}", // JH4CQ, FGHKT (Steam Guard): only right after "code"
             r")(?![\w/@]|\.\d|,\d|:\d)"
         )))
         .unwrap(),
@@ -143,6 +144,11 @@ pub fn score(src: &str, a: usize, b: usize, tok: &str) -> i64 {
         s += 3;
     } else if r.letters_dash.is_match(tok) {
         s += 4;
+    } else if tok.chars().count() == 5 {
+        s += 1; // 5 letters/digits: only as "Login Code JH4CQ" / "code: FGHKT"
+        if !r.code_is.is_match(before) {
+            s -= 6;
+        }
     } else {
         s += 1; // letter+digit codes need strong context
         if !r.strong.is_match(tail(before, 40)) {
@@ -230,5 +236,9 @@ mod tests {
         assert_eq!(find("G-482913 is your Google verification code", "").map(|c| c.0), Some("G-482913".into()));
         assert_eq!(find("Ваш заказ 123456", "Спасибо за заказ").map(|c| c.0), None);
         assert_eq!(find("Код подтверждения", "Код для входа в аккаунт: 384 920").map(|c| c.0), Some("384920".into()));
+        let steam = "Here is the Steam\r\nGuard code you need to access your account:\n\nRequest made from\r\nGermany\r\n\r\nLogin Code\r\nJH4CQ\r\n";
+        assert_eq!(find("Your Steam account: Access from new computer", steam).map(|c| c.0), Some("JH4CQ".into()));
+        assert_eq!(find("Steam Guard code", "Login Code\r\nFGHKT\r\n").map(|c| c.0), Some("FGHKT".into()));
+        assert_eq!(find("Your verification code", "Your code is below. GUARD it well. EARLY access starts today.").map(|c| c.0), None);
     }
 }

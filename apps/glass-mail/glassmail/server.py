@@ -483,6 +483,9 @@ class Server:
             a = self.acc(c['acc'])
             a.fg('fetchraw', path=c['folder'], uid=int(c['uid']),
                  then=lambda raw, c=c: self.attachment(raw, c))
+        elif cmd == 'web':
+            # the web view's renderer (glass-mail-web) is driven by the Rust backend only
+            h.emit({'type': 'web', 'rid': c.get('rid'), 'ok': False, 'error': 'unavailable'})
         elif cmd == 'browser':
             a = self.acc(c['acc'])
             a.fg('fetchraw', path=c['folder'], uid=int(c['uid']),

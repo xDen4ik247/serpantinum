@@ -1,0 +1,19 @@
+[package]
+name = "glass-mail-web"
+version = "0.1.0"
+edition = "2021"
+description = "Glass Mail's HTML mail renderer: WebKitGTK offscreen -> PNG + link map (no page scripts, no navigation)"
+publish = false
+
+[dependencies]
+webkit2gtk = { version = "2.0", features = ["v2_40"] }
+gtk = "0.18"
+cairo-rs = { version = "0.18", features = ["png"] }
+serde_json = "1"
+javascriptcore = { package = "javascriptcore-rs", version = "1" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

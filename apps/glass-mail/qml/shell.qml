@@ -121,6 +121,12 @@ ShellRoot {
         property var sel: ({})                    // key -> row (multi-select)
         readonly property int selCount: Object.keys(sel).length
         property bool showImages: false
+        // the web view of HTML mails (glass-mail-web draws them; see backend/src/web.rs)
+        property var web: null                    // {key, png, w, h, paper, cut, links}
+        property int webRid: 0
+        property string webState: ""              // "" | loading | ready | failed
+        property bool webOff: false               // no renderer (Python backend / not installed)
+        property bool textView: false             // the user switched this mail to plain text
 
         // compose
         property var compose: null
@@ -174,6 +180,7 @@ ShellRoot {
             else if (t === "list") onList(m);
             else if (t === "changed") onChanged(m);
             else if (t === "msg") onMsg(m);
+            else if (t === "web") onWeb(m);
             else if (t === "acted") onActed(m);
             else if (t === "undone") { toast("undo", m.n ? "Moved back" : "Couldn’t undo that", ""); refreshList(); }
             else if (t === "search") onSearch(m);
@@ -342,6 +349,7 @@ ShellRoot {
             msgLoading = true;
             openRid += 1;
             showImages = false;
+            web = null; webState = ""; textView = false;
             send({ cmd: "open", acc: r.acc, folder: r.folder, uid: r.uid, rid: openRid });
             if (!r.seen && settings.markRead !== false) patch([r], { seen: true });
         }
@@ -355,6 +363,24 @@ ShellRoot {
             if (!translation || translation.key !== key(cur)) translation = null;
             if (aiOn && settings.aiAuto !== false && !msg.code) autoAnalyze.restart();
             if (replyWhenReady) { const w = replyWhenReady; replyWhenReady = ""; if (w === "forward") forward(); else reply(w === "replyall"); }
+        }
+        function wantsWeb() { return !!(cur && msg && !msg.error && msg.kind === "html" && !webOff && !textView); }
+        function requestWeb(width, zoom) {
+            if (!wantsWeb()) return;
+            webRid += 1;
+            if (!web || web.key !== key(cur)) webState = "loading";
+            send({ cmd: "web", acc: cur.acc, folder: cur.folder, uid: cur.uid, rid: webRid, width: width, zoom: zoom, images: showImages,
+                   colors: { text: th.hex(th.text), link: th.hex(th.accent), quote: th.hex(th.sub1), font: th.font } });
+        }
+        function onWeb(m) {
+            if (m.rid !== webRid) return;
+            if (!m.ok) {
+                if (m.error === "unavailable" || /installed/.test(m.error || "")) webOff = true;
+                if (!web || web.key !== key(cur)) webState = "failed";
+                return;
+            }
+            web = Object.assign({ key: key(cur) }, m);
+            webState = "ready";
         }
         function openKey(acc, folder, uid) {
             const r = items.find(x => x.acc === acc && x.folder === folder && x.uid === uid);

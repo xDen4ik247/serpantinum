@@ -525,6 +525,24 @@ pub fn cid_bytes(raw: &[u8], cid: &str) -> Option<(String, Vec<u8>)> {
 
 /// The message as a standalone, script-free HTML page (Open in browser).
 pub fn original_html(raw: &[u8], allow_remote: bool) -> String {
+    let img = if allow_remote { "img-src data: https: http:;" } else { "img-src data:;" };
+    let csp = format!("default-src 'none'; {img} style-src 'unsafe-inline' https:; font-src https: data:;");
+    page_html(raw, &csp, "")
+}
+
+/// The message for the reader's web view (glass-mail-web): like original_html, but without
+/// remote styles or fonts unless images are allowed (they can track too), and with the
+/// reader's stylesheet first in <head> so the mail's own styles win where it has them.
+pub fn web_html(raw: &[u8], allow_remote: bool, css: &str) -> String {
+    let csp = if allow_remote {
+        "default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline' https:; font-src https: data:;"
+    } else {
+        "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:;"
+    };
+    page_html(raw, csp, &format!("<style>{}</style>", css.replace("</", "<\\/")))
+}
+
+fn page_html(raw: &[u8], csp: &str, extra_head: &str) -> String {
     let Some(m) = parse(raw) else { return String::new() };
     let w = walk_parts(&m);
     let mut htm = w
@@ -539,10 +557,8 @@ pub fn original_html(raw: &[u8], allow_remote: bool) -> String {
             None => c[0].to_string(),
         })
         .into_owned();
-    let img = if allow_remote { "img-src data: https: http:;" } else { "img-src data:;" };
-    let csp = format!("default-src 'none'; {img} style-src 'unsafe-inline' https:; font-src https: data:;");
     let subject = m.header_raw("Subject").map(dec).unwrap_or_default();
-    let head = format!("<meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\"><title>{}</title>", escape(&subject, true));
+    let head = format!("<meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{csp}\"><title>{}</title>{extra_head}", escape(&subject, true));
     static SCRIPT: OnceLock<Regex> = OnceLock::new();
     htm = re(&SCRIPT, r"(?is)<script\b.*?</script>").replace_all(&htm, "").into_owned();
     static HEAD: OnceLock<Regex> = OnceLock::new();

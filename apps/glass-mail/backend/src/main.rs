@@ -19,6 +19,7 @@ mod reader;
 mod server;
 mod store;
 mod watch;
+mod web;
 
 pub use server::truthy as engine_truthy;
 

@@ -1,6 +1,7 @@
 """Login / verification codes in mail ("Your code is 482913"), found without AI.
 
-Every number-like token (4–8 digits, "123 456", "123-456", G-123456, 6–8 letter+digit codes) gets a
+Every number-like token (4–8 digits, "123 456", "123-456", G-123456, 6–8 letter+digit codes, 5-character
+Steam Guard style codes right after "Login Code") gets a
 score: near a code word (code, verification, one-time, код, подтверждения…) it rises, things that
 look like money, dates, years, phone numbers, order / tracking numbers fall. The best candidate
 above the threshold wins. Only mail that *talks about* codes is considered at all.
@@ -24,12 +25,15 @@ BAD_AFTER = re.compile(r'^\W{0,2}(₽|руб|rub|usd|eur|\$|€|%|px|mb|gb|kb|km
 PROMO = re.compile(r'(promo|coupon|discount|voucher|gift|скидк|промокод|купон|подар)', re.I)
 MONTHS = re.compile(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|янв|фев|мар|апр|мая|июн|июл|авг|сен|окт|ноя|дек)', re.I)
 
+CODE_IS = re.compile(r'(code|код|пароль|pin|otp|c[óo]digo|codice)\s*(is|es|ist|è|:|—|-|–)?\s*:?\s*$', re.I)
+
 TOKEN = re.compile(
     r'(?<![\w/.:#@-])('
     r'[A-Z]{1,3}-\d{4,8}'                    # G-123456, TG-12345
     r'|\d{3}[ -]\d{3}'                       # 123 456, 123-456
     r'|\d{4,8}'                              # 4–8 digits
     r'|(?=[A-Z0-9]{6,8}\b)(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,8}'   # AB12CD34
+    r'|(?=[A-Z0-9]{5}\b)[A-Z0-9]{5}'          # JH4CQ, FGHKT (Steam Guard): only right after "code"
     r')(?![\w/@]|\.\d|,\d|:\d)')
 
 
@@ -69,6 +73,10 @@ def score(src, a, b, tok):
         s += 3
     elif re.fullmatch(r'[A-Z]{1,3}-\d{4,8}', tok):
         s += 4
+    elif len(tok) == 5:
+        s += 1                                        # 5 letters/digits: only as "Login Code JH4CQ" / "code: FGHKT"
+        if not CODE_IS.search(before):
+            s -= 6
     else:
         s += 1                                        # letter+digit codes: need strong context
         if not STRONG.search(before[-40:]):
@@ -77,7 +85,7 @@ def score(src, a, b, tok):
         s += 4
     elif NEAR.search(near_before):
         s += 1
-    if re.search(r'(code|код|пароль|pin|otp|c[óo]digo|codice)\s*(is|es|ist|è|:|—|-|–)?\s*:?\s*$', before, re.I):
+    if CODE_IS.search(before):
         s += 3                                        # "Your code is 123456" / "Код: 123456"
     if re.match(r'^\s*(is your|это ваш|— ваш|is the|ist dein|es tu)', after, re.I):
         s += 4                                        # "123456 is your code"

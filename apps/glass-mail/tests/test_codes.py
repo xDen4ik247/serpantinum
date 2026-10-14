@@ -16,6 +16,10 @@ HAS = [
     ('Security alert', 'Enter the one-time passcode 00271843 to continue. Call +1 800 555 0199 if this wasn’t you.', '00271843'),
     ('Your Microsoft account security code', 'Please use the following security code for the Microsoft account d***@gmail.com.\n\nSecurity code: 8812\n\nIf you don\'t recognize the account, click here.', '8812'),
     ('Tu código de verificación', 'Tu código es: 551203', '551203'),
+    # Steam's real layout (2026): the code on its own line under "Login Code", letters and digits
+    ('Your Steam account: Access from new computer', 'Dear den,\n\nIt looks like you are trying to log in from a new device. Here is the Steam\r\nGuard code you need to access your account:\n\nRequest made from\r\nGermany\r\n\r\nLogin Code\r\nJH4CQ\r\n\n\r\n\r\nIf this wasn\'t you', 'JH4CQ'),
+    ('Your Steam account: Access from new computer', 'Request made from\r\nNigeria\r\n\r\nLogin Code\r\nNTR3M\r\n', 'NTR3M'),
+    ('Steam Guard code', 'Login Code\r\nFGHKT\r\nIf this wasn\'t you, change your password.', 'FGHKT'),
 ]
 NONE = [
     ('Your order #482913 has shipped', 'Tracking number 1Z999AA10123456784. Total: 2 490 ₽. Thanks for your order!'),
@@ -24,6 +28,8 @@ NONE = [
     ('Weekly newsletter', 'In 2026 we shipped 1500 features. Use promo code SAVE20 for 20% off.'),
     ('Re: Trip plan', 'The flight is at 0730 on Saturday, gate 12, seat 14C.'),
     ('Your receipt', 'Payment confirmed. Amount 49.99 USD, ref 88442211.'),
+    ('New sign in to Steam', 'New sign in to Steam\nAuthorized by: Steam Guard code from your email\nIf the details above look familiar, you can ignore this. STEAM SUPPORT'),
+    ('Your verification code', 'Your code is below. GUARD it well, never share it. EARLY access starts today.'),
 ]
 
 
