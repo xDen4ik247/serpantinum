@@ -159,7 +159,7 @@ PanelWindow {
     
     property real currentLivePosition: {
         if (!targetPlayer) return 0.0;
-        let pos = (targetPlayer === MprisController.activePlayer) ? MprisController.livePosition : targetPlayer.position;
+        let pos = (targetPlayer === MprisController.activePlayer) ? MprisController.livePosition : MprisController.posOf(targetPlayer);
         return (typeof pos === "number" && !isNaN(pos)) ? pos : 0.0;
     }
 
@@ -167,7 +167,7 @@ PanelWindow {
         target: sideMusicPopout.targetPlayer
         function onPositionChanged() {
             if (sideMusicPopout.targetPlayer && sideMusicPopout.targetPlayer !== MprisController.activePlayer) {
-                let pos = sideMusicPopout.targetPlayer.position;
+                let pos = MprisController.posOf(sideMusicPopout.targetPlayer);
                 sideMusicPopout.currentLivePosition = (typeof pos === "number" && !isNaN(pos)) ? pos : 0.0;
             }
         }
@@ -182,7 +182,7 @@ PanelWindow {
                 if (typeof sideMusicPopout.targetPlayer.positionChanged === "function") {
                     sideMusicPopout.targetPlayer.positionChanged();
                 }
-                let pos = sideMusicPopout.targetPlayer.position;
+                let pos = MprisController.posOf(sideMusicPopout.targetPlayer);
                 sideMusicPopout.currentLivePosition = (typeof pos === "number" && !isNaN(pos)) ? pos : 0.0;
             }
         }

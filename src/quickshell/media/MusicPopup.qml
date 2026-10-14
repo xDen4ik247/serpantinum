@@ -120,7 +120,7 @@ Item {
 
     // ── Position: read every frame while visible and playing (reads are local) ─
     property real livePos: 0
-    function readPos() { livePos = targetPlayer ? Math.max(0, targetPlayer.position || 0) : 0; }
+    function readPos() { livePos = targetPlayer ? MprisController.posOf(targetPlayer) : 0; }
     FrameAnimation {
         running: root.active && root.isPlaying
         onTriggered: root.readPos()

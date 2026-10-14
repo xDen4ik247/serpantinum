@@ -72,7 +72,7 @@ Item {
         subscribers++;
         // The position timer only runs while playing; a view opened during a pause
         // must still start on the right line.
-        if (root.player) root.currentPosition = root.player.position;
+        if (root.player) root.currentPosition = MprisController.posOf(root.player);
         triggerSearch();
     }
 
@@ -167,7 +167,7 @@ Item {
                 if (typeof root.player.positionChanged === "function") {
                     root.player.positionChanged();
                 }
-                root.currentPosition = root.player.position;
+                root.currentPosition = MprisController.posOf(root.player);
             } else {
                 root.currentPosition = MprisController.livePosition;
             }
@@ -204,7 +204,7 @@ Item {
     Connections {
         target: root.player
         function onPositionChanged() {
-            if (root.player) root.currentPosition = root.player.position;
+            if (root.player) root.currentPosition = MprisController.posOf(root.player);
         }
         function onTrackTitleChanged() {
             root.triggerSearch();
@@ -219,7 +219,7 @@ Item {
 
     onCurrentTrackKeyChanged: triggerSearch()
     onPlayerChanged: {
-        if (player) currentPosition = player.position;
+        if (player) currentPosition = MprisController.posOf(player);
         triggerSearch();
     }
 

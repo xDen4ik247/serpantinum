@@ -47,7 +47,7 @@ Singleton {
         }
         return "";
     }
-    property real livePosition: activePlayer ? activePlayer.position : 0
+    property real livePosition: 0
 
     property string artUrl: ""
     property string blur: ""
@@ -57,10 +57,83 @@ Singleton {
     property string deviceName: "Speaker"
     property bool fetchPending: false
 
-    onActivePlayerChanged: {
-        if (root.activePlayer) {
-            root.livePosition = root.activePlayer.position;
+    // ── Position ─────────────────────────────────────────────────────────────
+    // Quickshell extrapolates `position` from the last value it read over D-Bus and re-reads it only
+    // on its own events. mpd-mpris sends no Seeked on a track change, so after a song ended the
+    // clock kept counting from the previous one (the bar's progress line sat at 100%, synced
+    // lyrics ran ahead). The real position is read back (playerctl) on track / state changes and
+    // when the clock runs past the end; `posFix` is the difference. Nothing polls.
+    property real posFix: 0
+    property real _rawLast: 0       // Quickshell's position at the last check, and when
+    property real _rawLastT: 0
+    property real _lastResync: 0
+
+    // The position of any player, corrected for the active one. Use this instead of player.position.
+    function posOf(p) {
+        if (!p) return 0;
+        let raw = p.position || 0;
+        return Math.max(0, p === root.activePlayer ? raw + root.posFix : raw);
+    }
+
+    function refreshPosition() {
+        let p = root.activePlayer;
+        if (!p) { root.livePosition = 0; return; }
+        let now = Date.now() / 1000;
+        let raw = p.position || 0;
+        // Quickshell rebased its clock (a seek, a fresh read): its value is right again
+        let expected = root._rawLast + (p.isPlaying ? now - root._rawLastT : 0);
+        if (root._rawLastT > 0 && Math.abs(raw - expected) > 1.5) {
+            root.posFix = 0;
+            resyncTimer.restart();
         }
+        root._rawLast = raw;
+        root._rawLastT = now;
+        root.livePosition = Math.max(0, raw + root.posFix);
+        // still past the end of the track: the clock is stale, read the real position
+        if (p.length > 0 && root.livePosition > p.length + 1 && now - root._lastResync > 5) resyncTimer.restart();
+    }
+
+    function resyncPosition() {
+        if (!root.activePlayer || posProc.running) return;
+        root._lastResync = Date.now() / 1000;
+        posProc.running = true;
+    }
+
+    Timer { id: resyncTimer; interval: 400; onTriggered: root.resyncPosition() }
+
+    Process {
+        id: posProc
+        command: ["playerctl", "-a", "metadata", "--format", "{{status}}\t{{position}}\t{{xesam:title}}"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                let p = root.activePlayer;
+                if (!p) return;
+                let want = p.trackTitle || "";
+                let state = p.isPlaying ? "Playing" : (p.playbackState === MprisPlaybackState.Paused ? "Paused" : "Stopped");
+                let best = null;
+                for (let ln of this.text.split("\n")) {
+                    let f = ln.split("\t");
+                    if (f.length < 3 || f.slice(2).join("\t") !== want || f[1] === "") continue;
+                    if (!best || (f[0] === state && best[0] !== state)) best = f;
+                }
+                if (!best) return;
+                let real = Number(best[1]) / 1e6;
+                if (isNaN(real)) return;
+                p.positionChanged();
+                let raw = p.position || 0;
+                root.posFix = real - raw;
+                root._rawLast = raw;
+                root._rawLastT = Date.now() / 1000;
+                root.livePosition = Math.max(0, raw + root.posFix);
+            }
+        }
+    }
+
+    onActivePlayerChanged: {
+        root.posFix = 0;
+        root._rawLastT = 0;
+        root.refreshPosition();
+        resyncTimer.restart();
         root.queueFetch();
     }
 
@@ -71,7 +144,7 @@ Singleton {
         onTriggered: {
             if (root.activePlayer) {
                 root.activePlayer.positionChanged();
-                root.livePosition = root.activePlayer.position;
+                root.refreshPosition();
             }
         }
     }
@@ -90,10 +163,11 @@ Singleton {
     Connections {
         target: root.activePlayer
         function onPositionChanged() {
-            if (root.activePlayer) root.livePosition = root.activePlayer.position;
+            root.refreshPosition();
         }
         function onPostTrackChanged() {
-            if (root.activePlayer) root.livePosition = root.activePlayer.position;
+            root.refreshPosition();
+            resyncTimer.restart();
             root.queueFetch();
         }
         function onTrackArtUrlChanged() {
@@ -106,6 +180,8 @@ Singleton {
             root.queueFetch();
         }
         function onPlaybackStateChanged() {
+            root.refreshPosition();
+            resyncTimer.restart();
             root.queueFetch();
         }
     }
