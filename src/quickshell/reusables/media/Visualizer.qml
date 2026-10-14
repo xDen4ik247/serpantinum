@@ -145,7 +145,39 @@ Item {
     property var currentLevels: []
     property bool settling: false
 
-    onTargetsChanged: settling = true
+    // rise and fall of 1 jump straight to each cava frame, so there is nothing to animate between frames
+    readonly property bool smoothing: root.rise < 1.0 || root.fall < 1.0
+
+    function sameLevels(a, b) {
+        if (!a || !b || a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+            if (Math.abs(a[i] - b[i]) > 0.001) return false;
+        }
+        return true;
+    }
+
+    // Without smoothing, upload once per new cava frame instead of on every display frame
+    function showTargets() {
+        let t = root.targets;
+        if (root.sameLevels(t, root.currentLevels)) return;
+        let sum = 0.0;
+        for (let i = 0; i < t.length; i++) sum += t[i];
+        root.currentLevels = t;
+        root.energy = t.length > 0 ? sum / t.length : 0.0;
+        root.uploadLevels(t);
+    }
+
+    onTargetsChanged: {
+        if (!root.visible) return;
+        if (!root.smoothing) root.showTargets();
+        else if (!root.sameLevels(root.targets, root.currentLevels)) root.settling = true;
+    }
+
+    onVisibleChanged: {
+        if (!root.visible) return;
+        if (!root.smoothing) root.showTargets();
+        else root.settling = true;
+    }
 
     function packLevels(v, o) {
         let m = [];
@@ -162,11 +194,12 @@ Item {
 
     Component.onCompleted: {
         uploadLevels(new Array(128).fill(0.0));
-        settling = true;
+        if (!root.smoothing) showTargets();
+        else settling = true;
     }
 
     FrameAnimation {
-        running: root.settling && root.visible
+        running: root.settling && root.smoothing && root.visible
         onTriggered: {
             let target = root.targets;
             let cur = root.currentLevels;
