@@ -13,6 +13,12 @@ mkdir -p "$DEST/app" "$HOME/.local/bin" "$HOME/.local/share/applications" "$ICON
 rm -rf "$DEST/app.new"
 mkdir -p "$DEST/app.new"
 cp -r jpquiz qml assets "$DEST/app.new/"
+# the Rust engine (falls back to the Python one in jpquiz/ when cargo isn't installed)
+if command -v cargo >/dev/null && cargo build --release --quiet --manifest-path engine/Cargo.toml; then
+    install -D -m 755 engine/target/release/jp-quiz-engine "$DEST/app.new/bin/jp-quiz-engine"
+else
+    echo "cargo missing or the build failed: the quiz runs on the Python engine"
+fi
 find "$DEST/app.new" -name __pycache__ -prune -exec rm -rf {} +
 rm -rf "$DEST/app" && mv "$DEST/app.new" "$DEST/app"
 cp data/content.db "$DEST/content.db.new" && mv "$DEST/content.db.new" "$DEST/content.db"

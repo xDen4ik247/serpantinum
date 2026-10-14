@@ -23,10 +23,11 @@ from build.corpus import load_corpus
 from build.sentpool import build_pool
 from build.grammar import GPS
 from build import gen
+from build.dictsense import Glosser
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "content.db"
-CONTENT_VERSION = 1
+CONTENT_VERSION = 2
 
 CAPS = {  # kind: (total cap, per-kc cap)
     "particle": (7000, 500), "conj": (4500, 380), "gmean": (3000, 400), "voice": (1500, 500),
@@ -110,9 +111,8 @@ def main():
         raw["form"].append(it)
     for it in gen.gen_order(pool, rng):
         raw["order"].append(it)
-    for it in gen.gen_odd(pool, real, rng):
-        raw["odd"].append(it)
-    print(f"[{time.time()-t0:.0f}s] grammar " + " ".join(f"{k}={len(raw[k])}" for k in ("conj", "gmean", "voice", "form", "order", "odd")), flush=True)
+    # "spot the conjugation mistake" items are gone: they trained on made-up non-words
+    print(f"[{time.time()-t0:.0f}s] grammar " + " ".join(f"{k}={len(raw[k])}" for k in ("conj", "gmean", "voice", "form", "order")), flush=True)
     for it in gen.gen_kanji(pool, lx, real, rng):
         raw[it["kind"]].append(it)
     print(f"[{time.time()-t0:.0f}s] kread={len(raw['kread'])} kwrite={len(raw['kwrite'])}", flush=True)
@@ -122,6 +122,10 @@ def main():
     for it in gen.gen_meaning(pool, rng):
         raw[it["kind"]].append(it)
     print(f"[{time.time()-t0:.0f}s] meaning={len(raw['meaning'])} produce={len(raw['produce'])}", flush=True)
+
+    # ---- dictionary glossary: every word of the sentence, in the sense it has *here*
+    attach_glosses(raw, pool, lx)
+    print(f"[{time.time()-t0:.0f}s] glosses attached", flush=True)
 
     # ---- caps and balance
     final = []
@@ -153,6 +157,43 @@ def main():
 
     write_db(final, lx)
     print(f"[{time.time()-t0:.0f}s] wrote {OUT} with {len(final)} items")
+
+
+def attach_glosses(raw, pool, lx):
+    """payload["words"] = sense-matched JMdict glosses of the sentence; word items get the same sense."""
+    glosser = Glosser(lx)
+    by_sid = {ps.s.id: ps for ps in pool}
+    cache: dict[int, list] = {}
+    for items in raw.values():
+        for it in items:
+            ps = by_sid.get(it["sid"])
+            if ps is None:
+                continue
+            if ps.s.id not in cache:
+                cache[ps.s.id] = glosser.words(ps.s)
+            words = cache[ps.s.id]
+            pl = it["payload"]
+            pl["words"] = words
+            if it["kind"] not in ("vocab", "kread", "kwrite"):
+                continue
+            word = pl.get("word", "")
+            hit = next((w for w in words if w["w"] == word and not w.get("x")), None)
+            if hit is None:
+                rd = pl.get("reading") or (pl["choices"][0] if it["kind"] == "kread" else None)
+                g = glosser.gloss(word, rd, ps.s.en, ps.s.ru)
+                hit = {"w": word, "g": g[0], "gr": g[1]} if g else None
+            if hit and hit["g"]:
+                pl["gloss"], pl["gloss_ru"] = hit["g"], hit["gr"]
+            # the word may be part of a set phrase here (とおり in そのとおり): say so
+            expr = next((w for w in words if w.get("x") and word and word in w["w"] and w["w"] != word), None)
+            note_en = f" Here it's part of 「{expr['w']}」: {expr['g']}." if expr else ""
+            note_ru = f" Здесь в составе 「{expr['w']}」: {expr['gr'] or expr['g']}." if expr else ""
+            if it["kind"] == "vocab":
+                pl["explain"] = f"{word}: {pl.get('gloss', '').rstrip('.')}." + note_en
+                pl["explain_ru"] = f"{word}: {(pl.get('gloss_ru') or pl.get('gloss', '')).rstrip('.')}." + note_ru
+            elif note_en:
+                pl["explain"] += note_en
+                pl["explain_ru"] += note_ru
 
 
 def kc_label(kc: str, lx):

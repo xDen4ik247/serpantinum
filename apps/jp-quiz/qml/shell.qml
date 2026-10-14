@@ -60,7 +60,9 @@ ShellRoot {
 
     Process {
         id: engine
-        command: [Quickshell.env("JPQUIZ_PYTHON") || "python3", "-m", "jpquiz.server"]
+        // the Rust engine (bin/jp-quiz-engine, built by install.sh); the Python one when it isn't there
+        // or JPQUIZ_PYTHON asks for it. Both speak the same JSON lines.
+        command: ["sh", "-c", "[ -z \"$JPQUIZ_PYTHON\" ] && [ -x \"$0/bin/jp-quiz-engine\" ] && exec \"$0/bin/jp-quiz-engine\"; exec \"${JPQUIZ_PYTHON:-python3}\" -m jpquiz.server", shell.appDir]
         workingDirectory: shell.appDir
         environment: ({ "PYTHONPATH": shell.appDir, "PYTHONUNBUFFERED": "1" })
         stdinEnabled: true
@@ -83,7 +85,7 @@ ShellRoot {
     // ------------------------------------------------------------------ app state
     QtObject {
         id: app
-        property string state: "loading"      // loading welcome question waiting feedback intro stats
+        property string state: "loading"      // loading welcome question waiting feedback intro | views: stats details grammar
         property string prevState: "question"
         property var hello: ({})
         property var settings: ({ lang: "en", furigana: false, sound: true, auto_advance: true, target: 0.75, daily_goal: 30 })
@@ -91,6 +93,17 @@ ShellRoot {
         property var res: null
         property var card: null               // intro / placement card
         property var stats: null
+        property var grammar: null             // grammar tab: {points, focus}
+        property int grammarSel: 0
+        property var grammarEx: null
+        readonly property var views: ["stats", "details", "grammar"]
+        function inView() { return views.indexOf(state) >= 0 }
+        // question clock: pauses while a view (stats/grammar) is open, so looking things up costs no time
+        property double qElapsed: 0
+        property bool qRunning: false
+        function elapsed() { return qElapsed + (qRunning ? Date.now() - shownAt : 0) }
+        function pauseClock() { if (qRunning) { qElapsed += Date.now() - shownAt; qRunning = false; } }
+        function resumeClock() { if (!qRunning && state === "question") { shownAt = Date.now(); qRunning = true; } }
         property var pending: []               // cards to show after feedback (placement result)
         property int rating: 0
         property int ratingDelta: 0
@@ -105,6 +118,8 @@ ShellRoot {
         property string fatal: ""
         property int rid: 0
         property var orderPicked: []
+        property var lastRes: null
+        property string wantView: ""
         property string peekMode: "right"
 
         function send(obj) {
@@ -125,7 +140,7 @@ ShellRoot {
                 if (!m.placement) next();
             } else if (m.type === "question") {
                 q = m; res = null; chosen = -1; orderPicked = [];
-                shownAt = Date.now();
+                qElapsed = 0; shownAt = Date.now(); qRunning = true;
                 state = "question";
             } else if (m.type === "intro") {
                 card = m; state = "intro";
@@ -150,14 +165,27 @@ ShellRoot {
                     toasts.show("unlock", (ru() ? "Открыто N" : "Unlocked N") + lv + ": " + bands.filter(b => b.level === lv).map(b => tr(b.cat_name)).join(", "), theme.accent);
                 }
                 if (m.correct && settings.auto_advance && pending.length === 0) advanceTimer.restart();
+                // keep the last answer reachable for "add to Anki" during the next question
+                lastRes = m;
             } else if (m.type === "stats") {
-                stats = m; prevState = (state === "stats") ? prevState : state; state = "stats";
+                stats = m;
+                if (wantView === "stats" || wantView === "details") enterView(wantView);
+            } else if (m.type === "grammar") {
+                grammar = m;
+                if (grammarSel >= m.points.length) grammarSel = 0;
+                if (wantView === "grammar") enterView("grammar");
+                if (m.points.length) send({ cmd: "grammar_example", id: m.points[grammarSel].id });
+            } else if (m.type === "grammar_example") {
+                grammarEx = m;
             } else if (m.type === "peek") {
                 const right = peekMode === "right";
                 if (m.order && q) { orderPicked = (right ? m.correct : m.correct.slice().reverse()).map(t => q.ui.tiles.indexOf(t)); submitOrder(); }
                 else if (m.correct !== null) answer(right ? m.correct : (m.correct + 1) % q.ui.choices.length);
             } else if (m.type === "anki") {
                 ankiToast(m);
+                if (res && m.key === res.key && (m.status === "sent" || m.status === "queued" || m.status === "duplicate" || m.status === "partial"))
+                    res = Object.assign({}, res, { in_anki: true });
+                if (state === "details" && stats) send({ cmd: "stats" });
             } else if (m.type === "anki_sync") {
                 toasts.show(m.ok ? "cards" : "warn", (ru() ? "Anki: " : "Anki: ") + m.message, m.ok ? theme.good : theme.gold);
                 if (m.ok) send({ cmd: "stats" });
@@ -192,19 +220,30 @@ ShellRoot {
         function answer(i) {
             if (state !== "question" || !q) return;
             chosen = i;
+            const ms = elapsed(); pauseClock();
             state = "waiting";
-            send({ cmd: "answer", qid: q.qid, choice: i, ms: Date.now() - shownAt });
+            send({ cmd: "answer", qid: q.qid, choice: i, ms: ms });
         }
         function submitOrder() {
             if (state !== "question" || !q) return;
+            const ms = elapsed(); pauseClock();
             state = "waiting";
-            send({ cmd: "answer", qid: q.qid, order: orderPicked.map(i => q.ui.tiles[i]), ms: Date.now() - shownAt });
+            send({ cmd: "answer", qid: q.qid, order: orderPicked.map(i => q.ui.tiles[i]), ms: ms });
         }
         function skip() {
             if (state !== "question" || !q) return;
             chosen = -1;
+            const ms = elapsed(); pauseClock();
             state = "waiting";
-            send({ cmd: "skip", qid: q.qid, ms: Date.now() - shownAt });
+            send({ cmd: "skip", qid: q.qid, ms: ms });
+        }
+        // Anki: the current result, or (during the next question) the one you just passed
+        function ankiAdd(key) {
+            advanceTimer.stop();
+            if (key) send({ cmd: "anki_add", key: key });
+            else if (state === "feedback" && res) send({ cmd: "anki_add", key: res.key });
+            else if (lastRes) send({ cmd: "anki_add", key: lastRes.key });
+            else toasts.show("warn", ru() ? "Сначала ответьте на вопрос" : "Answer a question first", theme.gold);
         }
         function pickTile(i) {
             if (state !== "question" || !q || q.kind !== "order") return;
@@ -215,14 +254,36 @@ ShellRoot {
         function undoTile() {
             if (orderPicked.length) orderPicked = orderPicked.slice(0, -1);
         }
-        function openStats() {
-            if (state === "stats") { closeStats(); return; }
+        // views: Tab cycles Stats -> Details -> Grammar -> back to the quiz; G jumps to Grammar
+        function openView(name) {
             advanceTimer.stop();
-            send({ cmd: "stats" });
+            wantView = name;
+            send({ cmd: name === "grammar" ? "grammar" : "stats" });
         }
+        function enterView(name) {
+            if (!inView()) { prevState = state; pauseClock(); }
+            wantView = "";
+            state = name;
+        }
+        function cycleView() {
+            const i = views.indexOf(state);
+            if (i < 0) openView("stats");
+            else if (i === views.length - 1) closeStats();
+            else if (views[i + 1] === "details") enterView("details");
+            else openView(views[i + 1]);
+        }
+        function openStats() { cycleView() }
         function closeStats() {
-            state = prevState === "stats" ? "question" : prevState;
+            wantView = "";
+            if (inView()) state = views.indexOf(prevState) >= 0 ? "question" : prevState;
             if (state === "loading" || state === "waiting" || !q) next();
+            else if (state === "question") resumeClock();
+        }
+        function setFocus(gid) {
+            setSetting("focus_gp", gid);
+            toasts.show("book", gid ? ((ru() ? "Тренировка: " : "Drilling: ") + (grammar ? (grammar.points.find(p => p.id === gid) || {}).name : gid))
+                                    : (ru() ? "Тренировка выключена" : "Drill off — back to the normal mix"), theme.accent2);
+            if (grammar) send({ cmd: "grammar" });
         }
         function setSetting(k, v) {
             const s = {}; s[k] = v;
@@ -235,7 +296,8 @@ ShellRoot {
         }
     }
 
-    Timer { id: advanceTimer; interval: 1250; onTriggered: if (app.state === "feedback") app.next() }
+    // long enough to glance at the meaning and the word glosses after a right answer
+    Timer { id: advanceTimer; interval: 2600; onTriggered: if (app.state === "feedback") app.next() }
     Timer { id: orderSubmit; interval: 260; onTriggered: app.submitOrder() }
 
     // ------------------------------------------------------------------ window
@@ -267,11 +329,32 @@ ShellRoot {
                 const k = event.key;
                 const st = app.state;
                 if (k === Qt.Key_Escape) {
-                    // a normal app window now: Esc only leaves stats; close with Mod+Q like any window
-                    if (st === "stats") app.closeStats();
+                    // a normal app window now: Esc only leaves the views; close with Mod+Q like any window
+                    if (app.inView()) app.closeStats();
                     event.accepted = true; return;
                 }
-                if (k === Qt.Key_Tab) { app.openStats(); event.accepted = true; return; }
+                if (k === Qt.Key_Tab) { app.cycleView(); event.accepted = true; return; }
+                if (k === Qt.Key_G && st !== "welcome" && st !== "grammar") { app.openView("grammar"); event.accepted = true; return; }
+                if (st === "grammar") {
+                    const pts = app.grammar ? app.grammar.points : [];
+                    const pick = i => { app.grammarSel = Math.max(0, Math.min(pts.length - 1, i)); app.grammarEx = null;
+                                        if (pts.length) app.send({ cmd: "grammar_example", id: pts[app.grammarSel].id }); };
+                    if (k === Qt.Key_Down || k === Qt.Key_J) pick(app.grammarSel + 1);
+                    else if (k === Qt.Key_Up || k === Qt.Key_K) pick(app.grammarSel - 1);
+                    else if (k === Qt.Key_PageDown) pick(app.grammarSel + 8);
+                    else if (k === Qt.Key_PageUp) pick(app.grammarSel - 8);
+                    else if (k === Qt.Key_G) app.closeStats();
+                    else if ((k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_D) && pts.length) {
+                        const id = pts[app.grammarSel].id;
+                        app.setFocus(app.grammar.focus === id ? null : id);
+                    } else if (k === Qt.Key_X) app.setFocus(null);
+                    else if (k === Qt.Key_L) app.setSetting("lang", app.settings.lang === "ru" ? "en" : "ru");
+                    event.accepted = true; return;
+                }
+                if (st === "details") {
+                    if (k === Qt.Key_L) app.setSetting("lang", app.settings.lang === "ru" ? "en" : "ru");
+                    event.accepted = true; return;
+                }
                 if (st === "stats") {
                     if (k === Qt.Key_Left) app.setSetting("target", Math.round((app.settings.target - 0.05) * 100) / 100);
                     else if (k === Qt.Key_Right) app.setSetting("target", Math.round((app.settings.target + 0.05) * 100) / 100);
@@ -289,8 +372,9 @@ ShellRoot {
                     if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) app.next();
                     event.accepted = true; return;
                 }
+                if (k === Qt.Key_A && (st === "feedback" || st === "question")) { app.ankiAdd(); event.accepted = true; return; }
                 if (st === "feedback") {
-                    if (k === Qt.Key_A) { advanceTimer.stop(); app.send({ cmd: "anki_add" }); }
+                    if (k === Qt.Key_W) advanceTimer.stop();      // hold: read the words
                     else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space || k === Qt.Key_Right) app.next();
                     event.accepted = true; return;
                 }
@@ -340,15 +424,70 @@ ShellRoot {
             Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
         }
 
+        // view tabs: Stats · Details · Grammar (click or Tab)
+        Row {
+            id: viewTabs
+            anchors { top: hud.bottom; topMargin: 12; horizontalCenter: parent.horizontalCenter }
+            spacing: 8
+            opacity: app.inView() ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 220 } }
+            Repeater {
+                model: [["stats", "Stats", "Статистика"], ["details", "Details", "Подробно"], ["grammar", "Grammar", "Грамматика"],
+                        ["quiz", "Back to quiz", "К вопросам"]]
+                delegate: Rectangle {
+                    readonly property bool on: app.state === modelData[0]
+                    width: tabText.implicitWidth + 28; height: 30; radius: 15
+                    color: on ? theme.alpha(theme.accent, 0.22) : theme.alpha(theme.text, 0.06)
+                    border.color: on ? theme.alpha(theme.accent, 0.55) : theme.alpha(theme.text, 0.10)
+                    Text {
+                        id: tabText
+                        anchors.centerIn: parent
+                        text: app.ru() ? modelData[2] : modelData[1]
+                        color: parent.on ? theme.accent : theme.subtext0
+                        font { family: theme.font; pixelSize: 13; weight: Font.DemiBold }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            const v = modelData[0];
+                            if (v === "quiz") app.closeStats();
+                            else if (v === "details" && app.stats) app.enterView("details");
+                            else app.openView(v);
+                        }
+                    }
+                }
+            }
+        }
+
         Stats {
             theme: theme
             app: app
-            anchors { top: hud.bottom; left: parent.left; right: parent.right; bottom: footer.top; margins: 18; topMargin: 14 }
+            anchors { top: viewTabs.bottom; left: parent.left; right: parent.right; bottom: footer.top; margins: 18; topMargin: 12 }
             visible: opacity > 0
             opacity: app.state === "stats" ? 1 : 0
             scale: app.state === "stats" ? 1 : 0.985
             Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
             Behavior on scale { NumberAnimation { duration: 380; easing.type: Easing.OutQuint } }
+        }
+
+        Details {
+            theme: theme
+            app: app
+            anchors { top: viewTabs.bottom; left: parent.left; right: parent.right; bottom: footer.top; margins: 18; topMargin: 12 }
+            visible: opacity > 0
+            opacity: app.state === "details" ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+        }
+
+        Grammar {
+            theme: theme
+            app: app
+            anchors { top: viewTabs.bottom; left: parent.left; right: parent.right; bottom: footer.top; margins: 18; topMargin: 12 }
+            visible: opacity > 0
+            opacity: app.state === "grammar" ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
         }
 
         Text {
@@ -359,10 +498,13 @@ ShellRoot {
             font.pixelSize: 13
             text: {
                 const ru = app.ru();
-                if (app.state === "stats") return ru ? "Tab/Esc назад · ←→ цель · L язык · F фуригана · M звук · A автопереход · S синхр. с Anki · K авто-Anki" : "Tab/Esc back · ←→ target · L language · F furigana · M sound · A auto-advance · S sync with Anki · K auto-add to Anki";
-                if (app.state === "feedback") return ru ? "Enter — дальше · A в Anki · Tab статистика" : "Enter next · A add to Anki · Tab stats";
-                if (app.q && app.q.kind === "order" && app.state === "question") return ru ? "Цифры — по порядку · Backspace отмена · Space пропуск" : "Press the numbers in order · Backspace undo · Space skip";
-                return ru ? "1–4 ответ · Space пропуск · F фуригана · L язык · Tab статистика" : "1–4 answer · Space skip · F furigana · L language · Tab stats";
+                if (app.state === "stats") return ru ? "Tab дальше · Esc назад · ←→ цель · L язык · F фуригана · M звук · A автопереход · S синхр. с Anki · K авто-Anki" : "Tab next · Esc back · ←→ target · L language · F furigana · M sound · A auto-advance · S sync with Anki · K auto-add to Anki";
+                if (app.state === "details") return ru ? "Tab дальше · Esc назад · + у недавних — в Anki" : "Tab next · Esc back · click + on a recent question to add it to Anki";
+                if (app.state === "grammar") return ru ? "↑↓ выбор · Enter тренировать / стоп · X выключить тренировку · Esc назад" : "↑↓ choose · Enter drill this point / stop · X drill off · Esc back";
+                if (app.state === "feedback") return ru ? "Enter — дальше · A в Anki · W задержать · G грамматика · Tab статистика" : "Enter next · A add to Anki · W hold · G grammar · Tab stats";
+                const prev = app.lastRes ? (ru ? " · A прошлый → Anki" : " · A add previous to Anki") : "";
+                if (app.q && app.q.kind === "order" && app.state === "question") return (ru ? "Цифры — по порядку · Backspace отмена · Space пропуск" : "Press the numbers in order · Backspace undo · Space skip") + prev;
+                return (ru ? "1–4 ответ · Space пропуск · F фуригана · L язык · G грамматика · Tab статистика" : "1–4 answer · Space skip · F furigana · L language · G grammar · Tab stats") + prev;
             }
         }
 
@@ -386,11 +528,13 @@ ShellRoot {
     IpcHandler {
         target: "jpquiz"
         function key(name: string): void {
-            if (name === "stats") app.openStats();
+            if (name === "stats") app.openView("stats");
             else if (name === "next") app.next();
             else if (name === "skip") app.skip();
             else if (name === "back") app.closeStats();
-            else if (name === "anki") app.send({ cmd: "anki_add" });
+            else if (name === "anki") app.ankiAdd();
+            else if (name === "grammar") app.openView("grammar");
+            else if (name === "tab") app.cycleView();
             else if (name === "sync") app.send({ cmd: "anki_sync" });
             else if (/^[1-9]$/.test(name)) { if (app.q && app.q.kind === "order") app.pickTile(parseInt(name) - 1); else app.answer(parseInt(name) - 1); }
         }

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from jpquiz.kana import is_kanji, is_katakana, is_kana, kata_to_hira
 
+# UniDic's formal readings -> the everyday ones (furigana)
+READING_FIX = {"私": "わたし", "日本": "にほん", "日本人": "にほんじん", "日本語": "にほんご"}
 FUNC_P1 = {"助詞", "助動詞", "補助記号", "記号", "空白"}
 AUX_LEMMAS = {"居る", "有る", "為る", "成る", "仕舞う", "置く", "見る", "行く", "来る", "上げる", "呉れる",
               "貰う", "下さる", "頂く", "無い", "良い", "知れる", "御座る", "出来る", "過ぎる", "易い", "難い",
@@ -137,6 +139,7 @@ def segments(toks, a: int = 0, b: int | None = None) -> list[dict]:
     out = []
     for t in toks[a:b]:
         reading = t.r if t.p1 not in FUNC_P1 else ""
+        reading = READING_FIX.get(t.s, reading)
         if t.p1 == "補助記号" or not any(is_kanji(c) for c in t.s):
             out.append({"t": t.s})
         else:

@@ -1,14 +1,25 @@
 # JP Quiz — endless adaptive Japanese quiz (N5 → N3)
 
-A liquid-glass quickshell window (`qml/`) driven by a small Python engine (`jpquiz/`).
+A liquid-glass quickshell window (`qml/`) driven by a small engine: `engine/` (Rust, the one that runs)
+or `jpquiz/` (the original Python, same behaviour; used when the Rust one isn't built).
 It quizzes **particles, conjugation and grammar, sentence meaning, 並べ替え word order,
-kanji reading/writing in context and vocabulary in context**, built from ~37 000 items made from
+kanji reading/writing in context and vocabulary in context**, built from ~35 600 items made from
 real Tatoeba sentences, and picks every next question so that you succeed about 75 % of the time.
+
+After each answer the sentence's words are glossed from JMdict **in the sense they have in that
+sentence** (the sense whose glosses match the sentence's own translation; set phrases like その通り
+are glossed as one unit). Conjugation questions only offer real forms of the verb.
 
 Open it with **Mod+J** or `jp-quiz` (focuses the open window if there is one, via the shared
 `niri-focus-or-run` helper in `~/.local/bin`). Keys: `1–4` answer · `Space` skip · `Enter` next ·
-`A` add the item to Anki · `F` furigana · `L` EN/RU · `Tab` stats (`S` sync with Anki, `K` auto-add
-misses, `←→` target) · `Esc` close.
+`A` add to Anki (right or wrong; during the next question it adds the one you just passed) · `W` hold
+the result · `F` furigana · `L` EN/RU · `G` grammar tab (`↑↓` choose, `Enter` drill only that point,
+`X` drill off) · `Tab` cycles Stats → Details → Grammar → quiz (Stats: `S` sync with Anki, `K` auto-add
+misses, `←→` target) · `Esc` back.
+
+**Thinking time.** Each question has a generous budget (about 20–60 s by type, plus sentence length),
+shown as a bar with the seconds left. It pauses while a stats/grammar view is open. Speed earns
+nothing extra; only going past the budget trims the XP (×0.6) and counts the answer as "hard".
 
 ## How the matchmaking works (plain words)
 
@@ -39,6 +50,8 @@ misses, `←→` target) · `Esc` close.
 | `jpquiz/engine.py` | selection, unlocks, game layer (XP, levels, streaks, combo), persistence |
 | `jpquiz/anki.py` | Anki: read-only sync via AnkiConnect (port 8770), adds via `~/.local/bin/anki-add` |
 | `jpquiz/server.py` | JSON-lines bridge to the QML window |
+| `engine/` | the same engine in Rust (`jp-quiz-engine`, built by `install.sh`): same JSON lines, same database, same choices for the same seed |
+| `tests/parity/` | `run.py`: lockstep test, Python vs Rust engine, every reply and the final database must be identical |
 | `qml/` | the window (quickshell `FloatingWindow`) |
 | `build/` | content build: `fetch.sh` then `~/.venvs/jp-quiz/bin/python -m build.make_content` |
 | `tests/` | `python -m unittest discover -s tests -t .` (includes simulated learners) |

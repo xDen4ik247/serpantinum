@@ -2,7 +2,8 @@
 
 Requests:  {"cmd": "hello"} | {"cmd": "next"} | {"cmd": "answer", "qid": 3, "choice": 1, "ms": 2300}
            {"cmd": "answer", "qid": 3, "order": ["本を", "読んで", "いる"]} | {"cmd": "skip", "qid": 3}
-           {"cmd": "stats"} | {"cmd": "settings", "set": {"target": 0.8}}
+           {"cmd": "stats"} | {"cmd": "settings", "set": {"target": 0.8}} | {"cmd": "anki_add", "key": "vc:1:2"}
+           {"cmd": "grammar"} | {"cmd": "grammar_example", "id": "tai"}
 Every reply is one JSON object per line, echoing the request's "rid".
 """
 
@@ -50,7 +51,11 @@ def main():
             elif cmd == "settings":
                 res = eng.set_settings(req.get("set", {}))
             elif cmd == "anki_add":
-                res = eng.anki_add_last()
+                res = eng.anki_add(req.get("key"))
+            elif cmd == "grammar":
+                res = eng.grammar_list()
+            elif cmd == "grammar_example":
+                res = eng.grammar_example(str(req.get("id", "")))
             elif cmd == "anki_sync":
                 res = eng.anki_sync()
             elif cmd == "peek":

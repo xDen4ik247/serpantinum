@@ -32,8 +32,15 @@ CAT_NAMES = {"particles": ("Particles", "Частицы"), "grammar": ("Grammar"
 LEVEL_BASE = {5: -1.0, 4: 0.0, 3: 1.0}
 FAST = {"particle": 4, "conj": 5, "gmean": 7, "voice": 6, "form": 5, "order": 12, "odd": 10, "kread": 4,
         "kwrite": 4, "vocab": 5, "meaning": 8, "produce": 9}
+# Thinking time per question (seconds), before the sentence-length allowance. Generous on purpose:
+# the quiz wants a considered answer, not a fast guess, so speed earns nothing extra; only going
+# past the budget costs a little XP.
+BUDGET = {"particle": 22, "conj": 26, "gmean": 34, "voice": 30, "form": 26, "order": 55, "odd": 40, "kread": 22,
+          "kwrite": 22, "vocab": 28, "meaning": 40, "produce": 45}
+OVERTIME_XP = 0.6
 KIND_MIX = {"particle": 1.3, "conj": 1.2, "gmean": 1.0, "voice": 0.5, "form": 0.4, "order": 0.8, "odd": 0.4,
             "kread": 1.0, "kwrite": 0.8, "vocab": 1.0, "meaning": 0.9, "produce": 0.7}
+RETIRED = {"odd"}      # "spot the conjugation mistake": no longer built (made-up non-words); old answers stay in history
 KIND_NAMES = {
     "particle": ("Particle", "Частица"), "conj": ("Conjugation", "Спряжение"), "gmean": ("Grammar meaning", "Значение грамматики"),
     "voice": ("Voice", "Залог"), "form": ("Tense & polarity", "Время и отрицание"), "order": ("並べ替え · word order", "並べ替え · порядок слов"),
@@ -45,7 +52,7 @@ PLACEMENT_N = 12
 PLACEMENT_KINDS = ("particle", "conj", "gmean", "kread", "kwrite", "vocab", "meaning")
 RANKS = [(-99, "N5…"), (-0.49, "N5"), (0.51, "N4"), (1.51, "N3"), (2.4, "N3+")]
 DEFAULT_SETTINGS = {"target": 0.75, "lang": "en", "furigana": False, "sound": True, "auto_advance": True,
-                    "daily_goal": 30, "anki_auto": False}
+                    "daily_goal": 30, "anki_auto": False, "focus_gp": None}
 
 
 def xp_for_level(level: int) -> int:
@@ -137,14 +144,20 @@ class Engine:
             it = self.by_key.get(item)
             self.recent.append((item, kind, kc, it.sid if it else None, correct))
         self.seen_items = {k for (k,) in self.pdb.execute("SELECT DISTINCT item FROM answers")}
+        self.history: deque = deque(maxlen=40)       # recently answered item keys (for "add to Anki" later)
+        for (item,) in self.pdb.execute("SELECT item FROM answers ORDER BY id DESC LIMIT 40").fetchall()[::-1]:
+            if item in self.by_key:
+                self.history.append(item)
         self.kc_misses = Counter(dict(self.pdb.execute("SELECT kc, COUNT(*) FROM answers WHERE correct=0 GROUP BY kc").fetchall()))
         self.anki_added = set(json.loads(kv.get("anki_added", "[]")))
         self.gp_answers = Counter()
+        self.gp_correct = Counter()
         for item, correct in self.pdb.execute("SELECT item, correct FROM answers"):
             it = self.by_key.get(item)
             if it:
                 for g in it.gps:
                     self.gp_answers[g] += 1
+                    self.gp_correct[g] += correct
         if not self.unlocked:
             now = self.now()
             for cat in CATS:
@@ -199,6 +212,15 @@ class Engine:
             for it in self.rng.sample(allk, min(240, len(allk))):
                 out[it.key] = (it, "place")
             return out
+        focus = self._focus()
+        if focus:
+            # grammar drill: only this grammar point, in every question type that has it
+            ok = lambda i: all(g == focus or g not in self.grammar or f"gp:{g}" in self.unlocked for g in i.gps)
+            items = [i for i in self.items if focus in i.gps and ok(i)]
+            for it in self.rng.sample(items, min(160, len(items))):
+                out[it.key] = (it, "focus")
+            if len(out) >= 4:
+                return out
         # relearning cards
         for kc, c in self.cards.items():
             if c.state == "relearning" and (now >= c.short_due or qn - c.last_q >= 7) and qn - c.last_q >= 3:
@@ -225,6 +247,14 @@ class Engine:
                 out.setdefault(it.key, (it, "fresh"))
         return out
 
+    def _focus(self) -> str | None:
+        g = self.settings.get("focus_gp")
+        return g if g in self.grammar and not self.in_placement() else None
+
+    def budget(self, it: Item, payload: dict) -> int:
+        n = len(payload.get("full") or payload.get("fixed") or "")
+        return int(round(BUDGET.get(it.kind, 30) + 0.35 * n))
+
     def _score(self, it: Item, why: str, p: float, target: float, now: float) -> float:
         qn = self.game["qn"]
         fit = -((logit(p) - logit(target)) ** 2) / (2 * 0.55 ** 2)
@@ -241,7 +271,10 @@ class Engine:
             s -= 0.6
         if len(recent) >= 2 and recent[-2][1] == it.kind:
             s -= 0.4
-        if why == "relearn":
+        if why == "focus":
+            c = self.cards.get(it.kc)
+            s += 0.3 if it.key not in self.seen_items else 0
+        elif why == "relearn":
             s += 2.5
         elif why == "due":
             c = self.cards.get(it.kc)
@@ -255,12 +288,12 @@ class Engine:
             learning = sum(1 for c in self.cards.values() if c.state == "relearning")
             if c is None and learning > 12:
                 s -= 1.5
-        # keep the mix of question types close to KIND_MIX
         # variety: every question type keeps showing up (and so keeps calibrating)
-        tot = sum(KIND_MIX.values())
-        want = KIND_MIX.get(it.kind, 0.5) / tot
-        share = sum(1 for r in recent[-30:] if r[1] == it.kind) / max(1, min(30, len(recent)))
-        s += 1.5 * max(-1.0, min(1.0, (want - share) / want))
+        if why != "focus":
+            tot = sum(KIND_MIX.values())
+            want = KIND_MIX.get(it.kind, 0.5) / tot
+            share = sum(1 for r in recent[-30:] if r[1] == it.kind) / max(1, min(30, len(recent)))
+            s += 1.5 * max(-1.0, min(1.0, (want - share) / want))
         if it.flags & 1:
             s -= 0.3              # Tom-and-Mary sentences: a bit less often
         s += self.rng.gauss(0, 0.3)
@@ -306,13 +339,15 @@ class Engine:
         q = {"type": "question", "qid": qid, "kind": it.kind, "level": it.level, "cat": it.cat,
              "mode": "placement" if why == "place" else "normal", "why": why,
              "new": it.key not in self.seen_items, "p": round(p, 3), "target": round(target, 3),
-             "budget": FAST[it.kind] * 2,
+             "budget": self.budget(it, payload), "focus": self._focus(),
              "kind_name": KIND_NAMES[it.kind], "cat_name": CAT_NAMES[it.cat], "skill": self._tag_label(it.tags[0] if it.tags else it.kc, it.kc),
              "your": round(to_rating(self.model.skill_theta(cat=it.cat, kind=it.kind) +
                                      sum(self.model.theta(f"tag:{t}") for t in it.tags) / max(1, len(it.tags)))),
              "item_rating": round(to_rating(self.model.peek(f"item:{it.key}", it.seed)[0]))}
+        # glosses would give vocab/kanji answers away: they only come with the result
         ui = {k: v for k, v in payload.items() if k not in ("explain", "explain_ru", "accept", "src", "others_src",
-                                                             "wrong", "right", "fixed", "others_en")}
+                                                             "wrong", "right", "fixed", "others_en", "words",
+                                                             "gloss", "gloss_ru")}
         correct = None
         if it.kind == "order":
             tiles = list(payload["tiles"])
@@ -377,7 +412,10 @@ class Engine:
         if card is None:
             card = Card()
             self.cards[it.kc] = card
+        overtime = secs > self.budget(it, payload) + 0.5
         grade = grade_from(correct, secs, FAST[it.kind]) if not skip else 1
+        if correct and overtime:
+            grade = 2          # got there, but it took a long time: "hard"
         review(card, grade, now, self.game["qn"])
         self.card_item[it.kc] = it.key
         # ---- game
@@ -392,15 +430,15 @@ class Engine:
             g["correct"] += 1
             g["best_streak"] = max(g["best_streak"], g["streak"])
             combo = min(3.0, 1.0 + 0.25 * ((g["streak"] - 1) // 3))
-            time_bonus = max(0.0, min(1.0, 1.0 - secs / (2.0 * FAST[it.kind])))
-            points = int(round((10 + 30 * (1 - p)) * combo * (1 + 0.5 * time_bonus)))
+            points = int(round((15 + 30 * (1 - p)) * combo * (OVERTIME_XP if overtime else 1.0)))
             g["xp"] += points
         else:
             combo = 1.0
-            time_bonus = 0.0
             g["streak"] = 0
+        time_bonus = 0.0
         for gp in it.gps:
             self.gp_answers[gp] += 1
+            self.gp_correct[gp] += y
         day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
         self.pdb.execute("INSERT INTO days VALUES (?,1,?,?) ON CONFLICT(day) DO UPDATE SET n=n+1, correct=correct+?, xp=xp+?",
                          (day, y, points, y, points))
@@ -428,6 +466,7 @@ class Engine:
                           json.dumps(snap)))
         self._save(terms, it.kc)
         self.last_answered = (it, payload)
+        self.history.append(it.key)
         if not correct:
             self.kc_misses[it.kc] += 1
             if self.settings.get("anki_auto") and self.kc_misses[it.kc] >= 2 and it.kc not in self.anki_added:
@@ -449,6 +488,9 @@ class Engine:
             "skill": {"label": self._tag_label(tag_key, it.kc),
                       "rating": round(self.model.rating(cat=it.cat, tag=tag_key)) if tag_key else None},
             "p": round(p, 3), "events": events, "today": self._today(),
+            "overtime": overtime, "secs": round(secs, 1), "budget": self.budget(it, payload),
+            "words": payload.get("words", []), "word": payload.get("word"), "gloss": payload.get("gloss"),
+            "gloss_ru": payload.get("gloss_ru"), "key": it.key, "in_anki": it.kc in self.anki_added,
         }
         if it.kind == "odd":
             res["fixed"] = payload.get("fixed")
@@ -593,6 +635,12 @@ class Engine:
             if k in DEFAULT_SETTINGS:
                 self.settings[k] = v
         self.settings["target"] = min(0.9, max(0.6, float(self.settings["target"])))
+        fg = self.settings.get("focus_gp")
+        if fg is not None and fg not in self.grammar:
+            self.settings["focus_gp"] = fg = None
+        if fg and f"gp:{fg}" not in self.unlocked:
+            self._unlock(f"gp:{fg}", self.now(), "drill")      # drilling a point you haven't met yet opens it
+            self._rebuild_pools()
         self.pdb.execute("INSERT OR REPLACE INTO kv VALUES ('settings', ?)", (json.dumps(self.settings),))
         self.pdb.commit()
         return {"type": "settings", "settings": self.settings}
@@ -656,16 +704,45 @@ class Engine:
                 "source": "jp-quiz · Tatoeba #" + str(src.get("ja", "")),
                 "tags": ["jp-quiz", it.kind, f"N{it.level}"]}
 
-    def anki_add_last(self, auto: bool = False) -> dict:
-        if not self.last_answered:
+    def _payload(self, it: Item) -> dict:
+        return json.loads(self.cdb.execute("SELECT payload FROM items WHERE id=?", (it.id,)).fetchone()[0])
+
+    def anki_add(self, key: str | None = None) -> dict:
+        """Add any recently answered item (right or wrong) to Anki; no key = the last one."""
+        if key is None:
+            return self.anki_add_last()
+        it = self.by_key.get(key)
+        if it is None:
+            return {"type": "anki", "status": "nothing", "message": "That question no longer exists."}
+        return self.anki_add_last(item=(it, self._payload(it)))
+
+    def recent_answers(self, n: int = 20) -> list[dict]:
+        rows = self.pdb.execute("SELECT item, correct, ts FROM answers ORDER BY id DESC LIMIT ?", (n * 2,)).fetchall()
+        out, seen = [], set()
+        for key, correct, ts in rows:
+            it = self.by_key.get(key)
+            if it is None or key in seen:
+                continue
+            seen.add(key)
+            pl = self._payload(it)
+            out.append({"key": key, "kind": it.kind, "kind_name": KIND_NAMES.get(it.kind, (it.kind, it.kind)),
+                        "correct": bool(correct), "ts": ts, "full": pl.get("full") or pl.get("fixed") or "",
+                        "en": pl.get("en") or (pl["choices"][0] if it.kind == "meaning" else ""),
+                        "word": pl.get("word") or pl.get("gp_name") or "", "in_anki": it.kc in self.anki_added})
+            if len(out) >= n:
+                break
+        return out
+
+    def anki_add_last(self, auto: bool = False, item=None) -> dict:
+        if item is None and not self.last_answered:
             return {"type": "anki", "status": "nothing", "message": "Answer a question first."}
-        it, payload = self.last_answered
+        it, payload = item or self.last_answered
         note = self.note_for(it, payload)
         r = self.outbox.add(note)
         self.anki_added.add(it.kc)
         self.pdb.execute("INSERT OR REPLACE INTO kv VALUES ('anki_added', ?)", (json.dumps(sorted(self.anki_added)),))
         self.pdb.commit()
-        return {"type": "anki", "word": note["word"] or note["reading"] or note["expression"][:16], **r}
+        return {"type": "anki", "key": it.key, "word": note["word"] or note["reading"] or note["expression"][:16], **r}
 
     def anki_sync(self) -> dict:
         """Read the user's Japanese Anki decks (read-only) and seed the skill and memory model."""
@@ -732,6 +809,104 @@ class Engine:
         return {"type": "anki_sync", "ok": True, **summary,
                 "message": f"Read {len(data['cards'])} cards from {len(data['decks'])} decks: {known} known, {weak} weak words matched."}
 
+    # ------------------------------------------------------------------ grammar tab
+    def grammar_list(self) -> dict:
+        now = self.now()
+        out = []
+        for g in sorted(self.grammar.values(), key=lambda x: (-x["level"], x["ord"])):
+            gid = g["id"]
+            comp = self.model.comps.get(f"tag:gp:{gid}")
+            card = self.cards.get(f"gp:{gid}")
+            n = self.gp_answers[gid]
+            out.append({
+                "id": gid, "level": g["level"], "name": g["name"], "en": g["en"], "ru": g["ru"],
+                "explain_en": g["explain_en"], "explain_ru": g["explain_ru"],
+                "unlocked": f"gp:{gid}" in self.unlocked, "items": self.gp_items[gid],
+                "n": n, "acc": round(self.gp_correct[gid] / n, 3) if n else None,
+                "rating": round(self.model.rating(cat="grammar", tag=f"gp:{gid}")) if comp and comp.n else None,
+                "sure": bool(comp and comp.var < 0.15),
+                "r": round(card.r(now), 2) if card and card.state != "new" else None,
+                "due": bool(card and card.state == "review" and card.due <= now),
+                "lapses": card.lapses if card else 0,
+            })
+        return {"type": "grammar", "points": out, "focus": self._focus()}
+
+    def grammar_example(self, gid: str) -> dict:
+        """A few example sentences for one grammar point (for the grammar tab's detail pane)."""
+        its = [i for i in self.items if gid in i.gps and i.kind in ("conj", "gmean", "form", "voice", "order")]
+        ex = []
+        for it in self.rng.sample(its, min(3, len(its))):
+            pl = self._payload(it)
+            ex.append({"ja": pl.get("full"), "en": pl.get("en"), "ru": pl.get("ru")})
+        return {"type": "grammar_example", "id": gid, "examples": ex}
+
+    def _more_stats(self, now: float) -> dict:
+        rows = self.pdb.execute("SELECT ts, kind, level, correct, ms, p, mode FROM answers").fetchall()
+        by_kind: dict[str, dict] = {}
+        by_level = {lv: [0, 0] for lv in (5, 4, 3)}
+        hours = [[0, 0] for _ in range(24)]
+        calib = [[0, 0.0, 0] for _ in range(5)]      # n, sum p, correct per predicted-chance bin
+        total_ms = today_ms = 0
+        day0 = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        times: dict[str, list] = {}
+        for ts, kind, level, correct, ms, p, mode in rows:
+            k = by_kind.setdefault(kind, {"n": 0, "correct": 0})
+            k["n"] += 1
+            k["correct"] += correct
+            if level in by_level:
+                by_level[level][0] += 1
+                by_level[level][1] += correct
+            h = datetime.fromtimestamp(ts).hour
+            hours[h][0] += 1
+            hours[h][1] += correct
+            if p is not None:
+                b = min(4, max(0, int((p - 0.2) / 0.16)))
+                calib[b][0] += 1
+                calib[b][1] += p
+                calib[b][2] += correct
+            ms_c = min(max(ms or 0, 0), 120000)
+            total_ms += ms_c
+            if ts >= day0:
+                today_ms += ms_c
+            times.setdefault(kind, []).append(ms_c / 1000)
+        kinds = []
+        for kind, d in by_kind.items():
+            if kind not in KIND_NAMES:
+                continue
+            ts_ = sorted(times.get(kind, []))
+            kinds.append({"kind": kind, "name": KIND_NAMES[kind], "n": d["n"], "acc": round(d["correct"] / d["n"], 3),
+                          "median_s": round(ts_[len(ts_) // 2], 1) if ts_ else None,
+                          "rating": round(self.model.rating(kind=kind)), "active": kind not in RETIRED})
+        kinds.sort(key=lambda k: -k["n"])
+        # card states and the review forecast
+        states = Counter()
+        forecast = [0] * 7
+        known_words = set()
+        for kc, c in self.cards.items():
+            if c.state == "relearning":
+                states["learning"] += 1
+            elif c.state == "review":
+                states["mature" if c.s >= 21 else "young"] += 1
+                d = int((c.due - day0) // 86400)
+                if d < 7:
+                    forecast[max(0, d)] += 1
+                if c.s >= 7 and kc.startswith(("use:", "read:", "write:")):
+                    known_words.add(kc.split(":", 1)[1])
+        days = self.pdb.execute("SELECT day, n, correct FROM days ORDER BY day DESC LIMIT 14").fetchall()[::-1]
+        return {
+            "kinds": kinds,
+            "levels": [{"level": lv, "n": v[0], "acc": round(v[1] / v[0], 3) if v[0] else None} for lv, v in by_level.items()],
+            "hours": [{"n": n, "acc": round(c / n, 3) if n else None} for n, c in hours],
+            "calibration": [{"p": round(sp / n, 3), "acc": round(c / n, 3), "n": n} for n, sp, c in calib if n],
+            "time": {"total_min": round(total_ms / 60000), "today_min": round(today_ms / 60000),
+                     "per_q_s": round(total_ms / 1000 / max(1, len(rows)), 1)},
+            "cards": {"learning": states["learning"], "young": states["young"], "mature": states["mature"],
+                      "words_known": len(known_words)},
+            "forecast": forecast,
+            "days14": [{"day": d, "n": n, "acc": round(c / n, 3) if n else None} for d, n, c in days],
+            "recent": self.recent_answers(14),
+        }
+
     def stats(self) -> dict:
         now = self.now()
         rows = self.pdb.execute("SELECT id, ts, correct, snap, mode FROM answers ORDER BY id DESC LIMIT 600").fetchall()[::-1]
@@ -775,6 +950,6 @@ class Engine:
                            "best_streak": self.game["best_streak"], "cards": len(self.cards), "due": n_due,
                            "unlocked_gp": sum(1 for k in self.unlocked if k.startswith("gp:")),
                            "total_gp": len(self.grammar)},
-                "level_progress": self._level_progress(), "today": self._today(),
+                "level_progress": self._level_progress(), "today": self._today(), "more": self._more_stats(now),
                 "anki": {"queued": len(self.outbox.pending()),
                          "last_sync": json.loads(dict(self.pdb.execute("SELECT key,value FROM kv").fetchall()).get("anki_sync", "null"))}}

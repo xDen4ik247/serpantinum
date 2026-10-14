@@ -1,0 +1,19 @@
+[package]
+name = "jp-quiz-engine"
+version = "0.1.0"
+edition = "2021"
+description = "JP Quiz engine (Rust port of jpquiz/): matchmaking, spaced repetition, game layer, JSON-lines bridge"
+publish = false
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+indexmap = "2"
+rusqlite = "0.37"
+regex = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

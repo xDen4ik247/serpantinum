@@ -44,9 +44,13 @@ Item {
     // half-width column to the full screen. Spare height is shared between a taller card (bigger
     // sentence) and a top offset, so the card + answers sit balanced instead of glued to the top.
     readonly property int baseCardH: longChoices ? 236 : 300
+    // after answering only the right answer (and your wrong pick) stay; the room goes to the word glosses
+    readonly property int shownChoices: !answered ? choiceTexts().length : ((app.chosen >= 0 && app.chosen !== correctIndex()) ? 2 : 1)
     readonly property int answersH: !q ? 144 : (q.kind === "order" ? 150
-                                      : (longChoices ? choiceTexts().length * 62 - 12 : Math.ceil(choiceTexts().length / 2) * 78 - 12))
-    readonly property int spareH: Math.max(0, height - baseCardH - 16 - answersH - 104 - 24)
+                                      : (longChoices ? 4 * 62 - 12 : 2 * 78 - 12))
+    readonly property var words: res && res.words ? res.words : []
+    readonly property int fbH: 104
+    readonly property int spareH: Math.max(0, height - baseCardH - 16 - answersH - fbH - 24)
     readonly property int growH: Math.min(180, Math.round(spareH * 0.45))
     readonly property int topPad: Math.min(110, Math.round((spareH - growH) * 0.3))
 
@@ -70,6 +74,7 @@ Item {
             Chip { theme: root.theme; text: root.q ? "N" + root.q.level : ""; tint: theme.accent2 }
             Chip { theme: root.theme; visible: root.q && root.q.new; text: root.ru ? "НОВОЕ" : "NEW"; tint: theme.good }
             Chip { theme: root.theme; visible: root.q && (root.q.why === "due" || root.q.why === "relearn"); text: root.ru ? "ПОВТОР" : "REVIEW"; tint: theme.gold }
+            Chip { theme: root.theme; visible: !!(root.q && root.q.focus); text: root.ru ? "ТРЕНИРОВКА" : "DRILL"; tint: theme.accent2 }
             Chip { theme: root.theme; visible: root.q && root.q.mode === "placement"; text: root.ru ? "ОПРЕДЕЛЕНИЕ УРОВНЯ" : "PLACEMENT"; tint: theme.gold }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
@@ -103,30 +108,45 @@ Item {
             }
         }
 
-        // time bonus bar
+        // thinking-time bar: generous, pauses while stats/grammar are open; running out only trims the XP
         Rectangle {
             id: timeTrack
-            anchors { left: parent.left; right: parent.right; top: header.bottom; leftMargin: 18; rightMargin: 18; topMargin: 12 }
+            anchors { left: parent.left; right: timeLabel.left; top: header.bottom; leftMargin: 18; rightMargin: 10; topMargin: 12 }
             height: 3; radius: 1.5
             color: theme.alpha(theme.text, 0.07)
             Rectangle {
                 id: timeBar
-                // remaining fraction, so a tiling resize (e.g. a second column opening) keeps it inside the card
                 property real frac: 1
                 height: parent.height; radius: 1.5
-                color: theme.alpha(theme.gold, 0.85)
+                color: frac > 0.2 ? theme.alpha(theme.gold, 0.85) : theme.alpha(theme.bad, 0.9)
                 width: parent.width * frac
+                Behavior on width { NumberAnimation { duration: 240; easing.type: Easing.Linear } }
             }
-            Connections {
-                target: app
-                function onQChanged() {
-                    timeAnim.stop();
-                    timeBar.frac = 1;
-                    if (app.q) { timeAnim.duration = app.q.budget * 1000; timeAnim.restart(); }
-                }
-                function onStateChanged() { if (app.state !== "question") timeAnim.stop() }
+        }
+        Text {
+            id: timeLabel
+            anchors { right: parent.right; rightMargin: 18; verticalCenter: timeTrack.verticalCenter }
+            property int left_: 0
+            text: !root.q ? "" : (left_ > 0 ? Math.floor(left_ / 60) + ":" + ("0" + left_ % 60).slice(-2)
+                                             : (root.ru ? "без спешки" : "no rush"))
+            color: left_ > 0 && timeBar.frac > 0.2 ? theme.subtext1 : theme.alpha(theme.bad, 0.9)
+            font { family: theme.font; pixelSize: 11; features: { "tnum": 1 } }
+        }
+        Timer {
+            interval: 200
+            repeat: true
+            running: root.q && (app.state === "question" || app.state === "waiting")
+            triggeredOnStart: true
+            onTriggered: {
+                const budget = root.q.budget * 1000;
+                const left = Math.max(0, budget - app.elapsed());
+                timeBar.frac = budget > 0 ? left / budget : 0;
+                timeLabel.left_ = Math.ceil(left / 1000);
             }
-            NumberAnimation { id: timeAnim; target: timeBar; property: "frac"; to: 0; easing.type: Easing.Linear }
+        }
+        Connections {
+            target: app
+            function onQChanged() { if (app.q) { timeBar.frac = 1; timeLabel.left_ = app.q.budget; } }
         }
 
         // prompt
@@ -220,6 +240,7 @@ Item {
             model: root.choiceTexts()
             delegate: ChoiceButton {
                 theme: root.theme
+                visible: !root.answered || state_ !== "dim"
                 width: root.longChoices ? root.width : (root.width - 12) / 2
                 height: root.longChoices ? 50 : 66
                 index_: index
@@ -283,7 +304,11 @@ Item {
     Item {
         id: feedback
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 104
+        // grows into the space the folded-away choices leave behind
+        readonly property int visibleChoicesH: !root.q ? 0 : (root.q.kind === "order" ? 70 : (root.longChoices ? root.shownChoices * 62 - 12 : 66))
+        readonly property int glossRoom: Math.max(0, root.answersH - visibleChoicesH - 14)
+        height: root.fbH + (root.words.length && glossRoom > 30 ? Math.min(glossFlow.implicitHeight + 8, glossRoom) : 0)
+        Behavior on height { NumberAnimation { duration: 300; easing.type: Easing.OutQuint } }
         opacity: root.answered ? 1 : 0
         visible: opacity > 0
         transform: Translate { y: root.answered ? 0 : 24; Behavior on y { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } } }
@@ -297,13 +322,14 @@ Item {
         }
         Text {
             id: fbIcon
-            anchors { left: parent.left; leftMargin: 20; verticalCenter: parent.verticalCenter }
+            anchors { left: parent.left; leftMargin: 20; top: parent.top; topMargin: 34 }
             text: root.res && root.res.correct ? "" : ""
             color: root.res && root.res.correct ? theme.good : theme.bad
             font { family: theme.icons; pixelSize: 30 }
         }
         Column {
-            anchors { left: fbIcon.right; leftMargin: 18; right: parent.right; rightMargin: 20; verticalCenter: parent.verticalCenter }
+            id: fbText
+            anchors { left: fbIcon.right; leftMargin: 18; right: ankiBtn.left; rightMargin: 14; top: parent.top; topMargin: 18 }
             spacing: 5
             Text {
                 width: parent.width
@@ -312,7 +338,7 @@ Item {
                     if (root.res.correct) {
                         let s = (root.ru ? "Верно!" : "Correct!") + "  +" + root.res.points + " XP";
                         if (root.res.combo > 1) s += "  ·  ×" + root.res.combo + " combo";
-                        if (root.res.time_bonus > 0.4) s += root.ru ? "  ·  быстро!" : "  ·  quick!";
+                        if (root.res.overtime) s += root.ru ? "  ·  дольше лимита (−40% XP)" : "  ·  over the time (−40% XP)";
                         return s;
                     }
                     return root.res.skipped ? (root.ru ? "Пропущено" : "Skipped") : (root.ru ? "Не совсем" : "Not quite");
@@ -342,6 +368,67 @@ Item {
                 color: theme.subtext0
                 elide: Text.ElideRight
                 font { family: theme.jp; pixelSize: 15 }
+            }
+        }
+
+        // add to Anki — right or wrong (A; during the next question A adds the one you just passed)
+        Rectangle {
+            id: ankiBtn
+            anchors { right: parent.right; rightMargin: 16; top: parent.top; topMargin: 16 }
+            readonly property bool done: !!(root.res && root.res.in_anki)
+            width: ankiRow.implicitWidth + 22; height: 32; radius: 16
+            color: done ? theme.alpha(theme.good, 0.16) : (ankiMouse.containsMouse ? theme.alpha(theme.accent, 0.26) : theme.alpha(theme.accent, 0.14))
+            border.color: done ? theme.alpha(theme.good, 0.45) : theme.alpha(theme.accent, 0.40)
+            Row {
+                id: ankiRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: ankiBtn.done ? "" : ""; color: ankiBtn.done ? theme.good : theme.accent; font { family: theme.icons; pixelSize: 13 } anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    text: ankiBtn.done ? (root.ru ? "в Anki" : "in Anki") : (root.ru ? "A · в Anki" : "A · Anki")
+                    color: ankiBtn.done ? theme.good : theme.accent
+                    font { family: theme.font; pixelSize: 12; weight: Font.DemiBold }
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            MouseArea { id: ankiMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.ankiAdd() }
+        }
+
+        // dictionary glosses of the sentence's words, each in the sense it has in *this* sentence (JMdict)
+        Flow {
+            id: glossFlow
+            anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: root.fbH - 8; leftMargin: 20; rightMargin: 20 }
+            height: Math.max(0, feedback.height - root.fbH)
+            clip: true
+            spacing: 6
+            visible: root.words.length > 0
+            Repeater {
+                model: root.words
+                delegate: Rectangle {
+                    id: chipW
+                    readonly property bool expr: !!modelData.x
+                    readonly property string meaning: (root.ru && modelData.gr) ? modelData.gr : modelData.g
+                    width: Math.min(glossFlow.width, wHead.implicitWidth + wMean.implicitWidth + 24)
+                    height: 26; radius: 9
+                    color: theme.alpha(expr ? theme.accent2 : theme.text, expr ? 0.14 : 0.06)
+                    border.color: theme.alpha(expr ? theme.accent2 : theme.text, expr ? 0.35 : 0.10)
+                    Text {
+                        id: wHead
+                        x: 9; anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.w + (modelData.r ? "【" + modelData.r + "】" : "")
+                        color: theme.text
+                        font { family: theme.jp; pixelSize: 13 }
+                    }
+                    Text {
+                        id: wMean
+                        anchors { left: wHead.right; leftMargin: 6; verticalCenter: parent.verticalCenter }
+                        width: Math.max(0, Math.min(implicitWidth, chipW.width - wHead.implicitWidth - 24))
+                        text: chipW.meaning
+                        elide: Text.ElideRight
+                        color: theme.subtext0
+                        font { family: theme.font; pixelSize: 12 }
+                    }
+                }
             }
         }
     }

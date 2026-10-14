@@ -396,61 +396,35 @@ def _form(base, cls, f):
     return conjugate_verb(base, cls, f)
 
 
+# Distractors are always *real* forms of the same verb: the question is which form the grammar
+# needs here, never spotting a made-up misspelling (no いいで / 手伝いで non-words).
 DISTRACT_ORDER = {
-    "te": ["#bad", "#bad", "ta", "stem", "dict"],
-    "ta": ["#bad", "#bad", "te", "dict", "stem"],
-    "stem": ["dict", "te", "ta", "a_stem", "e_stem", "volitional"],
-    "dict": ["te", "stem", "ta", "volitional", "masu"],
+    "te": ["ta", "stem", "dict", "nai", "masu", "volitional"],
+    "ta": ["te", "dict", "stem", "nai", "masu"],
+    "stem": ["dict", "te", "ta", "nai", "volitional"],
+    "dict": ["te", "stem", "ta", "volitional", "nai", "masu"],
     "a_stem": ["stem", "dict", "e_stem", "te"],
     "e_stem": ["dict", "stem", "a_stem", "ta"],
-    "volitional": ["te", "stem", "e_stem", "#volbad"],
-    "naide": ["#naite", "nakute", "#dictde", "te"],
-    "nakute": ["#naikute", "nai", "#dictkute", "naide"],
+    "volitional": ["te", "stem", "dict", "nai", "masu"],
+    "naide": ["nakute", "te", "nai", "dict"],
+    "nakute": ["naide", "nai", "te", "nakatta"],
 }
 
 
 def conj_distractors(base, cls, slot_form, exclude, real: RealForms, rng):
     correct = _form(base, cls, slot_form)
     out = []
-    bad_te = [w for w in wrong_te_ta(base, cls, "te" if slot_form != "ta" else "ta") if w not in real and w != correct]
-    rng.shuffle(bad_te)
-    for f in DISTRACT_ORDER[slot_form]:
+    for f in DISTRACT_ORDER[slot_form] + ["dict", "stem", "te", "ta", "nai", "volitional"]:
         if len(out) >= 3:
             break
-        if f == "#bad":
-            if bad_te:
-                out.append(bad_te.pop())
+        if f in exclude or f == slot_form:
             continue
-        if f == "#naite":
-            s = conjugate_verb(base, cls, "nai") + "て"
-        elif f == "#naikute":
-            s = conjugate_verb(base, cls, "nai") + "くて"
-        elif f == "#dictde":
-            s = base + "で"
-        elif f == "#dictkute":
-            s = base + "くて"
-        elif f == "#volbad":
-            s = conjugate_verb(base, cls, "e_stem") + "よう"
-            if s in real:
-                continue
-        else:
-            if f in exclude:
-                continue
-            try:
-                s = _form(base, cls, f)
-            except (KeyError, ValueError):
-                continue
+        try:
+            s = _form(base, cls, f)
+        except (KeyError, ValueError):
+            continue
         if s and s != correct and s not in out:
             out.append(s)
-    if len(out) < 3:
-        for f in ("dict", "stem", "te", "ta", "nai", "volitional"):
-            if len(out) >= 3:
-                break
-            if f in exclude or f == slot_form:
-                continue
-            s = _form(base, cls, f)
-            if s != correct and s not in out:
-                out.append(s)
     return correct, out[:3]
 
 
