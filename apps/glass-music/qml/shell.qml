@@ -1,6 +1,6 @@
 // Glass Music: a Spotify-style library app for MPD, in the liquid-glass / Matugen look.
 // A quickshell window (app-id glass-music, set by the launcher through QS_APP_ID) plus a
-// Python backend (glassmusic.server) over stdin/stdout. Run: glass-music
+// backend (Rust: backend/, or the Python glassmusic.server) over stdin/stdout. Run: glass-music
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -59,7 +59,9 @@ ShellRoot {
 
     Process {
         id: engine
-        command: [Quickshell.env("GLASS_MUSIC_PYTHON") || "python3", "-m", "glassmusic.server"]
+        // the Rust backend (bin/glass-music-backend); the Python one when it's missing or
+        // GLASS_MUSIC_PYTHON is set
+        command: ["sh", "-c", "[ -z \"$GLASS_MUSIC_PYTHON\" ] && [ -x \"$0/bin/glass-music-backend\" ] && exec \"$0/bin/glass-music-backend\"; exec \"${GLASS_MUSIC_PYTHON:-python3}\" -m glassmusic.server", shell.appDir]
         workingDirectory: shell.appDir
         environment: ({ "PYTHONPATH": shell.appDir, "PYTHONUNBUFFERED": "1" })
         stdinEnabled: true

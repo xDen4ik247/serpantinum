@@ -32,7 +32,7 @@ from . import lyrics
 
 HOME = os.path.expanduser("~")
 UA = "GlassMusic/1.0 (+https://github.com/xDen4ik247/serpantinum)"
-LRCLIB = "https://lrclib.net/api"
+LRCLIB = os.environ.get("GLASS_MUSIC_LRCLIB", "https://lrclib.net/api")   # tests point it at a fake
 RETRY_MISS = 14 * 86400         # nothing found: ask again after two weeks
 RETRY_PLAIN = 30 * 86400        # only plain lyrics: look for synced ones again after a month
 YM_TIMEOUT = 25

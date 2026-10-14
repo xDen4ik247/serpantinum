@@ -1,7 +1,8 @@
 # Glass Music
 
 A Spotify-style library app for the MPD music library, in the liquid-glass / Matugen look of
-the Serpantinum desktop. Quickshell window (app-id `glass-music`) + a small Python backend.
+the Serpantinum desktop. Quickshell window (app-id `glass-music`) + a small backend in Rust (`backend/`, a port of the
+Python `glassmusic.server`, which stays as the fallback).
 
 - `glass-music` (Mod+Shift+M) opens it, or focuses it if it is already open (via the shared
   `niri-focus-or-run` helper in `~/.local/bin`; without it a second window opens). Mod+Q closes it;
@@ -54,11 +55,25 @@ page; the token is kept only in `~/.config/glass-music/yandex.json` (mode 600). 
 
 Tests: `python -m unittest discover -s tests -t .` (the Yandex ones need the venv's python).
 
+**Backend.** The window runs `bin/glass-music-backend` (Rust, built by `install.sh` with cargo) and
+falls back to `python3 -m glassmusic.server` when the binary is missing or `GLASS_MUSIC_PYTHON` is
+set. The Yandex worker (`glassmusic.yandex`, in its venv) stays Python; the Rust backend spawns it the
+same way. Pillow's resampling and colorsys are ported as is and covers decode through libjpeg-turbo,
+so cover colours and thumbnails come out identical. Parity tests, Python vs Rust:
+- `python -m tests.parity.pure`: the pure parts over the real library (read-only): search
+  (8.8k queries), lyrics on every song, the lyrics resolver's matching, cover colour + thumbnail
+  pixels for every cover. 0 differences.
+- `python -m tests.parity.live_diff`: both backends run one scripted session (85 steps: playback,
+  queue, favourites, playlists, lyrics lookups, Yandex play/next/add/sync, removal, errors) against a
+  private MPD (own socket / database, null output) over a symlink mirror of the library, with fakes
+  for the Yandex worker, LRCLIB (`GLASS_MUSIC_LRCLIB`), music-smart and the Trash; every message, MPD
+  state and file left behind is compared. Output in `tests/parity/out/` (git-ignored).
+
 Environment overrides (for tests): `GLASS_MUSIC_MPD` (socket or host:port), `GLASS_MUSIC_CACHE`,
 `GLASS_MUSIC_HISTORY`, `GLASS_MUSIC_SMART_STATE`, `GLASS_MUSIC_SMART_ENV` (JSON env for music-smart),
 `GLASS_MUSIC_TITLE`, `GM_W`/`GM_H` (initial size), `GLASS_MUSIC_DIR` (music directory),
 `GLASS_MUSIC_YM_CONF` / `GLASS_MUSIC_YM_TEMP` / `GLASS_MUSIC_YM_PYTHON` (Yandex settings file,
-temp cache, venv python), `GLASS_MUSIC_DEBUG`. IPC: `quickshell ipc -p <app>/qml call glassmusic …`
+temp cache, venv python), `GLASS_MUSIC_LRCLIB` (LRCLIB API base), `GLASS_MUSIC_SMART_BIN`, `GLASS_MUSIC_DEBUG`. IPC: `quickshell ipc -p <app>/qml call glassmusic …`
 (`go`, `panel`, `search`, `state`, `vibe <style>`, `pickStyle <style>`, `openCurrent`,
 `shot <png>` renders only this window; Yandex: `ymSearch <q>`, `ymOpen <kind> <id>`,
 `ymPlayResult <i>`, `ymPlayPage <i>`, `ymState`).

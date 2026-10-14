@@ -12,6 +12,12 @@ mkdir -p "$DEST/app.new"
 cp -r glassmusic qml assets "$DEST/app.new/"
 find "$DEST/app.new" -name __pycache__ -prune -exec rm -rf {} +
 rm -f "$DEST/app.new/qml/shaders/"*.frag
+# the Rust backend (the window falls back to the Python one in glassmusic/ when it's missing)
+if command -v cargo >/dev/null && cargo build --release --quiet --manifest-path backend/Cargo.toml; then
+    install -D -m 755 backend/target/release/glass-music-backend "$DEST/app.new/bin/glass-music-backend"
+else
+    echo "cargo missing or the build failed: the window runs on the Python backend"
+fi
 # swap in one step (an open window live-reloads; a gap without app/ breaks that reload)
 if [ -d "$DEST/app" ] && mv --exchange "$DEST/app.new" "$DEST/app" 2>/dev/null; then
     rm -rf "$DEST/app.new"
