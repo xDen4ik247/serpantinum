@@ -2,7 +2,7 @@
 # ime-mode — switch Mozc's input mode (via the aibubble fcitx5 addon). fcitx5 shows the new mode
 # in its popup at the text cursor.
 #   ime-mode hiragana|katakana|half-katakana|latin|direct   set it (turns Mozc on first if needed)
-#   ime-mode toggle                                           hiragana <-> full katakana (Mod+Alt+K)
+#   ime-mode toggle                                           hiragana <-> full katakana (Alt+K)
 #   ime-mode cycle                                            hiragana -> katakana -> latin -> back
 set -u
 call() { busctl --user call org.fcitx.Fcitx5 /aibubble org.aifeat.Bubble1 "$@"; }

@@ -5,7 +5,7 @@ binds {
 
     // ── Apps ──
     Mod+Return hotkey-overlay-title="Terminal" { spawn "kitty"; }
-    Mod+B hotkey-overlay-title="Firefox" { spawn "firefox"; }
+    Mod+B hotkey-overlay-title="Firefox" { spawn "focus-or-run" r#"^(firefox|org\.mozilla\.firefox)$"# "firefox"; }
     Mod+Shift+F23 hotkey-overlay-title="Claude Code (Copilot key)" { spawn-sh "mkdir -p ~/claude && cd ~/claude && exec kitty --class claude zsh -ic claude"; }
     Mod+E hotkey-overlay-title="Files" { spawn "nautilus"; }
 
@@ -16,7 +16,7 @@ binds {
     Mod+H hotkey-overlay-title="Serpantinum settings" { spawn "serpantinum" "msg" "toggle" "guide"; }
     Mod+W hotkey-overlay-title="Wallpaper picker" { spawn "serpantinum" "msg" "toggle" "wallpaper"; }
     Mod+L hotkey-overlay-title="Lock screen" { spawn "serpantinum" "lock"; }
-    Mod+Alt+K hotkey-overlay-title="Japanese: toggle hiragana / katakana (Mozc)" { spawn "/home/user/.local/bin/ime-mode" "toggle"; }
+    Alt+K hotkey-overlay-title="Japanese: toggle hiragana / katakana (Mozc)" { spawn "/home/user/.local/bin/ime-mode" "toggle"; }
     Mod+Alt+I hotkey-overlay-title="Fix input method (restart fcitx5 + Mozc)" { spawn "/home/user/.local/bin/ime-fix"; }
     XF86PowerOff hotkey-overlay-title=null { spawn "serpantinum" "lock"; }
     Mod+Alt+R hotkey-overlay-title="Restart Serpantinum" { spawn "serpantinum" "reload"; }
