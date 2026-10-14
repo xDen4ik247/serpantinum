@@ -1,13 +1,14 @@
 [Hotkey]
-EnumerateWithTriggerKeys=True
+# Alt+Shift toggles EN <-> RU only; the third quick switch in a row lands on Mozc (fcitx-jp-gate)
+EnumerateWithTriggerKeys=False
 EnumerateSkipFirst=False
 
 [Hotkey/TriggerKeys]
 0=Control+space
+1=Alt+Shift_L
+2=Shift+Alt_L
 
 [Hotkey/EnumerateForwardKeys]
-0=Alt+Shift_L
-1=Shift+Alt_L
 
 [Hotkey/EnumerateBackwardKeys]
 

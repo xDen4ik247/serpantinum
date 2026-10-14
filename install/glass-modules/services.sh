@@ -36,6 +36,7 @@ g_venvs_install() {
 # Prints "unit<TAB>reason" for every unit glass wants enabled on this machine right now.
 g_units_wanted() {
     printf '%s\t%s\n' fcitx5.service "input method (EN/RU/JP)"
+    printf '%s\t%s\n' fcitx-jp-gate.service "Alt+Shift: EN <-> RU, the third quick switch = JP"
     printf '%s\t%s\n' mpd.service "music daemon" mpd-mpris.service "music: media keys + bar player"
     printf '%s\t%s\n' music-smart.service "music: smart shuffle + history"
     printf '%s\t%s\n' gcal-sync.timer "agenda refresh (Google Calendar + Obsidian; idle without a calendar)"
@@ -58,14 +59,15 @@ g_unit_shipped() { [ -f "$G_ROOT/home/.config/systemd/user/$1" ]; }
 
 # Units that belong to the graphical session: enabled now, started by the next login (starting them over
 # ssh or a tty would fail).
-G_UNITS_SESSION=" fcitx5.service power-mode.service sleep-guard.service "
+G_UNITS_SESSION=" fcitx5.service fcitx-jp-gate.service power-mode.service sleep-guard.service "
 
 # Units we may have enabled in an earlier run (for --uninstall and for features that went away).
-G_UNITS_ALL=(fcitx5.service mpd.service mpd-mpris.service music-smart.service gcal-sync.timer anki-queue-flush.timer
+G_UNITS_ALL=(fcitx5.service fcitx-jp-gate.service mpd.service mpd-mpris.service music-smart.service gcal-sync.timer anki-queue-flush.timer
              power-mode.service sleep-guard.service greeter-sync.path npu-llm.socket aidict.service npu-ocr.service ai-notes-watch.service)
 
 # Scripts whose running daemon must restart when they change.
 declare -A G_UNIT_OF=(
+    [.local/bin/fcitx-jp-gate]=fcitx-jp-gate.service
     [.local/bin/music-smart]=music-smart.service
     [.local/bin/power-mode]=power-mode.service
     [.local/bin/sleep-guard]=sleep-guard.service

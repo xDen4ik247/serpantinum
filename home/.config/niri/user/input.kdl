@@ -3,7 +3,7 @@
 input {
     keyboard {
         xkb {
-            // us/ru/mozc switching (Alt+Shift) is handled by fcitx5
+            // us/ru switching (Alt+Shift; the third quick press = Mozc) is handled by fcitx5 + fcitx-jp-gate
             layout "us"
         }
     }
