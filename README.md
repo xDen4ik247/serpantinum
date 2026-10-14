@@ -1,197 +1,186 @@
-> [!NOTE]
-> **This is the liquid-glass fork** of Serpantinum: glass top bar and widgets, Google Calendar + Obsidian agenda,
-> MPD music with synced lyrics, local AI on the Intel NPU/GPU, Japanese study tools and a glass login screen.
-> Start at **[docs/glass/README.md](docs/glass/README.md)**. Install (Arch, niri):
-> `bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/glass/install/glass.sh)"`.
-> Everything below is upstream's README.
-
-<div align="center">
-  <a href="https://ko-fi.com/ilyamiro">
-    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi" />
-  </a>
-</div>
-
 <div align="center">
   <img src="docs/assets/banner.png" alt="Serpantinum" width="850" />
+
+  <h1>Serpantinum — liquid glass edition</h1>
+
+  <p>A niri desktop where every surface is glass, with its own music, mail and study apps<br>
+  and a local-AI layer that runs entirely on the laptop.</p>
 </div>
 
-## Previews
-
-| | |
-|---|---|
-| ![Preview 1](docs/assets/previews/preview_1.png) | ![Preview 2](docs/assets/previews/preview_2.png) |
-| ![Preview 3](docs/assets/previews/preview_3.png) | ![Preview 4](docs/assets/previews/preview_4.png) |
-
----
-
-## Installation
-
-> [!IMPORTANT]
-> **Migrating from v1:** All previous configuration will be backed up and unused. Configuration of compositor settings such as monitors, keybinds, and autostart is now up to you, as the project migrated from being dotfiles to being a shell.
-
-### Arch Linux and its derivatives
-
-For Arch-based distributions (including systemd, OpenRC, and other init systems), run the automated installation script.:
-
-```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/ilyamiro/serpantinum/master/install/install.sh)"
-
-```
+This is an edition of [ilyamiro/serpantinum](https://github.com/ilyamiro/serpantinum) (v2.2.4, niri), tuned for an
+Intel Core Ultra 200V ("Lunar Lake") laptop with an Arc 140V GPU and an NPU. The shell becomes **liquid glass**:
+translucent tints over niri blur, hairline rims and soft shadows. Three apps in the same style, a cheat sheet,
+an agenda and a set of local AI tools are added on top. Nothing is sent to the cloud.
 
 > [!NOTE]
-> To update, when or if you recieve a notification about the new version being available, just run the script again and choose "update"
+> Screenshots and short videos are on the way.
 
----
+## Contents
 
-### NixOS
+- [What you get](#what-you-get)
+- [Apps](#apps)
+- [Shortcuts](#shortcuts)
+- [Install](#install)
+- [Repository layout](#repository-layout)
+- [Development](#development)
+- [Credits and license](#credits-and-license)
 
-Serpantinum provides flake outputs, a NixOS module for system dependencies, and a Home Manager module for user configuration and service management.
+## What you get
 
-#### 1. Add Flake Input
+| Area | What it does |
+|---|---|
+| **Top bar** | Floating glass islands, dynamic workspace dots, an EN/RU/JP input pill, now playing, system tray. |
+| **Desktop widgets** | Clock with agenda, month calendar, vitals rings (CPU, GPU, NPU, RAM, temperature, battery), favourite apps, network graph, weather. |
+| **Agenda** | Google Calendar (through a secret iCal link) and Obsidian tasks in 8-day and month views, with quick capture in plain language. |
+| **Notifications** | Glass popups and a notification centre with do-not-disturb. |
+| **Music** | MPD with a glass now-playing panel, synced lyrics and an equaliser. My Vibe builds an endless smart queue from your listening history. |
+| **Cheat sheet** | A searchable overlay of every shortcut, generated live from the niri config (Mod+Shift+/). |
+| **Japanese** | Mozc that starts in hiragana, NPU OCR for any screen area, a reading helper with furigana, Anki mining and an adaptive quiz. |
+| **Local AI** | llama.cpp on the Arc GPU (OpenVINO backend), started on demand: an assistant, clipboard actions, Obsidian AI notes and Whisper dictation on the NPU. |
+| **Login** | A liquid-glass SDDM greeter that follows the wallpaper and its colours. You can type your password right away, and the screen locks before sleep. |
+| **Power** | `power-mode auto|perf|save`, lazy widgets, an on-demand LLM and runtime power management. The panel stays at 120 Hz. |
+| **Rust** | Everything that runs all the time is written in Rust, like niri itself: the app backends and the shell helpers ([why and how](docs/rust.md)). |
 
-Add Serpantinum to your `flake.nix`:
+Colours come from the wallpaper (Matugen), so picking a wallpaper (Mod+W) recolours the whole desktop.
 
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    serpantinum.url = "github:ilyamiro/serpantinum";
-  };
+## Apps
 
-  outputs = { self, nixpkgs, serpantinum, ... }: {
-    nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      specialArgs = { inherit serpantinum; };
-      modules = [
-        ./configuration.nix
-        serpantinum.nixosModules.default
-      ];
-    };
-  };
-}
+**Glass Music** (Mod+Shift+M) is a Spotify-style library app for MPD. It has home shelves, albums, artists, search,
+a queue you can reorder, and synced lyrics. Lyrics come from your own `.lrc` files first, then from online
+sources when a song has none. It also has My Vibe styles. With continuous play (on by default, the ∞ button in the
+queue), My Vibe takes over when the queue ends. Optional online search and download go through
+`yandex-music-downloader`, and everything is downloaded before it plays. [apps/glass-music](apps/glass-music/)
 
-```
+**Glass Mail** (Mod+I) is IMAP and SMTP with app passwords, and an always-on IDLE watcher that sends desktop
+notifications. HTML mail is drawn by a real web engine (WebKitGTK), with remote content blocked until you allow
+it. Login codes are copied to the clipboard automatically. AI summaries, replies and translations run on the
+local model. [apps/glass-mail](apps/glass-mail/)
 
-#### 2. configuration.nix
+**JP Quiz** (Mod+J) is an endless adaptive Japanese quiz from N5 to N3. It covers particles, conjugation,
+grammar, word order, kanji and vocabulary, all built from real example sentences, and picks each next
+question so you get about 75 % right. Answers are explained with JMdict glosses. [apps/jp-quiz](apps/jp-quiz/)
 
-Enable the NixOS module to configure system prerequisites:
+## Shortcuts
 
-```nix
-{
-  programs.serpantinum.enable = true;
-}
+The full list is one keypress away (**Mod+Shift+/**). The ones added by this edition:
 
-```
+| Keys | Action | Keys | Action |
+|---|---|---|---|
+| Mod+Shift+M | Glass Music | Mod+C | Agenda |
+| Mod+M | Now-playing panel | Mod+K | Month calendar |
+| Mod+S | My Vibe (start / re-roll) | Mod+O | Today's Obsidian note |
+| Mod+, / Mod+. | Previous / next track | Mod+Shift+O | Quick task capture |
+| Mod+/ | Play / pause | Mod+N | Ask your notes (local AI) |
+| Mod+I | Glass Mail | Mod+Shift+N | Actions for the open note |
+| Mod+J | JP Quiz | Mod+A | AI assistant |
+| Mod+X | Japanese OCR | Mod+Shift+A | AI actions on the clipboard |
+| Mod+Shift+X | OCR + translate | Mod+Z | Dictation |
+| Mod+Shift+Z | Reading helper | Alt+K | Hiragana ↔ katakana |
+| Mod+W | Wallpaper picker | Mod+Shift+G | Show / hide widgets |
+| Mod+Alt+I | Repair the input method | Mod+Alt+R | Restart the shell |
 
-If you prefer installing the package directly without the system module:
+## Install
 
-```nix
-{ pkgs, serpantinum, ... }:
-
-{
-  environment.systemPackages = [
-    serpantinum.packages.${pkgs.stdenv.hostPlatform.system}.default
-  ];
-}
-
-```
-
-#### 3. Home Manager Configuration
-
-```nix
-{ serpantinum, ... }:
-
-{
-  imports = [
-    serpantinum.homeManagerModules.default
-  ];
-
-  programs.serpantinum = {
-    enable = true;
-    systemd.enable = true;
-
-    settings = {
-      wallpaperDir = "/home/username/Pictures/Wallpapers";
-
-      general = {
-        language = "en";
-        weatherUnit = "metric";
-        weatherInterval = 30;
-      };
-
-      bar = {
-        position = "top";
-        style = "solid";
-        width = 40;
-        workspaceCount = 10;
-        modules = {
-          left = [ "workspaces" ];
-          center = [ "time" ];
-          right = [ "tray" [ "kb" "wifi" "bt" "vol" "bat" ] ];
-        };
-      };
-
-      theme = {
-        fontFamily = "Adwaita Mono";
-        borderRadius = 12;
-        matugen = true;
-      };
-
-      notifications = {
-        dnd = false;
-        position = "top right";
-        sound = true;
-      };
-    };
-  };
-}
-
-```
-
-#### 4. Updating
-
-Update the flake lockfile and rebuild your system:
+On Arch Linux (or an Arch-based distribution), as your normal user:
 
 ```bash
-nix flake update serpantinum
-sudo nixos-rebuild switch --flake .
-
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/glass/install/glass.sh)"
 ```
 
-> **Note:** The automatic installer handles compositor integration on standard distributions. On NixOS / Home Manager, you must manually integrate compositor configs.
-> Sample configs, autostart entries, and keybindings for supported window managers and compositors are available in the [compositors](https://github.com/ilyamiro/serpantinum/tree/master/compositors) directory.
+Options go after a `_`. For example, a dry run that only shows what would change:
 
-
-#### Required autostart
-
-Remember to add clipboard listeners and required services to your compositor's autostart configuration for the clipboard and the equalizer to work properly.
-
-Example on Hyprland:
-
-```lua
-hl.on("hyprland.start", function()
-  hl.exec_cmd("wl-paste --type text --watch cliphist store")
-  hl.exec_cmd("wl-paste --type image --watch cliphist store")
-  hl.exec_cmd("systemctl --user enable --now easyeffects")
-end)
-
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/glass/install/glass.sh)" _ --dry-run --diff
 ```
----
 
-## Running
+From a clone of the `glass` branch, run `install/glass.sh [options]`. The installer works in these steps:
 
-To run the shell, launch `serpantinumd start`
+1. **Base:** installs (or updates) plain upstream Serpantinum for niri with upstream's own installer modules, at
+   the commit this edition is built on. Upstream's `serpantinum update` keeps working.
+2. **Root (one password prompt):** extra packages from the official repos, the glass login screen and, on
+   laptops, the battery tweaks.
+3. **Dotfiles:** everything in `home/`. Files that were already there are backed up to
+   `~/.config/serp-glass_backup/<date>/` first.
+4. **Shell:** applies the glass changes to Serpantinum as `serp-tweaks` patches, which are re-applied after
+   every upstream update.
+5. **Apps and helpers:** installs Glass Music (plus JP Quiz with `--with jpquiz`) and the Rust helpers. Without
+   cargo, the Python/bash originals are used instead.
+6. **Services:** installs systemd user units for whatever was installed. The LLM, notes and greeter units start
+   on demand.
 
----
+Running it again is safe, because it only fixes what differs. A file you edited is never overwritten: the new
+version is written next to it as `<file>.glass-new`, and `--force` replaces it after making a backup. Your music,
+notes, calendar links and quiz progress are never touched. Every change is recorded in
+`~/.local/state/serp-glass/`.
 
-## Credits
+| Option | What it does |
+|---|---|
+| `--dry-run` (`-n`), `--diff` | Show what would change (with diffs) and change nothing |
+| `--yes` (`-y`) | Don't ask questions |
+| `--with LIST` | Opt-in extras (below); remembered for later runs |
+| `--no-sddm`, `--power auto\|yes\|no`, `--no-shell-rc` | Skip the login screen, the battery tweaks or the zsh files |
+| `--vault NAME` | Your Obsidian vault in `~/Obsidian` |
+| `--skip-base`, `--reinstall-base`, `--upstream latest`, `--upstream-menu` | Control the upstream base install |
+| `--wallpapers few\|full\|none` | Upstream's wallpaper pack (default: a few) |
+| `--status` | Show what is installed |
+| `--uninstall [--purge]` | Remove the glass layer (upstream stays); `--purge` also deletes downloaded models |
 
-* Special thanks to Darkall44/Qylock for providing a gorgeous material SDDM theme!
+**Extras.** The default install downloads no models. The desktop works without them, and the AI keys just do
+nothing.
 
-<br><br><br>
+| Extra | What you get | Cost |
+|---|---|---|
+| `llm` | Local LLM on the Intel Arc GPU (assistant, calendar capture, OCR translation): OpenVINO + llama.cpp built locally + Qwen3.5-4B | ~3.2 GB download, 10–20 min build, ~9 GB RAM while running |
+| `notes` | Obsidian AI notes (Mod+N); needs `llm` | 640 MB |
+| `dictation` | Whisper dictation (Mod+Z) on the NPU | ~1.2 GB |
+| `ocr` | Japanese OCR (Mod+X) on the NPU; includes `jmdict` | ~1 GB kept, ~2.5 GB temporary |
+| `jmdict` | JMdict dictionary for OCR and Anki cards | 22 MB |
+| `jpquiz` | JP Quiz (Mod+J); the question bank is built locally | ~80 MB download, a few minutes |
+| `all` | All of the above | |
+
+All downloads are pinned to exact upstream revisions and checked against their sha256.
+
+Glass Mail is not part of the installer yet. Install it from a clone with `apps/glass-mail/install.sh`.
+
+After the first install, log out and pick the niri session (or reboot). Press **Mod+Shift+/** to see every
+shortcut, and run `gcal-setup` to add a Google Calendar. Its secret address stays in `~/.config/gcal-sync/`.
+
+## Repository layout
+
+```text
+src/        Serpantinum itself: upstream + the glass changes, one commit per feature
+home/       dotfiles relative to $HOME (paths written as /home/user; the installer renders your own)
+system/     root-owned parts: SDDM theme + installer, udev/sysctl power tweaks, package list
+apps/       Glass Music, Glass Mail and JP Quiz (each with a Rust backend and its tests)
+rust/       the Rust shell helpers (Python/bash originals in rust/reference/, tests in rust/tests/)
+install/    glass.sh + glass-modules/ (this edition) next to upstream's install.sh + modules/
+compositors/, config/, bin/   upstream's compositor samples, app configs and CLI
+docs/       rust.md (Python/bash vs Rust), banner
+tools/      sync-from-system.sh (machine → repo), check-secrets.sh (run before every commit)
+```
+
+The niri config keeps upstream's copies in `~/.config/niri/config/` (never edited) and adds your own layer in
+`~/.config/niri/user/`, with one `binds-<feature>.kdl` / `rules-<feature>.kdl` file per feature.
+
+## Development
+
+```bash
+git fetch upstream && git rebase upstream/master        # on branch glass
+tools/sync-from-system.sh && tools/check-secrets.sh && git add -p
+```
+
+After a rebase, set `G_UPSTREAM_BASE` in `install/glass.sh` to the new upstream commit, so the installer builds
+its patches against it. Each app has its own tests, including differential tests between the Rust backends and
+the original Python ones (see `apps/*/tests/` and `rust/tests/`).
+
+## Credits and license
+
+Built on [Serpantinum](https://github.com/ilyamiro/serpantinum) by [ilyamiro](https://github.com/ilyamiro) and its
+contributors. If you like the shell, support its author on [Ko-fi](https://ko-fi.com/ilyamiro). Upstream thanks
+Darkall44/Qylock for its SDDM theme.
 
 <div align="center">
-  <h3>Thanks to all contributors</h3>
+  <h3>Upstream contributors</h3>
   <br>
 
   <a href="https://github.com/TheRinder2"><img src="https://avatars.githubusercontent.com/u/48689803?v=4&s=48" width="48" height="48" alt="TheRinder2"></a>
@@ -217,13 +206,10 @@ To run the shell, launch `serpantinumd start`
   <a href="https://github.com/zynx-real"><img src="https://avatars.githubusercontent.com/u/320626542?v=4&s=48" width="48" height="48" alt="zynx-real"></a>
 </div>
 
-<br><br>
-
----
 
 ## License
 
-Copyright (C) 2026 Illia Miroshnichenko
+Copyright (C) 2026 Illia Miroshnichenko and the contributors of this edition.
 
-This project is licensed under the GNU Affero General Public License version 3, or (at your option) any later version. See the [LICENSE.md](LICENSE.md) file for the full license text.
-
+Licensed under the GNU Affero General Public License version 3, or (at your option) any later version, like
+upstream. See [LICENSE.md](LICENSE.md) for the full text.
