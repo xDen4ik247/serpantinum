@@ -156,6 +156,7 @@ ShellRoot {
         property var fwdStack: []
         property var pageItem: null
         property string rightPanel: ""          // "" | "queue" | "lyrics"
+        property bool autoplay: true            // continuous play: My Vibe takes over when the queue ends
         property string selected: ""
         property string searchText: ""
         property var searchRes: null
@@ -217,7 +218,8 @@ ShellRoot {
             else if (m.type === "lyrics") lyrics = m;
             else if (m.type === "toast") toast(m.icon, m.text);
             else if (m.type === "removed") onRemoved(m);
-            else if (m.type === "hello") { smartPath = m.smartState || smartPath; if (m.smartStyles) smartStylesPath = m.smartStyles; }
+            else if (m.type === "hello") { smartPath = m.smartState || smartPath; if (m.smartStyles) smartStylesPath = m.smartStyles; if (m.autoplay !== undefined) autoplay = m.autoplay; }
+            else if (m.type === "autoplay") autoplay = m.on;
             else if (m.type === "error") console.warn("backend error:", m.error, m.trace || "");
             else if (m.type === "log") console.log("backend:", m.msg);
             else if (m.type === "mpd" && !m.ok) toast("warn", "MPD unavailable: " + m.error);
@@ -721,12 +723,12 @@ ShellRoot {
                 app: app
                 x: sidebar.x + sidebar.width + root.gap
                 y: root.gap
-                width: rightPanel.x - x - (rightPanel.width > 1 ? root.gap : 0)
+                width: rightIsland.x - x - (rightIsland.width > 1 ? root.gap : 0)
                 height: bar.y - root.gap * 2
             }
 
             RightPanel {
-                id: rightPanel
+                id: rightIsland
                 app: app
                 y: root.gap
                 width: root.rightW

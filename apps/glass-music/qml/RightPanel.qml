@@ -48,6 +48,12 @@ Item {
             anchors { right: parent.right; rightMargin: 12 + (inner.width - rp.width); top: parent.top; topMargin: 12 }
             spacing: 2
             IconButton {
+                visible: rp.shownPanel === "queue"
+                app: rp.app; icon: "infinity"; size: 32; iconSize: 18; active: rp.app.autoplay
+                tip: rp.app.autoplay ? "Autoplay on: My Vibe keeps playing when the queue ends" : "Autoplay off: stop when the queue ends"
+                onClicked: rp.app.send({ cmd: "autoplay", on: !rp.app.autoplay })
+            }
+            IconButton {
                 visible: rp.shownPanel === "queue" && rp.app.queue.length > 1
                 app: rp.app; icon: "clear"; size: 32; iconSize: 18; tip: "Clear queue (keeps the current song)"
                 onClicked: rp.app.send({ cmd: "clearqueue" })

@@ -44,6 +44,35 @@ fn smart_state() -> String {
     env_or("GLASS_MUSIC_SMART_STATE", format!("{}/.local/state/music-smart/state.json", home()))
 }
 
+/// The app's own settings (~/.config/glass-music/settings.json); only "autoplay" so far.
+fn settings_path() -> String {
+    env_or("GLASS_MUSIC_SETTINGS", format!("{}/glass-music/settings.json", env_or("XDG_CONFIG_HOME", format!("{}/.config", home()))))
+}
+
+fn settings() -> Value {
+    std::fs::read_to_string(settings_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).filter(Value::is_object).unwrap_or(json!({}))
+}
+
+/// Continuous play: when the queue runs out, My Vibe takes over. On unless switched off.
+fn autoplay_on() -> bool {
+    settings()["autoplay"] != false
+}
+
+fn set_autoplay(on: bool) {
+    let mut s = settings();
+    s["autoplay"] = json!(on);
+    let p = settings_path();
+    let _ = std::fs::create_dir_all(pystr::dirname(&p));
+    let tmp = format!("{p}.tmp");
+    if std::fs::write(&tmp, pyjson::dumps(&s, false) + "\n").is_ok() {
+        let _ = std::fs::rename(&tmp, &p);
+    }
+}
+
+fn smart_active() -> bool {
+    std::fs::read_to_string(smart_state()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).is_some_and(|v| truthy(&v["active"]))
+}
+
 fn ym_temp() -> String {
     env_or("GLASS_MUSIC_YM_TEMP", format!("{}/yandex-temp", cache_dir()))
 }
@@ -258,6 +287,7 @@ pub struct Server {
     ym_play: Option<(Value, i64)>, // the Yandex play job that owns the queue: (job, before)
     ym_next: HashMap<String, i64>, // job -> tracks already inserted after the current one
     lyr_meta: HashMap<String, Value>,
+    playing: Option<(Instant, f64, f64)>, // last "play" status: (when, elapsed, duration)
 }
 
 impl Server {
@@ -286,6 +316,7 @@ impl Server {
             ym_play: None,
             ym_next: HashMap::new(),
             lyr_meta: HashMap::new(),
+            playing: None,
         }
     }
 
@@ -398,6 +429,7 @@ impl Server {
             "error": g("error").unwrap_or(""),
         });
         emit(&out);
+        self.autoplay_check(&out);
         let id = out["id"].as_i64().unwrap_or(-1);
         if Some(id) != self.last_songid {
             if self.last_songid.is_some() {
@@ -456,6 +488,23 @@ impl Server {
             return json!({"artist": g("a", json!("")), "title": g("t", json!("")), "album": g("al", json!("")), "duration": g("d", json!(0))});
         }
         self.lyr_meta.get(f).cloned().unwrap_or(Value::Null)
+    }
+
+    /// Continuous play: the last song played to its end and MPD stopped (no repeat / single,
+    /// My Vibe not running), so My Vibe carries on instead of silence. A stop pressed by hand
+    /// mid-song doesn't count: the song must have reached (about) its end.
+    fn autoplay_check(&mut self, st: &Value) {
+        let state = st["state"].as_str().unwrap_or("");
+        if state == "play" {
+            self.playing = Some((Instant::now(), st["elapsed"].as_f64().unwrap_or(0.0), st["duration"].as_f64().unwrap_or(0.0)));
+            return;
+        }
+        let Some((at, elapsed, duration)) = self.playing.take() else { return };
+        let reached_end = duration > 0.0 && elapsed + at.elapsed().as_secs_f64() >= duration - 2.0;
+        if state == "stop" && reached_end && st["repeat"] != true && st["single"] != true && autoplay_on() && !smart_active() {
+            toast("vibe", "Queue finished · My Vibe keeps playing");
+            self.smart("start", "");
+        }
     }
 
     /// A new song started: look up lyrics for it and the next two (each song once, cached).
@@ -855,7 +904,7 @@ impl Server {
         match cmd.as_str() {
             "hello" => {
                 let ss = smart_state();
-                emit(&json!({"type": "hello", "smartState": ss, "smartStyles": pystr::join(pystr::dirname(&ss), "styles.json"), "mpd": self.sh.address}));
+                emit(&json!({"type": "hello", "smartState": ss, "smartStyles": pystr::join(pystr::dirname(&ss), "styles.json"), "mpd": self.sh.address, "autoplay": autoplay_on()}));
                 self.send_library(false)?;
                 self.send_status()?;
                 self.send_queue()?;
@@ -1010,6 +1059,10 @@ impl Server {
                 }
             }
             "mix" => self.smart("start", &gs("mood")), // old name: a style's endless My Vibe queue
+            "autoplay" => {
+                set_autoplay(on);
+                emit(&json!({"type": "autoplay", "on": on}));
+            }
             "smart" => {
                 let action = c.get("action").map(pystr_of).unwrap_or_else(|| "start".into());
                 self.smart(&action, &gs("style"));
