@@ -18,6 +18,7 @@ mod model;
 mod pyjson;
 mod pymath;
 mod pyrand;
+mod review;
 
 use serde_json::{json, Value};
 use std::cell::Cell;

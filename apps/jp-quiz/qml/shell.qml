@@ -86,7 +86,7 @@ ShellRoot {
         property string state: "loading"      // loading welcome question waiting feedback intro | views: stats rank details grammar| views: stats details grammar
         property string prevState: "question"
         property var hello: ({})
-        property var settings: ({ lang: "en", furigana: false, sound: true, auto_advance: true, target: 0.75, daily_goal: 30 })
+        property var settings: ({ lang: "en", furigana: false, sound: true, auto_advance: true, target: 0.75, daily_goal: 30, anki_reviews: false })
         property var q: null
         property var res: null
         property var card: null               // intro / placement card
@@ -159,6 +159,9 @@ ShellRoot {
                     else if (ev.type === "medal") medalToast(ev);
                     else if (ev.type === "unlock" && ev.what === "band") bands.push(ev);
                     else if (ev.type === "anki") ankiToast(ev);
+                    else if (ev.type === "anki_review" && ev.status === "offline")
+                        toasts.show("warn", (ru() ? "Anki закрыт — повторы на паузе" : "Anki is closed — reviews paused") +
+                                    (ev.pending ? " · " + ev.pending + (ru() ? " ждут отправки" : " waiting to sync") : ""), theme.gold);
                     else if (ev.type === "unlock" && ev.what === "grammar" && !ev.bulk) toasts.show("book", (ru() ? "Новая грамматика: " : "New grammar: ") + ev.items.map(i => i.name).join(", "), theme.accent2);
                 }
                 if (bands.length) {
@@ -166,8 +169,8 @@ ShellRoot {
                     toasts.show("unlock", (ru() ? "Открыто N" : "Unlocked N") + lv + ": " + bands.filter(b => b.level === lv).map(b => tr(b.cat_name)).join(", "), theme.accent);
                 }
                 if (m.correct && settings.auto_advance && pending.length === 0) advanceTimer.restart();
-                // keep the last answer reachable for "add to Anki" during the next question
-                lastRes = m;
+                // keep the last answer reachable for "add to Anki" during the next question (an Anki review already is)
+                lastRes = m.anki ? null : m;
             } else if (m.type === "stats") {
                 stats = m;
                 if (wantView === "stats" || wantView === "details") enterView(wantView);
@@ -194,6 +197,10 @@ ShellRoot {
                 toasts.show(m.ok ? "cards" : "warn", (ru() ? "Anki: " : "Anki: ") + m.message, m.ok ? theme.good : theme.gold);
                 if (m.ok) send({ cmd: "stats" });
             } else if (m.type === "settings") {
+                if (!!m.settings.anki_reviews !== !!settings.anki_reviews)
+                    toasts.show("cards", m.settings.anki_reviews
+                                ? (ru() ? "Повторы Anki: вкл — каждый 3-й вопрос, пока Anki открыт" : "Anki reviews on — every 3rd question while Anki is open")
+                                : (ru() ? "Повторы Anki: выкл" : "Anki reviews off"), theme.accent);
                 settings = m.settings;
             } else if (m.type === "error") {
                 console.warn("engine error:", m.error, m.trace || "");
@@ -258,6 +265,7 @@ ShellRoot {
         function ankiAdd(key) {
             advanceTimer.stop();
             if (key) send({ cmd: "anki_add", key: key });
+            else if (state === "feedback" && res && res.anki) toasts.show("cards", ru() ? "Эта карточка уже в Anki" : "This card is already in Anki", theme.accent);
             else if (state === "feedback" && res) send({ cmd: "anki_add", key: res.key });
             else if (lastRes) send({ cmd: "anki_add", key: lastRes.key });
             else toasts.show("warn", ru() ? "Сначала ответьте на вопрос" : "Answer a question first", theme.gold);
@@ -392,6 +400,7 @@ ShellRoot {
                     else if (k === Qt.Key_A) app.setSetting("auto_advance", !app.settings.auto_advance);
                     else if (k === Qt.Key_S) app.send({ cmd: "anki_sync" });
                     else if (k === Qt.Key_K) app.setSetting("anki_auto", !app.settings.anki_auto);
+                    else if (k === Qt.Key_V) { app.setSetting("anki_reviews", !app.settings.anki_reviews); app.send({ cmd: "stats" }); }
                     event.accepted = true; return;
                 }
                 if (k === Qt.Key_F && st !== "welcome") { app.setSetting("furigana", !app.settings.furigana); event.accepted = true; return; }
@@ -538,7 +547,7 @@ ShellRoot {
             font.pixelSize: 13
             text: {
                 const ru = app.ru();
-                if (app.state === "stats") return ru ? "Tab дальше · Esc назад · ←→ цель · L язык · F фуригана · M звук · A автопереход · S синхр. с Anki · K авто-Anki" : "Tab next · Esc back · ←→ target · L language · F furigana · M sound · A auto-advance · S sync with Anki · K auto-add to Anki";
+                if (app.state === "stats") return ru ? "Tab дальше · Esc назад · ←→ цель · L язык · F фуригана · M звук · A автопереход · S синхр. с Anki · K авто-Anki · V повторы Anki" : "Tab next · Esc back · ←→ target · L language · F furigana · M sound · A auto-advance · S sync with Anki · K auto-add to Anki · V Anki reviews";
                 if (app.state === "rank") return ru ? "←→ слова / кандзи / грамматика · D стиль Dota вкл/выкл · L язык · Tab дальше · Esc назад" : "←→ words / kanji / grammar · D Dota style on/off · L language · Tab next · Esc back";
                 if (app.state === "details") return ru ? "Tab дальше · Esc назад · + у недавних — в Anki" : "Tab next · Esc back · click + on a recent question to add it to Anki";
                 if (app.state === "grammar") return ru ? "↑↓ выбор · Enter тренировать / стоп · X выключить тренировку · Esc назад" : "↑↓ choose · Enter drill this point / stop · X drill off · Esc back";
@@ -580,6 +589,7 @@ ShellRoot {
             else if (/^pane:/.test(name)) app.rankPane = name.slice(5);
             else if (name === "tab") app.cycleView();
             else if (name === "sync") app.send({ cmd: "anki_sync" });
+            else if (name === "reviews") app.setSetting("anki_reviews", !app.settings.anki_reviews);
             else if (/^[1-9]$/.test(name)) { if (app.q && app.q.kind === "order") app.pickTile(parseInt(name) - 1); else app.answer(parseInt(name) - 1); }
         }
         function quit(): void { app.close() }
@@ -588,5 +598,7 @@ ShellRoot {
         function state(): string { return app.state + (app.q ? " " + app.q.kind : "") }
         // render the Rank view to a PNG (works offscreen too, so checks need no window on screen)
         function shot(path: string): void { rankView.grabToImage(r => r.saveToFile(path)) }
+        // the question / feedback view, same idea
+        function shotQuiz(path: string): void { quiz.grabToImage(r => r.saveToFile(path)) }
     }
 }

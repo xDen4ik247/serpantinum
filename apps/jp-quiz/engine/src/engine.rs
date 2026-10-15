@@ -6,6 +6,7 @@ use crate::memory::{grade_from, memory_shift, review, Card, DAY};
 use crate::model::{guess, logit, to_rating, Comp, Model, Terms};
 use crate::pyjson::{dumps, f, round_i, round_n};
 use crate::pyrand::PyRandom;
+use crate::review::{self, Reviews};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Map, Value};
@@ -114,6 +115,8 @@ fn kind_name(k: &str) -> Option<Value> {
         "vocab" => ("Word in context", "Слово в контексте"),
         "meaning" => ("What does it mean?", "Что это значит?"),
         "produce" => ("Say it in Japanese", "Как сказать по-японски?"),
+        "anki_read" => ("Anki · reading", "Anki · чтение"),
+        "anki_mean" => ("Anki · meaning", "Anki · значение"),
         _ => return None,
     };
     Some(json!([a, b]))
@@ -125,7 +128,8 @@ const RANKS: [(f64, &str); 5] = [(-99.0, "N5…"), (-0.49, "N5"), (0.51, "N4"), 
 
 fn default_settings() -> Map<String, Value> {
     let v = json!({"target": 0.75, "lang": "en", "furigana": false, "sound": true, "auto_advance": true,
-                   "daily_goal": 30, "anki_auto": false, "focus_gp": null, "daily_auto": true});
+                   "daily_goal": 30, "anki_auto": false, "focus_gp": null, "daily_auto": true,
+                   "anki_reviews": false});
     v.as_object().unwrap().clone()
 }
 
@@ -239,9 +243,22 @@ enum Correct {
     Joined(String),
 }
 
+/// A question made from a due Anki card (see review.rs).
+struct AnkiQ {
+    card: anki::ReviewCard,
+    kind: &'static str,
+    explain: String,
+    full: String,
+    en: String,
+    words: Value,
+    budget: i64,
+}
+
 struct Current {
     qid: i64,
+    /// an index into `items`; meaningless when `anki` is set
     item: usize,
+    anki: Option<Box<AnkiQ>>,
     payload: Value,
     correct: Correct,
     p: f64,
@@ -289,6 +306,7 @@ pub struct Engine {
     anki_words: rank::AnkiWords,
     calib: Option<rank::Calib>,
     calib_est: [[f64; 4]; 6],
+    reviews: Reviews,
 }
 
 const SCHEMA: &str = "
@@ -352,6 +370,7 @@ impl Engine {
             calib: None,
             calib_est: [[0.0; 4]; 6],
             anki_words: rank::AnkiWords::default(),
+            reviews: Reviews::default(),
         };
         eng.load_content()?;
         eng.load_progress()?;
@@ -520,6 +539,9 @@ impl Engine {
             self.anki_added = a.iter().filter_map(|x| x.as_str().map(String::from)).collect();
         }
         self.anki_words = rank::AnkiWords::from_json(kv.get("anki_words").map(String::as_str).unwrap_or("{}"));
+        if let Ok(Value::Array(a)) = serde_json::from_str::<Value>(kv.get("anki_pending").map(String::as_str).unwrap_or("[]")) {
+            self.reviews.pending = a.iter().filter_map(|x| Some((x.get(0)?.as_i64()?, x.get(1)?.as_i64()?))).collect();
+        }
         self.load_calib();
         if !self.game.contains_key("shown") {
             self.seed_shown()?;
@@ -796,6 +818,9 @@ impl Engine {
             return Ok(q);
         }
         let now = (self.now)();
+        if let Some(q) = self.anki_question(now)? {
+            return Ok(q);
+        }
         let target = self.target();
         let cands = self.candidates(now);
         let (it, why) = if self.in_placement() {
@@ -865,7 +890,7 @@ impl Engine {
             correct = Correct::Idx(order.iter().position(|&k| k == 0).unwrap_or(0) as i64);
         }
         q["ui"] = Value::Object(ui);
-        self.current = Some(Current { qid, item: i, payload, correct, p, target, why: why.to_string() });
+        self.current = Some(Current { qid, item: i, anki: None, payload, correct, p, target, why: why.to_string() });
         Ok(q)
     }
 
@@ -874,7 +899,7 @@ impl Engine {
         match &self.current {
             None => json!({"type": "peek", "correct": null}),
             Some(cur) => {
-                if self.items[cur.item].kind == "order" {
+                if cur.anki.is_none() && self.items[cur.item].kind == "order" {
                     json!({"type": "peek", "correct": cur.payload["tiles"], "order": true})
                 } else {
                     let c = match &cur.correct {
@@ -893,6 +918,9 @@ impl Engine {
             _ => return Ok(json!({"type": "error", "error": "stale question"})),
         }
         let cur = self.current.take().unwrap();
+        if cur.anki.is_some() {
+            return self.answer_anki(cur, choice, skip, ms);
+        }
         let i = cur.item;
         let it = self.items[i].clone();
         let payload = cur.payload.clone();
@@ -999,6 +1027,7 @@ impl Engine {
             }
         }
         events.extend(self.tier_event(tier_before));
+        events.extend(self.reviews.notice.take());
         self.push_recent(Recent { item: it.key.clone(), kind: it.kind.clone(), kc: it.kc.clone(), sid: it.sid });
         self.seen_items.insert(it.key.clone());
         let mut snap = Map::new();
@@ -1319,6 +1348,12 @@ impl Engine {
         let t = py_float(&self.settings["target"])?;
         self.settings.insert("target".into(), f(0.9f64.min(0.6f64.max(t))));
         let mut fg = self.settings.get("focus_gp").cloned().unwrap_or(Value::Null);
+        if m.contains_key("anki_reviews") {
+            // switched on (or off and on again): look for due cards right away
+            self.reviews.paused_until = 0.0;
+            self.reviews.fetched_at = None;
+            self.reviews.offline_told = false;
+        }
         if !fg.is_null() && !fg.as_str().is_some_and(|g| self.grammar.contains_key(g)) {
             self.settings.insert("focus_gp".into(), Value::Null);
             fg = Value::Null;
@@ -1596,6 +1631,217 @@ impl Engine {
         Ok(Value::Object(out))
     }
 
+    // ------------------------------------------------------------------ Anki reviews (review.rs)
+    fn anki_reviews_on(&self) -> bool {
+        self.settings.get("anki_reviews").is_some_and(truthy) && !self.in_placement() && self.focus().is_none()
+    }
+
+    /// Every ANKI_EVERY-th question while the setting is on and Anki has due cards: one of them.
+    fn anki_question(&mut self, now: f64) -> R<Option<Value>> {
+        if !self.anki_reviews_on() {
+            return Ok(None);
+        }
+        self.reviews.turn += 1;
+        if self.reviews.turn % review::ANKI_EVERY != 0 || now < self.reviews.paused_until {
+            return Ok(None);
+        }
+        let stale = |t: Option<f64>, age: f64| t.is_none_or(|t| now - t >= age);
+        if (self.reviews.pool.is_empty() && stale(self.reviews.fetched_at, review::REFETCH)) || stale(self.reviews.fetched_at, 3.0 * review::REFETCH) {
+            self.flush_reviews()?;
+            match anki::fetch_due(review::POOL_MAX) {
+                Ok(cards) => {
+                    self.reviews.set_pool(cards);
+                    self.reviews.fetched_at = Some(now);
+                    self.reviews.offline_told = false;
+                }
+                Err(_) => {
+                    self.anki_offline(now);
+                    return Ok(None);
+                }
+            }
+        }
+        while let Some(card) = self.reviews.pool.pop_front() {
+            let fakes = self.known_reading_fakes(&card.word);
+            // nothing fair to ask (e.g. a grammar card): left to Anki
+            let Some(b) = review::build(&card, &self.reviews.bank, &fakes, &mut self.rng) else { continue };
+            // reviewed elsewhere since the fetch (Anki itself, the phone)? then it is not ours to answer
+            match anki::are_due(&[card.card_id]) {
+                Ok(d) if d.first() == Some(&true) => {}
+                Ok(_) => continue,
+                Err(_) => {
+                    self.reviews.pool.push_front(card);
+                    self.anki_offline(now);
+                    return Ok(None);
+                }
+            }
+            return Ok(Some(self.make_anki_question(card, b)));
+        }
+        Ok(None)
+    }
+
+    fn anki_offline(&mut self, now: f64) {
+        self.reviews.paused_until = now + review::OFFLINE_PAUSE;
+        if !self.reviews.offline_told {
+            self.reviews.offline_told = true;
+            self.reviews.notice = Some(json!({"type": "anki_review", "status": "offline", "pending": self.reviews.pending.len()}));
+        }
+    }
+
+    /// The quiz's own wrong readings for a word (kread items carry hand-checked kana fakes).
+    fn known_reading_fakes(&self, word: &str) -> Vec<String> {
+        for &i in self.by_kc.get(&format!("read:{word}")).map(Vec::as_slice).unwrap_or(&[]) {
+            if self.items[i].kind == "kread" {
+                if let Ok(p) = self.payload(i) {
+                    let ch: Vec<String> = p["choices"].as_array().map(|a| a.iter().skip(1).filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+                    if !ch.is_empty() {
+                        return ch;
+                    }
+                }
+            }
+        }
+        vec![]
+    }
+
+    fn make_anki_question(&mut self, card: anki::ReviewCard, b: review::Built) -> Value {
+        let qid = self.gi("qn") + 1;
+        self.game.insert("qn".into(), json!(qid));
+        let mut order: Vec<usize> = (0..b.choices.len()).collect();
+        self.rng.shuffle(&mut order);
+        let mut ui = b.ui;
+        ui.insert("choices".into(), Value::Array(order.iter().map(|&k| json!(b.choices[k])).collect()));
+        let correct = order.iter().position(|&k| k == 0).unwrap_or(0) as i64;
+        let budget = round_i(if b.kind == "anki_read" { 22.0 } else { 34.0 } + 0.35 * b.full.chars().count() as f64);
+        // the chip shows the deck's leaf name; the header line the whole path
+        let deck_path = json!(card.deck.replace("::", " › "));
+        let q = json!({
+            "type": "question", "qid": qid, "kind": b.kind, "level": null, "cat": "vocab", "mode": "anki", "why": "anki",
+            "new": false, "p": null, "target": null, "budget": budget, "focus": null,
+            "kind_name": kind_name(b.kind), "cat_name": [deck_path, deck_path], "skill": null, "your": null, "item_rating": null,
+            "anki": {"card_id": card.card_id, "deck": card.deck}, "ui": Value::Object(ui),
+        });
+        let aq = AnkiQ { card, kind: b.kind, explain: b.explain, full: b.full, en: b.en, words: b.words, budget };
+        self.current = Some(Current { qid, item: 0, anki: Some(Box::new(aq)), payload: Value::Null, correct: Correct::Idx(correct), p: 0.0, target: 0.0, why: "anki".into() });
+        q
+    }
+
+    /// Send the queued answers to Anki; true when nothing is left waiting.
+    fn flush_reviews(&mut self) -> R<bool> {
+        if self.reviews.pending.is_empty() {
+            return Ok(true);
+        }
+        // Anki up but refusing (a deleted card): drop it rather than retry forever
+        let sent = anki::answer_cards(&self.reviews.pending).is_ok() || anki::invoke("version", json!({}), 2.0).is_ok();
+        if sent {
+            // a false entry means Anki no longer has the card; nothing to retry either way
+            self.reviews.pending.clear();
+        }
+        let list: Vec<Value> = self.reviews.pending.iter().map(|(id, ease)| json!([id, ease])).collect();
+        self.pdb.execute("INSERT OR REPLACE INTO kv VALUES ('anki_pending', ?)", [dumps(&json!(list), false)]).map_err(e)?;
+        Ok(sent)
+    }
+
+    fn answer_anki(&mut self, cur: Current, choice: Option<&Value>, skip: bool, ms: i64) -> R<Value> {
+        let a = *cur.anki.unwrap();
+        let qid = cur.qid;
+        let now = (self.now)();
+        let right = match cur.correct {
+            Correct::Idx(k) => k,
+            Correct::Joined(_) => -1,
+        };
+        let correct = !skip
+            && match choice {
+                None | Some(Value::Null) => false,
+                Some(v) => py_int(v)? == right,
+            };
+        let secs = (ms as f64 / 1000.0).max(0.0);
+        let overtime = secs > a.budget as f64 + 0.5;
+        let mut events: Vec<Value> = vec![];
+        // ---- Anki: Pass (3) / Fail (1); a skip leaves the card due and sends nothing
+        let status = if skip {
+            self.reviews.pool.push_back(a.card.clone());
+            "skipped"
+        } else {
+            self.reviews.pending.push((a.card.card_id, if correct { 3 } else { 1 }));
+            if self.flush_reviews()? {
+                self.reviews.offline_told = false;
+                "sent"
+            } else {
+                self.anki_offline(now);
+                "queued"
+            }
+        };
+        // ---- game layer: XP, streak and today's count like any question (no item rating: this is Anki's card)
+        let level_before = level_for_xp(self.gi("xp"));
+        let (mut points, mut combo) = (0i64, 1.0);
+        if correct {
+            let streak = self.gi("streak") + 1;
+            self.game.insert("streak".into(), json!(streak));
+            self.game.insert("best_streak".into(), json!(self.gi("best_streak").max(streak)));
+            combo = 3.0f64.min(1.0 + 0.25 * (streak - 1).div_euclid(3) as f64);
+            points = round_i(20.0 * combo * if overtime { OVERTIME_XP } else { 1.0 });
+            self.game.insert("xp".into(), json!(self.gi("xp") + points));
+        } else {
+            self.game.insert("streak".into(), json!(0));
+        }
+        let day = clock::date_str(now);
+        if !skip {
+            let y = correct as i64;
+            self.pdb
+                .execute(
+                    "INSERT INTO days VALUES (?,1,?,?) ON CONFLICT(day) DO UPDATE SET n=n+1, correct=correct+?, xp=xp+?",
+                    params![day, y, points, y, points],
+                )
+                .map_err(e)?;
+            let n = if self.game.get("anki_day").and_then(Value::as_str) == Some(day.as_str()) { self.gi("anki_today") } else { 0 };
+            self.game.insert("anki_day".into(), json!(day));
+            self.game.insert("anki_today".into(), json!(n + 1));
+            // the quiz's own estimate of the word learns from the review too
+            let w = &a.card.word;
+            let wkey = format!("tag:w:{w}");
+            if self.model.comps.contains_key(&wkey) || ["read", "write", "use"].iter().any(|f| self.by_kc.contains_key(&format!("{f}:{w}"))) {
+                let c = self.model.get(&wkey, None);
+                if correct {
+                    if c.mu < 1.5 {
+                        c.mu = (c.mu + 0.1).min(1.5);
+                    }
+                } else {
+                    c.mu = (c.mu - 0.2).max(-2.0);
+                }
+                let c = &self.model.comps[&wkey];
+                self.pdb.execute("INSERT OR REPLACE INTO comp VALUES (?,?,?,?,?)", params![wkey, c.mu, c.var, c.n, c.t]).map_err(e)?;
+            }
+        }
+        self.pdb.execute("INSERT OR REPLACE INTO kv VALUES ('game', ?)", [dumps(&Value::Object(self.game.clone()), true)]).map_err(e)?;
+        let level_after = level_for_xp(self.gi("xp"));
+        if level_after > level_before {
+            events.push(json!({"type": "levelup", "level": level_after}));
+        }
+        events.extend(self.reviews.notice.take());
+        let shown = round_i(self.shown_rating());
+        let vocab = round_i(self.model.rating(Some("vocab"), None, None));
+        Ok(json!({
+            "type": "result", "qid": qid, "correct": correct, "skipped": skip, "answer": right,
+            "explain": a.explain, "explain_ru": "", "full": a.full, "en": a.en, "ru": null,
+            "points": points, "combo": f(combo), "streak": self.gi("streak"), "best_streak": self.gi("best_streak"),
+            "time_bonus": f(0.0), "xp": self.gi("xp"), "level": level_after, "level_progress": self.level_progress(),
+            "rating": {"before": shown, "after": shown, "model": round_i(self.model.rating(None, None, None))},
+            "cat": {"name": cat_name("vocab"), "before": vocab, "after": vocab}, "skill": null,
+            "p": null, "events": events, "today": self.today(), "rank_brief": self.rank_brief(),
+            "overtime": overtime, "secs": f(round_n(secs, 1)), "budget": a.budget,
+            "words": a.words, "word": a.card.word, "gloss": a.card.meaning, "gloss_ru": null, "key": null, "in_anki": true,
+            "anki": {"card_id": a.card.card_id, "deck": a.card.deck, "kind": a.kind, "status": status,
+                     "ease": if skip { Value::Null } else { json!(if correct { 3 } else { 1 }) }},
+        }))
+    }
+
+    fn reviews_brief(&self, now: f64) -> Value {
+        let today = clock::date_str(now);
+        let done = if self.game.get("anki_day").and_then(Value::as_str) == Some(today.as_str()) { self.gi("anki_today") } else { 0 };
+        json!({"on": self.settings.get("anki_reviews").is_some_and(truthy), "due": self.reviews.pool.len(),
+               "fetched": self.reviews.fetched_at.is_some(), "done_today": done, "pending": self.reviews.pending.len(),
+               "paused": now < self.reviews.paused_until})
+    }
+
     // ------------------------------------------------------------------ grammar tab
     pub fn grammar_list(&self) -> Value {
         let now = (self.now)();
@@ -1823,7 +2069,7 @@ impl Engine {
                           "unlocked_gp": self.unlocked.iter().filter(|k| k.starts_with("gp:")).count(),
                           "total_gp": self.grammar.len()},
                "level_progress": self.level_progress(), "today": self.today(), "more": self.more_stats(now),
-               "anki": {"queued": self.outbox.pending().len(), "last_sync": last_sync}})
+               "anki": {"queued": self.outbox.pending().len(), "last_sync": last_sync, "reviews": self.reviews_brief(now)}})
     }
 }
 

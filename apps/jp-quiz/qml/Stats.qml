@@ -316,7 +316,18 @@ Item {
                       "  ·  " + (root.ru ? "звук " : "sound ") + (app.settings.sound ? "on" : "off") + "  ·  " + (root.ru ? "авто " : "auto ") + (app.settings.auto_advance ? "on" : "off") +
                       "\nAnki: " + (root.st && root.st.anki && root.st.anki.last_sync ? (root.ru ? "известно " : "known ") + root.st.anki.last_sync.known + ", " + (root.ru ? "слабых " : "weak ") + root.st.anki.last_sync.weak : (root.ru ? "не синхронизировано" : "not synced")) +
                       "  ·  " + (root.ru ? "авто-добавление " : "auto-add misses ") + (app.settings.anki_auto ? "on" : "off") +
-                      (root.st && root.st.anki && root.st.anki.queued ? "  ·  " + root.st.anki.queued + (root.ru ? " в очереди" : " queued") : "")
+                      (root.st && root.st.anki && root.st.anki.queued ? "  ·  " + root.st.anki.queued + (root.ru ? " в очереди" : " queued") : "") +
+                      "  ·  " + (root.ru ? "повторы Anki (V) " : "Anki reviews (V) ") + (app.settings.anki_reviews ? "on" : "off") + reviewsInfo
+                readonly property string reviewsInfo: {
+                    const r = root.st && root.st.anki ? root.st.anki.reviews : null;
+                    if (!r || !app.settings.anki_reviews) return "";
+                    let s = "";
+                    if (r.fetched) s += "  ·  " + r.due + (root.ru ? " к повтору" : " due");
+                    if (r.done_today) s += "  ·  " + r.done_today + (root.ru ? " сегодня" : " today");
+                    if (r.pending) s += "  ·  " + r.pending + (root.ru ? " ждут Anki" : " waiting for Anki");
+                    if (r.paused) s += root.ru ? "  ·  Anki закрыт" : "  ·  Anki closed";
+                    return s;
+                }
                 color: theme.alpha(theme.accent, 0.9)
                 font { family: theme.font; pixelSize: 11; weight: Font.DemiBold }
             }

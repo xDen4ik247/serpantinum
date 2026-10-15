@@ -16,7 +16,20 @@ Open it with **Mod+J** or `jp-quiz` (focuses the open window if there is one, vi
 `A` add to Anki (right or wrong; during the next question it adds the one you just passed) · `W` hold
 the result · `F` furigana · `L` EN/RU · `R` rank tab (`←→` words / kanji / grammar, `D` Dota style on/off) ·
 `G` grammar tab (`↑↓` choose, `Enter` drill only that point, `X` drill off) · `Tab` cycles
-Stats → Rank → Details → Grammar → quiz (Stats: `S` sync with Anki, `K` auto-add misses, `←→` target) · `Esc` back.
+Stats → Rank → Details → Grammar → quiz (Stats: `S` sync with Anki, `K` auto-add misses, `V` Anki reviews,
+`←→` target) · `Esc` back.
+
+**Anki reviews** (off by default; `V` in Stats). While Anki is open, every third question is a due card
+from your own decks (learning cards first, then the most overdue), asked as multiple choice inside its
+example sentence: the kana reading of the highlighted word (`Anki · reading`) or what it means
+(`Anki · meaning`). Your answer goes back to Anki as a real review through AnkiConnect `answerCards`:
+right → Pass (ease 3), wrong → Fail (ease 1), so Anki/FSRS reschedules the card as if you had reviewed it
+there. `Space` skips without grading (the card stays due). A card already reviewed elsewhere is not asked
+(checked with `areDue` right before). If Anki is closed the quiz carries on without them (one toast), and
+answers given while it was gone are sent when it is back. Reviews earn XP and count for the day, move the
+quiz's own estimate of that word a little, and don't touch your quiz rating. Not yet: audio, new cards,
+grammar-deck cards (skipped: there is nothing fair to ask). The write path is the only one: `anki.rs`
+allows `answerCards` and nothing else that changes Anki.
 
 **Thinking time.** Each question has a generous budget (about 20–60 s by type, plus sentence length),
 shown as a bar with the seconds left. It pauses while a stats/grammar view is open. Speed earns
@@ -78,7 +91,7 @@ The Rank tab measures you against **full lists**, not against what the quiz happ
 
 | Path | What |
 |---|---|
-| `engine/src/` | the engine (`jp-quiz-engine`): `model.rs` ratings, `memory.rs` FSRS, `engine.rs` selection/game/persistence, `rank.rs` the Rank tab, `anki.rs` read-only AnkiConnect + `anki-add`, `main.rs` JSON-lines bridge |
+| `engine/src/` | the engine (`jp-quiz-engine`): `model.rs` ratings, `memory.rs` FSRS, `engine.rs` selection/game/persistence, `rank.rs` the Rank tab, `anki.rs` AnkiConnect (reads; `answerCards` for reviews) + `anki-add`, `review.rs` Anki review questions, `main.rs` JSON-lines bridge (tests: `engine/tests/anki_reviews.rs`, a fake AnkiConnect) |
 | `engine/src/bin/jlpt-syllabus.rs` | builds `assets/jlpt/{vocab,kanji,everyday}.tsv` from `data/raw/` (compiled into the engine) |
 | `engine/src/bin/everyday-pack.rs` | adds the everyday-word questions to `data/content.db` (run by `install.sh`) |
 | `assets/jlpt/` | the lists: JLPT words, kanji + 常用, grammar (hand-written), everyday words, hand-picked extras |
