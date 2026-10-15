@@ -13,4 +13,6 @@ curl -sSfo kradzip.zip http://ftp.edrdg.org/pub/Nihongo/kradzip.zip && unzip -oq
 for n in 1 2 3 4 5; do
   curl -sSfo "jlpt/vocab_n$n.csv" "https://raw.githubusercontent.com/stephenmk/yomitan-jlpt-vocab/main/original_data/n$n.csv"; done
 curl -sSfo jlpt/kanji-data.json https://raw.githubusercontent.com/davidluzgouveia/kanji-data/master/kanji.json
+mkdir -p wordfreq   # everyday-word ranking (CC BY-SA 4.0)
+curl -sSfLo wordfreq/large_ja.msgpack.gz https://raw.githubusercontent.com/rspeer/wordfreq/master/wordfreq/data/large_ja.msgpack.gz
 echo "data/raw ready"

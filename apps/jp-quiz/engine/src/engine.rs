@@ -11,6 +11,9 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 
+#[path = "rank.rs"]
+mod rank;
+
 pub const CATS: [&str; 5] = ["particles", "grammar", "kanji", "vocab", "reading"];
 
 fn cat_name(c: &str) -> Value {
@@ -69,6 +72,15 @@ fn budget_base(kind: &str) -> f64 {
 }
 
 const OVERTIME_XP: f64 = 0.6;
+/// Shown rating: share of a drop that shows, how far below the recent best it may fall, and "recent".
+const LOSS_DAMP: f64 = 0.35;
+const FLOOR_GAP: f64 = 60.0;
+/// While the shown rating is above the model: share of a gain that shows, and the largest gap allowed.
+const ABOVE_GAIN: f64 = 0.7;
+const MAX_ABOVE: f64 = 90.0;
+const PEAK_DAYS: i64 = 7;
+/// Score bonus for a not-yet-met everyday word (everyday-pack items), so new daily vocabulary keeps coming.
+const EVERYDAY_NEW: f64 = 3.0;
 const KIND_MIX: [(&str, f64); 12] = [
     ("particle", 1.3),
     ("conj", 1.2),
@@ -113,7 +125,7 @@ const RANKS: [(f64, &str); 5] = [(-99.0, "N5…"), (-0.49, "N5"), (0.51, "N4"), 
 
 fn default_settings() -> Map<String, Value> {
     let v = json!({"target": 0.75, "lang": "en", "furigana": false, "sound": true, "auto_advance": true,
-                   "daily_goal": 30, "anki_auto": false, "focus_gp": null});
+                   "daily_goal": 30, "anki_auto": false, "focus_gp": null, "daily_auto": true});
     v.as_object().unwrap().clone()
 }
 
@@ -273,6 +285,10 @@ pub struct Engine {
     last_answered: Option<(usize, Value)>,
     intro_queue: VecDeque<Value>,
     outbox: Outbox,
+    rank_ix: rank::Index,
+    anki_words: rank::AnkiWords,
+    calib: Option<rank::Calib>,
+    calib_est: [[f64; 4]; 6],
 }
 
 const SCHEMA: &str = "
@@ -332,6 +348,10 @@ impl Engine {
             last_answered: None,
             intro_queue: VecDeque::new(),
             outbox: Outbox::new(&data_dir),
+            rank_ix: rank::Index::default(),
+            calib: None,
+            calib_est: [[0.0; 4]; 6],
+            anki_words: rank::AnkiWords::default(),
         };
         eng.load_content()?;
         eng.load_progress()?;
@@ -401,6 +421,10 @@ impl Engine {
             let g = g.map_err(e)?;
             self.grammar.insert(g.id.clone(), g);
         }
+        drop(st);
+        let kcs: Vec<&String> = self.by_kc.keys().collect();
+        let tags: HashSet<&str> = self.items.iter().flat_map(|it| it.tags.iter().map(String::as_str)).collect();
+        self.rank_ix = rank::Index::build(&kcs, &tags);
         Ok(())
     }
 
@@ -494,6 +518,11 @@ impl Engine {
         }
         if let Ok(Value::Array(a)) = serde_json::from_str::<Value>(kv.get("anki_added").map(String::as_str).unwrap_or("[]")) {
             self.anki_added = a.iter().filter_map(|x| x.as_str().map(String::from)).collect();
+        }
+        self.anki_words = rank::AnkiWords::from_json(kv.get("anki_words").map(String::as_str).unwrap_or("{}"));
+        self.load_calib();
+        if !self.game.contains_key("shown") {
+            self.seed_shown()?;
         }
         {
             let mut st = self.pdb.prepare("SELECT item, correct FROM answers").map_err(e)?;
@@ -715,6 +744,12 @@ impl Engine {
                 if c.is_none() && learning > 12 {
                     s -= 1.5;
                 }
+                // a word of everyday Japanese you haven't met yet: about one in every six questions, even
+                // while reviews are due (more once they are done)
+                if c.is_none() && (it.key.starts_with("ev:") || it.key.starts_with("er:")) {
+                    let recent_new = self.recent.iter().rev().take(5).any(|r| r.item.starts_with("ev:") || r.item.starts_with("er:"));
+                    s += if recent_new { 0.3 } else { EVERYDAY_NEW };
+                }
             }
             _ => {}
         }
@@ -892,7 +927,6 @@ impl Engine {
         let secs = (ms as f64 / 1000.0).max(0.0);
         // ---- ratings
         let cat_before: Vec<f64> = CATS.iter().map(|c| self.model.rating(Some(c), None, None)).collect();
-        let g_before = self.model.rating(None, None, None);
         let terms = Model::design(&it.cat, &it.kind, &it.tags, &it.key);
         let shift = memory_shift(self.cards.get(&it.kc), now, &it.kc);
         let p = cur.p;
@@ -907,6 +941,7 @@ impl Engine {
             grade = 2;
         }
         let qn = self.gi("qn");
+        let tier_before = self.tier_key();
         review(self.cards.entry(it.kc.clone()).or_default(), grade, now, qn);
         self.card_item.insert(it.kc.clone(), Some(it.key.clone()));
         // ---- game
@@ -948,6 +983,7 @@ impl Engine {
             events.push(json!({"type": "levelup", "level": level_after}));
         }
         let mode = if cur.why == "place" { "placement" } else { "normal" };
+        let (shown_before, shown_after) = self.update_shown(g_after, now, mode == "placement");
         let bulk = mode == "placement" && answered >= PLACEMENT_N;
         if bulk {
             self.game.insert("placement_done".into(), f(now));
@@ -962,6 +998,7 @@ impl Engine {
                 events.push(json!({"type": "rank", "rank": rank_after}));
             }
         }
+        events.extend(self.tier_event(tier_before));
         self.push_recent(Recent { item: it.key.clone(), kind: it.kind.clone(), kc: it.kc.clone(), sid: it.sid });
         self.seen_items.insert(it.key.clone());
         let mut snap = Map::new();
@@ -1011,11 +1048,11 @@ impl Engine {
             "points": points, "combo": f(combo), "streak": self.gi("streak"), "best_streak": self.gi("best_streak"),
             "time_bonus": f(round_n(time_bonus, 2)), "xp": self.gi("xp"), "level": level_after,
             "level_progress": self.level_progress(),
-            "rating": {"before": round_i(g_before), "after": round_i(g_after)},
+            "rating": {"before": round_i(shown_before), "after": round_i(shown_after), "model": round_i(g_after)},
             "cat": {"name": cat_name(&it.cat), "before": round_i(cat_before[cat_idx]), "after": round_i(cat_after[cat_idx])},
             "skill": {"label": self.tag_label(tag_key.as_deref(), &it.kc),
                       "rating": tag_key.as_ref().map(|t| round_i(self.model.rating(Some(&it.cat), Some(t), None)))},
-            "p": f(round_n(p, 3)), "events": events, "today": self.today(),
+            "p": f(round_n(p, 3)), "events": events, "today": self.today(), "rank_brief": self.rank_brief(),
             "overtime": overtime, "secs": f(round_n(secs, 1)), "budget": budget,
             "words": get_or(&payload, "words", json!([])), "word": get_or(&payload, "word", Value::Null),
             "gloss": get_or(&payload, "gloss", Value::Null),
@@ -1167,6 +1204,67 @@ impl Engine {
         }
     }
 
+    /// The rating the HUD shows. Matchmaking keeps the honest model; the number you see is protected from
+    /// streaky drops: gains count in full, drops at LOSS_DAMP, and it never falls more than FLOOR_GAP below
+    /// your best of the last PEAK_DAYS days (a real decline still shows once those peaks expire).
+    fn shown_rating(&self) -> f64 {
+        self.game.get("shown").and_then(Value::as_f64).unwrap_or_else(|| self.model.rating(None, None, None))
+    }
+
+    /// First start with a shown rating: replay the last PEAK_DAYS days of answers, so the protection
+    /// covers the history you already have.
+    fn seed_shown(&mut self) -> R<()> {
+        let since = (self.now)() - PEAK_DAYS as f64 * 86400.0;
+        let rows: Vec<(f64, String, String)> = {
+            let mut st = self.pdb.prepare("SELECT ts, snap, mode FROM answers WHERE ts >= ? ORDER BY id").map_err(e)?;
+            let v: Vec<(f64, String, String)> = st.query_map([since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(e)?.flatten().collect();
+            v
+        };
+        if rows.is_empty() {
+            return Ok(());
+        }
+        if let Some(g) = serde_json::from_str::<Value>(&rows[0].1).ok().and_then(|v| v["g"].as_f64()) {
+            self.game.insert("shown".into(), f(g));
+        }
+        for (ts, snap, mode) in rows {
+            if let Some(g) = serde_json::from_str::<Value>(&snap).ok().and_then(|v| v["g"].as_f64()) {
+                self.update_shown(g, ts, mode == "placement");
+            }
+        }
+        // the latest model value moves on from here; the next answer saves it
+        Ok(())
+    }
+
+    fn update_shown(&mut self, model_r: f64, now: f64, placement: bool) -> (f64, f64) {
+        let before = self.shown_rating();
+        // follow the model's change of this answer: every answer moves the number
+        let prev_model = self.game.get("shown_model").and_then(Value::as_f64).unwrap_or(model_r);
+        let d = model_r - prev_model;
+        let mut shown = if placement || model_r >= before {
+            model_r
+        } else if d >= 0.0 {
+            before + d * ABOVE_GAIN // shown is above the model: gains count a bit less, so the gap closes
+        } else {
+            before + d * LOSS_DAMP
+        };
+        shown = shown.min(model_r + MAX_ABOVE);
+        self.game.insert("shown_model".into(), f(round_n(model_r, 2)));
+        let today = clock::Date::of(now);
+        let oldest = today.add(-(PEAK_DAYS - 1)).iso();
+        let mut peaks = self.game.get("peaks").and_then(Value::as_object).cloned().unwrap_or_default();
+        peaks.retain(|d, _| d.as_str() >= oldest.as_str());
+        let best = peaks.values().filter_map(Value::as_f64).fold(f64::NEG_INFINITY, f64::max);
+        if !placement && best.is_finite() {
+            shown = shown.max((best - FLOOR_GAP).min(before));
+        }
+        let day = today.iso();
+        let peak = peaks.get(&day).and_then(Value::as_f64).unwrap_or(f64::NEG_INFINITY).max(shown);
+        peaks.insert(day, f(round_n(peak, 1)));
+        self.game.insert("peaks".into(), Value::Object(peaks));
+        self.game.insert("shown".into(), f(round_n(shown, 2)));
+        (before, shown)
+    }
+
     fn level_progress(&self) -> Value {
         let xp = self.gi("xp");
         let lv = level_for_xp(xp);
@@ -1179,7 +1277,7 @@ impl Engine {
         let row: Option<(i64, i64, i64)> =
             self.pdb.query_row("SELECT n, correct, xp FROM days WHERE day=?", [day], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().ok().flatten();
         let (n, c, xp) = row.unwrap_or((0, 0, 0));
-        json!({"n": n, "correct": c, "xp": xp, "goal": self.settings["daily_goal"], "streak_days": self.streak_days()})
+        json!({"n": n, "correct": c, "xp": xp, "goal": self.daily_goal(), "auto": self.daily_auto(), "streak_days": self.streak_days()})
     }
 
     fn streak_days(&self) -> i64 {
@@ -1203,11 +1301,11 @@ impl Engine {
         for c in CATS {
             cats.insert(c.into(), json!({"name": cat_name(c), "rating": round_i(self.model.rating(Some(c), None, None))}));
         }
-        json!({"type": "hello", "settings": self.settings, "rating": round_i(to_rating(th)), "rank": rank_for(th),
+        json!({"type": "hello", "settings": self.settings, "rating": round_i(self.shown_rating()), "rank": rank_for(th),
                "level_progress": self.level_progress(), "streak": self.game["streak"],
                "best_streak": self.game["best_streak"], "today": self.today(),
                "placement": self.in_placement(), "placement_left": 0.max(PLACEMENT_N - self.gi("answered")),
-               "answered": self.game["answered"], "cats": cats})
+               "answered": self.game["answered"], "cats": cats, "rank_brief": self.rank_brief()})
     }
 
     pub fn set_settings(&mut self, new: &Value) -> R<Value> {
@@ -1391,6 +1489,22 @@ impl Engine {
                 }
             }
         }
+        // every word of the decks, for the Rank tab (it measures against full lists, not only the quiz's words)
+        let mut aw = rank::AnkiWords::default();
+        for c in &data.cards {
+            if anki::classify(c) == "known" {
+                aw.known.insert(c.word.clone());
+            } else {
+                aw.learning.insert(c.word.clone());
+            }
+        }
+        aw.learning.retain(|w| !aw.known.contains(w));
+        let mut kn: Vec<&String> = aw.known.iter().collect();
+        let mut le: Vec<&String> = aw.learning.iter().collect();
+        kn.sort();
+        le.sort();
+        self.pdb.execute("INSERT OR REPLACE INTO kv VALUES ('anki_words', ?)", [dumps(&json!({"known": kn, "learning": le}), false)]).map_err(e)?;
+        self.anki_words = aw;
         let tag_words: HashSet<String> = self.items.iter().flat_map(|it| it.tags.iter().filter_map(|t| t.strip_prefix("w:").map(String::from))).collect();
         let mut best: IndexMap<String, anki::CardInfo> = IndexMap::new();
         for c in &data.cards {
@@ -1700,7 +1814,7 @@ impl Engine {
         let th = self.model.skill_theta(None, None, None);
         let kv = self.kv();
         let last_sync: Value = serde_json::from_str(kv.get("anki_sync").map(String::as_str).unwrap_or("null")).unwrap_or(Value::Null);
-        json!({"type": "stats", "rating": round_i(to_rating(th)), "rank": rank_for(th), "series": series, "rolling": roll,
+        json!({"type": "stats", "rating": round_i(self.shown_rating()), "model_rating": round_i(to_rating(th)), "rank": rank_for(th), "series": series, "rolling": roll,
                "target": self.settings["target"], "cats": cats,
                "particles": particles.into_iter().take(16).collect::<Vec<_>>(), "grammar": grammar.into_iter().take(14).collect::<Vec<_>>(),
                "weak": weak.into_iter().take(10).map(|w| w.1).collect::<Vec<_>>(), "calendar": cal,
