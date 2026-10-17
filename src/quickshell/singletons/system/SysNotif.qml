@@ -5,6 +5,9 @@ import Quickshell.Io
 import Quickshell.Services.UPower
 import "../../"
 
+// Battery warnings: low (20 %) and critical (5 %), only while running on battery.
+// Plugged in counts as AC whatever the battery is doing (charging, held at 80 % by glass-smart-charge, full),
+// so there is no "fully charged" popup: the battery state flaps around the charge limit and spammed it.
 Item {
     id: root
 
@@ -110,81 +113,51 @@ Item {
         }
 
         let pct = root.batteryPercentage;
-        let state = UPower.displayDevice.state;
-        let charging = state === UPowerDeviceState.Charging || state === UPowerDeviceState.FullyCharged;
 
-        if (!root.initialized) {
-            root.initialized = true;
-            if (!root.stateLoaded) {
+        // glass: AC is AC. No "fully charged" banner (smart charging holds 80 % on purpose and the
+        // battery bypass sits at 100 %); low/critical warnings only while running on battery.
+        if (!UPower.onBattery) {
+            root.notifiedLow = false;
+            root.notifiedCritical = false;
+            if (pct !== root.lastPercentage) {
                 root.lastPercentage = pct;
-                if (pct >= 100) {
-                    root.notifiedFull = true;
-                }
                 root.saveState();
-            } else {
-                if (pct >= 100 && (root.lastPercentage >= 100 || root.lastPercentage === -1)) {
-                    root.notifiedFull = true;
-                }
             }
+            return;
         }
 
-        if (pct < 100) {
-            root.notifiedFull = false;
-        }
-
-        if (charging) {
-            if (pct > 20) {
-                root.notifiedLow = false;
-                root.notifiedCritical = false;
-            }
-
-            if ((pct >= 100 || state === UPowerDeviceState.FullyCharged) && !root.notifiedFull && root.lastPercentage < 100) {
-                let title = I18n.t("sysnotif.battery.full_title");
-                let body = I18n.t("sysnotif.battery.full_body");
-                if (title === "sysnotif.battery.full_title" || body === "sysnotif.battery.full_body") return;
-                root.notifiedFull = true;
+        if (pct <= 5) {
+            if (!root.notifiedCritical) {
+                let title = I18n.t("sysnotif.battery.critical_title");
+                let body = I18n.t("sysnotif.battery.critical_body", { "pct": pct.toString() });
+                if (title === "sysnotif.battery.critical_title") return;
+                root.notifiedCritical = true;
+                root.notifiedLow = true;
                 root.sendNotification(
-                    "full",
+                    "critical",
                     title,
                     body,
-                    "battery-full-charged",
-                    "normal"
+                    "battery-level-0-symbolic",
+                    "critical"
+                );
+            }
+        } else if (pct <= 20) {
+            if (!root.notifiedLow) {
+                let title = I18n.t("sysnotif.battery.low_title");
+                let body = I18n.t("sysnotif.battery.low_body", { "pct": pct.toString() });
+                if (title === "sysnotif.battery.low_title") return;
+                root.notifiedLow = true;
+                root.sendNotification(
+                    "low",
+                    title,
+                    body,
+                    "battery-level-20-symbolic",
+                    "critical"
                 );
             }
         } else {
-            if (pct <= 5) {
-                if (!root.notifiedCritical) {
-                    let title = I18n.t("sysnotif.battery.critical_title");
-                    let body = I18n.t("sysnotif.battery.critical_body", { "pct": pct.toString() });
-                    if (title === "sysnotif.battery.critical_title") return;
-                    root.notifiedCritical = true;
-                    root.notifiedLow = true;
-                    root.sendNotification(
-                        "critical",
-                        title,
-                        body,
-                        "battery-level-0-symbolic",
-                        "critical"
-                    );
-                }
-            } else if (pct <= 20) {
-                if (!root.notifiedLow) {
-                    let title = I18n.t("sysnotif.battery.low_title");
-                    let body = I18n.t("sysnotif.battery.low_body", { "pct": pct.toString() });
-                    if (title === "sysnotif.battery.low_title") return;
-                    root.notifiedLow = true;
-                    root.sendNotification(
-                        "low",
-                        title,
-                        body,
-                        "battery-level-20-symbolic",
-                        "critical"
-                    );
-                }
-            } else if (pct > 25) {
-                root.notifiedLow = false;
-                root.notifiedCritical = false;
-            }
+            root.notifiedLow = false;
+            root.notifiedCritical = false;
         }
 
         if (pct !== root.lastPercentage) {
@@ -199,9 +172,13 @@ Item {
     }
 
     Connections {
+        target: UPower
+        function onOnBatteryChanged() { root.checkBattery(); }
+    }
+
+    Connections {
         target: UPower.displayDevice
         function onPercentageChanged() { root.checkBattery(); }
-        function onStateChanged() { root.checkBattery(); }
         function onReadyChanged() { root.checkBattery(); }
         function onIsPresentChanged() { root.checkBattery(); }
         function onIsLaptopBatteryChanged() { root.checkBattery(); }

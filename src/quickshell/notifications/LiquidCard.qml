@@ -21,7 +21,7 @@ Item {
     readonly property bool glass: true
     readonly property real cardRadius: s(24)
     property bool expanded: false
-    readonly property bool isHovered: hover.containsMouse || closeArea.containsMouse || actionsHovered || isDragging
+    readonly property bool isHovered: hover.containsMouse || closeArea.containsMouse || actionsHovered || isDragging || replying
     readonly property bool isDragging: hover.dragging
     property bool actionsHovered: false
     property real dragX: 0
@@ -31,7 +31,11 @@ Item {
     readonly property bool critical: urgency === 2
     readonly property var actions: delegateWrapper && delegateWrapper.actionArray
         ? delegateWrapper.actionArray.filter(a => a.id !== "default") : []
-    readonly property bool showMore: isHovered && (actions.length > 0 || body.truncated || body.lineCount > 2)
+    readonly property var liveNotif: delegateWrapper ? delegateWrapper.realNotif : null
+    readonly property bool canReply: !!liveNotif && liveNotif.hasInlineReply === true
+    property bool replying: false
+    onReplyingChanged: if (root && root.popupWindow) root.popupWindow.replyActive = replying
+    readonly property bool showMore: (isHovered || replying) && (actions.length > 0 || canReply || body.truncated || body.lineCount > 2)
 
     readonly property color ink: Qt.rgba(1, 1, 1, 0.96)
     readonly property color inkSoft: Qt.rgba(1, 1, 1, 0.78)
@@ -59,6 +63,14 @@ Item {
         let n = delegateWrapper ? delegateWrapper.realNotif : null;
         if (n && typeof n.dismiss === "function") n.dismiss();
         else if (n && typeof n.close === "function") n.close();
+        if (delegateWrapper) delegateWrapper.removeThisNotif();
+    }
+
+    function sendReply(text) {
+        let t = text.trim();
+        if (t === "" || !liveNotif) return;
+        liveNotif.sendInlineReply(t);
+        replying = false;
         if (delegateWrapper) delegateWrapper.removeThisNotif();
     }
 
@@ -365,8 +377,8 @@ Item {
             // actions: glass capsules, slide in on hover
             Item {
                 Layout.fillWidth: true
-                Layout.preferredHeight: card.showMore && card.actions.length > 0 ? card.s(32) : 0
-                Layout.topMargin: card.showMore && card.actions.length > 0 ? 0 : -card.s(10)
+                Layout.preferredHeight: card.showMore && (card.actions.length > 0 || card.canReply) ? card.s(32) : 0
+                Layout.topMargin: card.showMore && (card.actions.length > 0 || card.canReply) ? 0 : -card.s(10)
                 Behavior on Layout.preferredHeight { NumberAnimation { duration: 320; easing.type: Easing.OutQuint } }
                 clip: true
                 opacity: card.showMore ? 1 : 0
@@ -376,8 +388,62 @@ Item {
                     anchors { left: parent.left; right: parent.right; top: parent.top }
                     height: card.s(32)
                     spacing: card.s(8)
+                    Rectangle {
+                        visible: card.canReply && !card.replying
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: card.s(32)
+                        radius: height / 2
+                        color: repArea.pressed ? Qt.rgba(1, 1, 1, 0.24) : (repArea.containsMouse ? Qt.rgba(1, 1, 1, 0.17) : Qt.rgba(1, 1, 1, 0.10))
+                        border.width: 1
+                        border.color: Qt.rgba(1, 1, 1, repArea.containsMouse ? 0.30 : 0.16)
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Reply"
+                            font.family: ThemeBackend.fontFamily
+                            font.weight: Font.Medium
+                            font.pixelSize: card.s(12.5)
+                            color: card.ink
+                        }
+                        MouseArea {
+                            id: repArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onContainsMouseChanged: card.actionsHovered = containsMouse
+                            onClicked: { card.replying = true; replyField.forceActiveFocus(); }
+                        }
+                    }
+                    Rectangle {
+                        visible: card.replying
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: card.s(32)
+                        radius: height / 2
+                        color: Qt.rgba(1, 1, 1, 0.12)
+                        border.width: 1
+                        border.color: Qt.rgba(1, 1, 1, 0.3)
+                        TextInput {
+                            id: replyField
+                            anchors { fill: parent; leftMargin: card.s(14); rightMargin: card.s(14) }
+                            verticalAlignment: TextInput.AlignVCenter
+                            font.family: ThemeBackend.fontFamily
+                            font.pixelSize: card.s(13)
+                            color: card.ink
+                            selectionColor: Qt.rgba(1, 1, 1, 0.3)
+                            clip: true
+                            onAccepted: card.sendReply(text)
+                            Keys.onEscapePressed: { card.replying = false; text = ""; }
+                            Text {
+                                visible: !parent.text
+                                anchors.fill: parent
+                                verticalAlignment: Text.AlignVCenter
+                                text: card.liveNotif && card.liveNotif.inlineReplyPlaceholder ? card.liveNotif.inlineReplyPlaceholder : "Reply…"
+                                font: parent.font
+                                color: card.inkFaint
+                            }
+                        }
+                    }
                     Repeater {
-                        model: card.actions
+                        model: card.replying ? [] : card.actions
                         delegate: Rectangle {
                             required property var modelData
                             Layout.fillWidth: true

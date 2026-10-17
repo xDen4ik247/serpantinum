@@ -325,6 +325,7 @@ Item {
         id: globalNotificationServer
         bodySupported: true
         actionsSupported: true
+        inlineReplySupported: true
         imageSupported: true
 
         onNotification: (n) => {
@@ -413,7 +414,32 @@ Item {
                     "urgency":       n.urgency,
                     "timestamp":     now
                 };
-                popupsModel.insert(0, newPopup);
+                // same app + same sender (title) as a popup still on screen: update that card in place
+                // (one card per contact; removing and re-inserting it would drop a reply being typed)
+                let merged = false;
+                for (let i = 0; i < popupsModel.count; i++) {
+                    let prev = popupsModel.get(i);
+                    if (!prev || prev.groupKey !== newPopup.groupKey || prev.summary !== summaryText
+                        || summaryText === "No Title" || prev.urgency === 2 || n.urgency === 2) continue;
+                    let msgs = [], uids = [];
+                    try { msgs = JSON.parse(prev.messagesJson); uids = JSON.parse(prev.uidsJson); } catch (e) {}
+                    if (bodyText !== "") msgs.unshift(bodyText);   // newest first: the card shows the top lines
+                    msgs = msgs.slice(0, 6);
+                    uids.push(currentUid);
+                    let combined = msgs.join("\n");
+                    popupsModel.set(i, {
+                        "latestUid": currentUid, "uidsJson": JSON.stringify(uids),
+                        "messagesJson": JSON.stringify(msgs), "messagesCount": prev.messagesCount + 1,
+                        "combinedBody": combined, "body": combined,
+                        "image": imageVal, "imagePath": imageVal,
+                        "actionsJson": newPopup.actionsJson, "hasActions": hasAct,
+                        "notif": n, "timestamp": now
+                    });
+                    if (i > 0) popupsModel.move(i, 0, 1);
+                    merged = true;
+                    break;
+                }
+                if (!merged) popupsModel.insert(0, newPopup);
                 root.popupAdded(currentUid, n);
             }
         }

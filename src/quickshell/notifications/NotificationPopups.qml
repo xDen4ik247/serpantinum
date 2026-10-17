@@ -5,6 +5,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import Quickshell.Io
 import "../"
 import "../reusables"
 
@@ -25,7 +26,17 @@ PanelWindow {
         return false;
     }
 
-    visible: (!popupWindow.dndEnabled || popupWindow.hasCriticalPopup) && !NotificationManager.sysPanelOpen && NotificationManager.activePopupsModel.count > 0
+    // a game is open: no popups at all (they would catch the cursor); they still land in the centre
+    property bool gameRunning: false
+    Process {
+        running: true
+        command: ["bash", Caching.qsDir + "/watchers/game_watch.sh"]
+        stdout: SplitParser {
+            onRead: data => popupWindow.gameRunning = data.trim() === "1"
+        }
+    }
+
+    visible: !popupWindow.gameRunning && (!popupWindow.dndEnabled || popupWindow.hasCriticalPopup) && !NotificationManager.sysPanelOpen && NotificationManager.activePopupsModel.count > 0
 
     function storeNotif(uid, notif) {
         NotificationManager.liveNotifs[uid] = notif;
@@ -83,6 +94,9 @@ PanelWindow {
 
     WlrLayershell.namespace: "qs-popups"
     WlrLayershell.layer: WlrLayer.Overlay
+    // a card's reply field needs the keyboard; take it only while one is open
+    property bool replyActive: false
+    WlrLayershell.keyboardFocus: replyActive ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
     anchors {
         top: true
@@ -155,6 +169,7 @@ PanelWindow {
     Item {
         id: popupRoot
         anchors.fill: parent
+        readonly property var popupWindow: popupWindow
 
         function s(val) {
             return popupWindow.s(val);
@@ -209,30 +224,28 @@ PanelWindow {
                             duration: 200
                             easing.type: Easing.OutCubic
                         }
-                        NumberAnimation {
-                            property: "y"
-                            to: (popupWindow.isPreset ? (popupWindow.isCenter ? (popupWindow.isBottom ? popupWindow.s(24) : -popupWindow.s(24)) : 0) : ((popupWindow.verticalPosition > 50) ? popupWindow.s(24) : -popupWindow.s(24)))
-                            duration: 200
-                            easing.type: Easing.OutCubic
-                        }
                     }
                 }
 
+                // x and y both: a card displaced mid slide-in would otherwise be left off-grid
+                // and overlap its neighbour (the add transition is interrupted at a partial offset)
                 displaced: Transition {
-                    NumberAnimation { property: "y"; duration: 220; easing.type: Easing.OutCubic }
+                    NumberAnimation { properties: "x,y"; duration: 220; easing.type: Easing.OutCubic }
                 }
 
                 removeDisplaced: Transition {
-                    NumberAnimation { property: "y"; duration: 220; easing.type: Easing.OutCubic }
+                    NumberAnimation { properties: "x,y"; duration: 220; easing.type: Easing.OutCubic }
                 }
 
                 delegate: Item {
                     id: delegateWrapper
                     width: ListView.view.width
+                    // the card under the pointer (or being replied to) stays above its neighbours
+                    z: isHovered || isExpanded ? 2 : 1
 
                     property bool isSuppressedByDnd: popupWindow.dndEnabled && model.urgency !== 2
 
-                    readonly property bool glassShown: popupWindow.glassOn && !isSuppressedByDnd && opacity > 0.35
+                    readonly property bool glassShown: popupWindow.glassOn && !isSuppressedByDnd && opacity > 0.35 && ListView.view !== null
                         && !!typeLoader.item && typeLoader.item.glass === true
                         && Math.abs(typeLoader.item.dragX) < width * 0.3
                     readonly property real glassDx: typeLoader.item ? typeLoader.item.dragX : 0
@@ -245,7 +258,7 @@ PanelWindow {
                     height: implicitHeight
                     visible: !isSuppressedByDnd
 
-                    property int popupUid: model.uid || model.latestUid
+                    property int popupUid: model.latestUid || model.uid
                     property var realNotif: popupWindow.getNotif(popupUid) || (model.notif ? model.notif : null)
                     property bool isPopupContext: true
                     property var msgModel: model
@@ -285,6 +298,9 @@ PanelWindow {
                         repeat: false
                         onTriggered: popupWindow.removeNotif(delegateWrapper.popupUid)
                     }
+
+                    // a new message merged into this card: keep it on screen a full period again
+                    onPopupUidChanged: if (dismissTimer.running) dismissTimer.restart()
 
                     function removeThisNotif() {
                         popupWindow.removeNotif(delegateWrapper.popupUid);
