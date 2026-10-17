@@ -1,663 +1,502 @@
 import QtQuick
+import QtQuick.Layouts
+import QtQuick.Window
+import QtQuick.Controls
 import QtQuick.Effects
 import Quickshell
+import Quickshell.Io
+import Quickshell.Wayland
+import Quickshell.Services.SystemTray
 import Quickshell.Services.Mpris
 import "../../../reusables"
 import "../../../"
-import "../../../media" as Music
 
-// Now-playing pill for the horizontal bar.
-//   playing/paused: round cover · "Title — Artist" (marquee when long) · thin progress line;
-//                   hovering reveals prev / play / next and the pill grows to fit them.
-//   nothing playing: collapses to a small music button that opens the library player.
-// Mouse: left = music panel, middle = play/pause, right = music library (Glass Music),
-//        wheel = player volume (shown on the progress line for a moment).
-// My Vibe (music-smart): a vibe chip (style glyph + name) leads the hover controls and appears
-//   next to the idle music button. Click = start My Vibe in that style, or (while it plays) open
-//   the inline style picker; right-click = re-roll; middle-click = leave My Vibe; wheel = next /
-//   previous style (switches after a short pause while My Vibe plays). ☆ toggles the current
-//   track as a favourite. Right-click on cover/title opens Glass Music on the playing album.
-//   While a My Vibe queue plays, the cover wears an accent ring + badge.
-// In glass mode (bar.glass) TopBar paints the island; this face only uses glass chips.
 Item {
     id: root
 
     property var module: null
     property var widget: module
 
-    readonly property bool isCompact: module ? module.isCompact : false
-    readonly property var barWindow: module ? module.barWindow : null
-    readonly property bool moduleActive: module ? module.moduleActive : true
-    readonly property bool glass: module ? !!module.glass : false
+    property string orientation: (activeTarget && activeTarget.orientation !== undefined) ? activeTarget.orientation : "horizontal"
+    readonly property bool isVertical: orientation === "vertical"
 
-    function s(val) { return barWindow ? barWindow.s(val) : val; }
+    readonly property var activeTarget: widget || module
+    readonly property bool isCompact: activeTarget ? activeTarget.isCompact : false
+    readonly property var barWindow: activeTarget ? activeTarget.barWindow : null
+    readonly property bool isPreview: activeTarget ? Boolean(activeTarget.isPreview) : false
+    readonly property bool isRightBar: module ? module.isRightBar : (barWindow ? (barWindow.barPosition === "right") : false)
+    readonly property real barOpacity: ThemeBackend.elementOpacity
 
-    // ── Player ────────────────────────────────────────────────────────────────
-    readonly property var player: MprisController.activePlayer
-    readonly property bool hasTrack: player !== null && player.playbackState !== MprisPlaybackState.Stopped && (player.trackTitle || "") !== ""
-    readonly property bool isPlaying: hasTrack && (player.playbackState === MprisPlaybackState.Playing || player.isPlaying)
-    readonly property string title: hasTrack ? (player.trackTitle || "") : ""
-    readonly property string artist: hasTrack ? (player.trackArtist || "") : ""
-    readonly property string artSource: {
-        let u = MprisController.artUrl;
-        if (!hasTrack || !u) return "";
-        return (u.startsWith("file://") || u.startsWith("http")) ? u : "file://" + u;
+    property int configRevision: 0
+
+    Connections {
+        target: (typeof Config !== "undefined") ? Config : null
+        function onSettingsLoaded() { root.configRevision++; }
+        function onRawSettingsChanged() { root.configRevision++; }
     }
-    readonly property real trackLength: (hasTrack && player.length > 0) ? player.length : 0
-    readonly property real progress: trackLength > 0 ? Math.max(0, Math.min(1, MprisController.livePosition / trackLength)) : 0
-    readonly property bool canVolume: hasTrack && player.canControl && player.volumeSupported
 
-    // ── Metrics (same 30 px chips as the other faces in a 40 px island) ───────
-    readonly property real faceH: height > 0 ? height : s(isCompact ? 32 : 40)
-    readonly property real coverSize: s(isCompact ? 24 : 30)
-    readonly property real inset: Math.max(0, Math.round((faceH - coverSize) / 2))
-    readonly property real textGap: s(isCompact ? 7 : 9)
-    readonly property real textMaxW: s(isCompact ? 150 : 200)
-    readonly property real textMinW: s(48)
-    readonly property real endPad: s(isCompact ? 10 : 13)
-    readonly property real btnSize: coverSize
-    readonly property real btnGap: s(2)
-    readonly property real vibeW: Math.ceil(s(isCompact ? 8 : 10) + vibeGlyphW + s(5) + Math.min(s(96), tmVibe.advanceWidth) + s(isCompact ? 10 : 12))
-    readonly property real vibeGlyphW: s(isCompact ? 12 : 14)
-    readonly property bool favShown: smart.onLibrary && smart.curFile !== "" && !pickerOpen
-    readonly property real controlsW: pickerOpen ? vibeW : vibeW + btnGap + (favShown ? btnSize + btnGap : 0) + btnSize * 3 + btnGap * 2
-    readonly property real pickerW: smart.playableStyles.length * (btnSize + btnGap) - btnGap
-    readonly property real fontSize: s(isCompact ? 11 : 12)
-
-    readonly property real fullTextW: tmTitle.advanceWidth + (artist !== "" ? tmSep.advanceWidth + tmArtist.advanceWidth : 0)
-    readonly property real textW: Math.ceil(Math.max(textMinW, Math.min(textMaxW, fullTextW)))
-
-    // Hover reveals the transport buttons; a short hold avoids flicker at the edges.
-    property bool hoverHold: false
-    readonly property bool hovered: faceHover.hovered || (module ? !!module.hovered : false)
-    onHoveredChanged: {
-        if (hovered) { unhoverTimer.stop(); hoverHold = true; }
-        else unhoverTimer.restart();
-    }
-    Timer { id: unhoverTimer; interval: 350; onTriggered: { root.hoverHold = false; root.pickerOpen = false; root.previewStyle = ""; } }
-    readonly property bool controlsShown: hasTrack && hoverHold
-    readonly property bool idleExpanded: !hasTrack && hoverHold
-    readonly property var smart: Music.SmartShuffle
-    readonly property bool smartOn: smart.shown && hasTrack
-    // Inline style picker (replaces the title while open); previewStyle = the hovered style chip.
-    property bool pickerOpen: false
-    property string previewStyle: ""
-    readonly property string vibeStyle: previewStyle !== "" ? previewStyle : smart.shownStyle
-    readonly property bool vibeLit: smartOn && smart.pendingStyle === "" && previewStyle === ""
-    // Wheel on the vibe chip while My Vibe plays: switch once the wheel rests.
-    Timer {
-        id: styleSwitchTimer
-        interval: 900
-        onTriggered: {
-            if (root.smart.pendingStyle === "" ) return;
-            if (root.smart.shown && root.smart.pendingStyle !== root.smart.style) root.smart.startStyle(root.smart.pendingStyle);
-            else if (root.smart.pendingStyle === root.smart.style) root.smart.pendingStyle = "";
+    function readBool(widgetKey, configKey) {
+        if (widget && widget !== root && widget[widgetKey] !== undefined) return Boolean(widget[widgetKey]);
+        if (module && module[widgetKey] !== undefined) return Boolean(module[widgetKey]);
+        let dummy = configRevision;
+        if (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar) {
+            let bs = Config.rawSettings.bar;
+            if (bs[configKey] !== undefined) return Boolean(bs[configKey]);
         }
-    }
-    function cancelStyleSwitch() { styleSwitchTimer.stop(); }
-    function cycleStyle(dir) {
-        smart.pendingStyle = smart.nextStyleId(smart.shownStyle, dir);
-        if (smart.pendingStyle === smart.style && smart.shown) smart.pendingStyle = "";
-        if (smart.shown) styleSwitchTimer.restart();
+        return true;
     }
 
-    property real targetWidth: {
-        if (!moduleActive) return 0;
-        if (!hasTrack) return idleExpanded ? Math.round(inset * 2 + coverSize + btnGap * 2 + vibeW) : faceH;
-        let w = inset + coverSize + textGap + (pickerOpen && controlsShown ? pickerW : textW);
-        return Math.round(w + (controlsShown ? (s(8) + controlsW + inset) : endPad));
-    }
-    implicitWidth: targetWidth
-    implicitHeight: parent ? parent.height : 0
-
-    readonly property color chipColor: glass ? module.glassChip : (isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0)
-    readonly property color chipHoverColor: glass ? module.glassChipHover : Qt.lighter(chipColor, 1.15)
-    readonly property color titleColor: glass ? Qt.alpha(ThemeBackend.text, 0.92) : ThemeBackend.text
-    readonly property color dimColor: glass ? Qt.alpha(ThemeBackend.text, 0.58) : ThemeBackend.subtext0
-
-    function openPanel() {
-        Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"]);
-    }
-    function openPlayer() {
-        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/glass-music\""]);
-    }
-    // Glass Music on the album of the playing track (focuses it when it is already open).
-    function openPlayerCurrent() {
-        Quickshell.execDetached(["bash", "-c", "exec \"$HOME/.local/bin/glass-music\" --current"]);
-    }
-
-    HoverHandler { id: faceHover }
-
-    TextMetrics { id: tmTitle; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.DemiBold; text: root.title }
-    TextMetrics { id: tmSep; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.Medium; text: "  —  " }
-    TextMetrics { id: tmArtist; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.Medium; text: root.artist }
-    TextMetrics { id: tmVibe; font.family: ThemeBackend.fontFamily; font.pixelSize: root.fontSize; font.weight: Font.DemiBold; text: root.smart.labelOf(root.vibeStyle) }
-
-    // ── Volume (wheel) ────────────────────────────────────────────────────────
-    property real wheelAccum: 0
-    property bool volumeFlash: false
-    Timer { id: volumeFlashTimer; interval: 1300; onTriggered: root.volumeFlash = false }
-
-    WheelHandler {
-        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-        enabled: root.canVolume
-        onWheel: (event) => {
-            let d = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y * 2;
-            root.wheelAccum += d;
-            let steps = Math.trunc(root.wheelAccum / 120);
-            if (steps === 0) return;
-            root.wheelAccum -= steps * 120;
-            let v = Math.max(0, Math.min(1, Math.round((root.player.volume + steps * 0.05) * 100) / 100));
-            root.player.volume = v;
-            root.volumeFlash = true;
-            volumeFlashTimer.restart();
+    function readValue(widgetKey, configKey, fallback) {
+        if (widget && widget !== root && widget[widgetKey] !== undefined) return widget[widgetKey];
+        if (module && module[widgetKey] !== undefined) return module[widgetKey];
+        let dummy = configRevision;
+        if (typeof Config !== "undefined" && Config.rawSettings && Config.rawSettings.bar) {
+            let bs = Config.rawSettings.bar;
+            if (bs[configKey] !== undefined) return bs[configKey];
         }
+        return fallback;
     }
 
-    // ── Collapsed: nothing is playing ─────────────────────────────────────────
-    IconButton {
-        id: idleButton
-        x: root.inset
-        anchors.verticalCenter: parent.verticalCenter
-        width: root.coverSize
-        height: root.coverSize
-        cornerRadius: Math.round(root.coverSize / 2)
-        buttonIcon: "󰝚"
-        iconFontSize: root.s(root.isCompact ? 12 : 14)
-        accentColor: isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor
-        textColor: isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor
-        opacity: root.hasTrack ? 0 : 1
-        scale: root.hasTrack ? 0.6 : 1
-        visible: opacity > 0.01
-        enabled: !root.hasTrack
-        Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 360; easing.type: Easing.OutQuint } }
-        onClicked: root.openPlayer()
+    readonly property string infoMode: readValue("mediaInfoMode", "mediaInfoMode", "duration")
+    readonly property real configuredWidth: Number(readValue("mediaWidth", "mediaWidth", 120))
+    readonly property bool showControls: readBool("mediaShowControls", "mediaShowControls")
+    readonly property bool showIcon: isVertical ? (readBool("mediaShowIcon", "mediaShowIcon") || !showControls) : readBool("mediaShowIcon", "mediaShowIcon")
 
-        MouseArea {
-            anchors.fill: parent
-            acceptedButtons: Qt.RightButton
-            onClicked: root.openPanel()
+    property var player: MprisController.activePlayer
+    readonly property bool hasArt: !isPreview && isMediaActive && !!MprisController.artUrl
+
+    property var playerList: {
+        if (!Mpris.players || !Mpris.players.values) return [];
+        let list = [];
+        let vals = Mpris.players.values;
+        for (let i = 0; i < vals.length; i++) {
+            if (vals[i]) list.push(vals[i]);
         }
+        return list;
     }
 
-    // Idle + hover: one click starts My Vibe (wheel picks the style first).
-    VibeChip {
-        face: root
-        x: root.inset + root.coverSize + root.btnGap * 2 + (root.idleExpanded ? 0 : -root.s(8))
-        anchors.verticalCenter: parent.verticalCenter
-        opacity: root.idleExpanded ? 1 : 0
-        visible: opacity > 0.01
-        enabled: root.idleExpanded
-        Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-        Behavior on x { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+    property var manualPlayer: null
+
+    property var targetPlayer: {
+        if (manualPlayer) {
+            for (let i = 0; i < playerList.length; i++) {
+                if (playerList[i] === manualPlayer) return manualPlayer;
+            }
+        }
+        return MprisController.activePlayer;
     }
 
-    // ── Now playing ───────────────────────────────────────────────────────────
-    Item {
-        id: nowPlaying
+    property bool hasTargetPlayer: targetPlayer !== null
+    property bool isMediaActive: isVertical
+        ? (targetPlayer !== null && targetPlayer.playbackState !== MprisPlaybackState.Stopped && targetPlayer.trackTitle !== "")
+        : (isPreview || (player !== null && player.playbackState !== MprisPlaybackState.Stopped && player.trackTitle !== ""))
+    readonly property bool isPlaying: isVertical
+        ? (targetPlayer ? (targetPlayer.playbackState === MprisPlaybackState.Playing || targetPlayer.isPlaying) : false)
+        : (isPreview || (isMediaActive && (player ? (player.playbackState === MprisPlaybackState.Playing || player.isPlaying) : MprisController.isPlaying)))
+
+    property string rawArtUrl: {
+        if (!targetPlayer) return "";
+        if (targetPlayer === MprisController.activePlayer) {
+            return MprisController.artUrl;
+        }
+        return targetPlayer.trackArtUrl || "";
+    }
+
+    property string activeArtUrl: {
+        if (isPreview || !rawArtUrl) return "";
+        if (rawArtUrl.startsWith("file://") || rawArtUrl.startsWith("http")) return rawArtUrl;
+        return "file://" + rawArtUrl;
+    }
+
+    function sc(v) { return barWindow ? barWindow.cs(v) : v; }
+
+    property real colWidth: barWindow ? barWindow.cs(configuredWidth - (isCompact ? 4 : 0)) : (configuredWidth - (isCompact ? 4 : 0))
+    property real innerSpacing: barWindow ? barWindow.cs(isCompact ? 6 : 8) : (isCompact ? 6 : 8)
+    property real btnSpacing: barWindow ? barWindow.cs(isCompact ? 3 : 4) : (isCompact ? 3 : 4)
+    property real sidePadding: barWindow ? barWindow.cs(isCompact ? 6 : 8) : (isCompact ? 6 : 8)
+
+    property real baseHeight: {
+        let h = sc(isCompact ? 8 : 9);
+        if (showIcon) h += sc(isCompact ? 26 : 28);
+        if (showIcon && showControls) h += sc(isCompact ? 4 : 5);
+        if (showControls) h += sc(isCompact ? 74 : 80) + sc(isCompact ? 6 : 8);
+        return h;
+    }
+
+    property real targetLength: {
+        if (module && !module.moduleActive) return 0;
+        if (isVertical) return baseHeight;
+        let iconW = 0;
+        if (showIcon) {
+            let thumbW = barWindow ? barWindow.cs(isCompact ? 26 : 28) : (isCompact ? 26 : 28);
+            let gapInfo = barWindow ? barWindow.cs(isCompact ? 8 : 10) : (isCompact ? 8 : 10);
+            iconW = thumbW + gapInfo;
+        }
+        let btnW = 0;
+        if (showControls) {
+            btnW = (barWindow ? barWindow.cs(isCompact ? 28 : 30) : (isCompact ? 28 : 30)) * 3 + btnSpacing * 2 + innerSpacing;
+        }
+        let margins = sidePadding * 2;
+        return iconW + colWidth + btnW + margins;
+    }
+
+    implicitWidth: isVertical ? (isPreview ? (barWindow ? barWindow.cs(56) : 56) : (activeTarget ? activeTarget.width : 0)) : targetLength
+    implicitHeight: isVertical ? targetLength : (barWindow ? barWindow.cs(isCompact ? 40 : 44) : (isCompact ? 40 : 44))
+
+    function formatTime(sec) {
+        sec = Math.floor(sec || 0);
+        let m = Math.floor(sec / 60), s = sec % 60;
+        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
+    Loader {
         anchors.fill: parent
-        opacity: root.hasTrack ? 1 : 0
-        visible: opacity > 0.01
-        Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+        sourceComponent: root.isVertical ? verticalBody : horizontalBody
+    }
 
-        // Cover + text are one click target: panel / play-pause / library player.
-        MouseArea {
-            id: infoArea
-            width: root.inset + root.coverSize + root.textGap + root.textW + root.s(4)
-            height: parent.height
-            acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-            cursorShape: Qt.PointingHandCursor
-            onClicked: (mouse) => {
-                if (mouse.button === Qt.MiddleButton) {
-                    if (root.player && root.player.canTogglePlaying) root.player.togglePlaying();
-                } else if (mouse.button === Qt.RightButton) {
-                    root.openPlayerCurrent();
-                } else {
-                    root.openPanel();
-                }
-            }
-        }
+    Component {
+        id: horizontalBody
 
-        // Round cover, concentric with the island's rounded end.
         Item {
-            id: coverBox
-            x: root.inset
-            anchors.verticalCenter: parent.verticalCenter
-            width: root.coverSize
-            height: root.coverSize
-            scale: infoArea.pressed ? 0.94 : 1.0
-            Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutQuint } }
-
-            Rectangle {
-                anchors.fill: parent
-                radius: width / 2
-                color: root.chipColor
-            }
-
-            Text {
-                anchors.centerIn: parent
-                text: "󰝚"
-                font.family: ThemeBackend.iconFont
-                font.pixelSize: root.s(root.isCompact ? 11 : 13)
-                color: root.dimColor
-                visible: !artA.visibleArt && !artB.visibleArt
-            }
-
             Item {
-                id: artLayer
-                anchors.fill: parent
-                layer.enabled: true
-                layer.effect: MultiEffect {
-                    maskEnabled: true
-                    maskSource: coverMask
-                    maskThresholdMin: 0.5
-                    maskSpreadAtMin: 1.0
-                }
+                id: mediaLayoutContainer
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: parent.left
+                anchors.leftMargin: root.sidePadding
+                anchors.right: parent.right
+                anchors.rightMargin: root.sidePadding
+                height: parent.height
+                clip: true
 
-                property bool showA: true
-                property string current: ""
-                function swap(src) {
-                    if (src === current) return;
-                    current = src;
-                    if (showA) { artB.source = src; showA = false; }
-                    else { artA.source = src; showA = true; }
-                }
-                Connections {
-                    target: root
-                    function onArtSourceChanged() { artLayer.swap(root.artSource); }
-                }
-                Component.onCompleted: swap(root.artSource)
+                Row {
+                    id: innerMediaLayout
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: root.innerSpacing
 
-                Image {
-                    id: artA
-                    readonly property bool visibleArt: artLayer.showA && status === Image.Ready && source != ""
-                    anchors.fill: parent
-                    fillMode: Image.PreserveAspectCrop
-                    sourceSize: Qt.size(root.coverSize * 2, root.coverSize * 2)
-                    asynchronous: true
-                    opacity: visibleArt ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
-                }
-                Image {
-                    id: artB
-                    readonly property bool visibleArt: !artLayer.showA && status === Image.Ready && source != ""
-                    anchors.fill: parent
-                    fillMode: Image.PreserveAspectCrop
-                    sourceSize: Qt.size(root.coverSize * 2, root.coverSize * 2)
-                    asynchronous: true
-                    opacity: visibleArt ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
-                }
-            }
+                    MouseArea {
+                        id: mediaInfoMouse
+                        width: infoLayout.implicitWidth
+                        height: mediaLayoutContainer.height
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"])
 
-            Item {
-                id: coverMask
-                anchors.fill: parent
-                layer.enabled: true
-                visible: false
-                Rectangle { anchors.fill: parent; radius: width / 2; color: "black"; antialiasing: true }
-            }
+                        Row {
+                            id: infoLayout
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: barWindow ? barWindow.cs(root.isCompact ? 8 : 10) : (root.isCompact ? 8 : 10)
+                            transformOrigin: Item.Left
 
-            // Paused: the cover dims and shows a pause glyph.
-            Rectangle {
-                anchors.fill: parent
-                radius: width / 2
-                color: "#000000"
-                opacity: (root.hasTrack && !root.isPlaying) ? 0.45 : 0
-                Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
-            }
-            Text {
-                anchors.centerIn: parent
-                text: "󰏤"
-                font.family: ThemeBackend.iconFont
-                font.pixelSize: root.s(root.isCompact ? 11 : 13)
-                color: "#ffffff"
-                opacity: (root.hasTrack && !root.isPlaying) ? 0.95 : 0
-                scale: opacity > 0.5 ? 1 : 0.7
-                Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
-                Behavior on scale { NumberAnimation { duration: 360; easing.type: Easing.OutQuint } }
-            }
+                            scale: mediaInfoMouse.containsMouse ? 1.01 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 250; easing.type: Easing.OutExpo } }
 
-            // My Vibe on: accent ring around the cover + a small badge with the style glyph.
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: -root.s(2)
-                radius: width / 2
-                color: "transparent"
-                border.width: root.s(1.5)
-                border.color: Qt.alpha(ThemeBackend.mauve, 0.9)
-                opacity: root.smartOn ? 1 : 0
-                scale: root.smartOn ? 1 : 0.85
-                visible: opacity > 0.01
-                Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
-                Behavior on scale { NumberAnimation { duration: 600; easing.type: Easing.OutQuint } }
-            }
-            Rectangle {
-                width: Math.round(root.s(root.isCompact ? 10 : 12))
-                height: width
-                radius: width / 2
-                x: parent.width - width + root.s(3)
-                y: parent.height - height + root.s(3)
-                color: ThemeBackend.mauve
-                border.width: 1
-                border.color: Qt.alpha(ThemeBackend.base, 0.6)
-                opacity: root.smartOn ? 1 : 0
-                scale: root.smartOn ? 1 : 0.4
-                visible: opacity > 0.01
-                Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
-                Behavior on scale { NumberAnimation { duration: 600; easing.type: Easing.OutQuint } }
-                Text {
-                    anchors.centerIn: parent
-                    text: root.smart.glyphOf(root.smart.style)
-                    font.family: ThemeBackend.iconFont
-                    font.pixelSize: Math.round(root.s(root.isCompact ? 7 : 8))
-                    color: ThemeBackend.base
-                }
-            }
-        }
+                            Rectangle {
+                                id: mediaThumbBox
+                                visible: root.showIcon
+                                width: barWindow ? barWindow.cs(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
+                                height: barWindow ? barWindow.cs(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
+                                radius: barWindow ? barWindow.cs(root.isCompact ? 9 : 10) : (root.isCompact ? 9 : 10)
+                                color: mediaThumbGlass.active ? "transparent" : (root.isCompact ? Qt.lighter(ThemeBackend.surface1, 1.1) : ThemeBackend.surface1)
+                                border.width: mediaThumbGlass.active && !root.isPlaying ? 0 : 1
+                                border.color: root.isPlaying ? ThemeBackend.mauve : (root.isCompact ? ThemeBackend.surface2 : ThemeBackend.surface1)
+                                clip: !mediaThumbGlass.active
+                                anchors.verticalCenter: parent.verticalCenter
 
-        // Inline style picker: one round chip per style; hover previews it in the vibe chip.
-        Row {
-            id: picker
-            x: root.inset + root.coverSize + root.textGap - (root.pickerOpen && root.controlsShown ? 0 : root.s(8))
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: root.btnGap
-            opacity: root.pickerOpen && root.controlsShown ? 1 : 0
-            visible: opacity > 0.01
-            enabled: root.pickerOpen && root.controlsShown
-            Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
-            Behavior on x { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-            Repeater {
-                model: root.smart.playableStyles
-                IconButton {
-                    required property var modelData
-                    readonly property bool isCur: root.smart.shown && modelData.id === root.smart.style
-                    width: root.btnSize
-                    height: root.btnSize
-                    cornerRadius: Math.round(root.btnSize / 2)
-                    buttonIcon: root.smart.glyphOf(modelData.id)
-                    iconFontSize: root.s(root.isCompact ? 11 : 13)
-                    accentColor: isCur ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.40 : 0.28)
-                                       : (isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor)
-                    textColor: isCur ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor)
-                    onIsHoveredOrHighlightedChanged: {
-                        if (isHoveredOrHighlighted) root.previewStyle = modelData.id;
-                        else if (root.previewStyle === modelData.id) root.previewStyle = "";
+                                GlassFill {
+                                    id: mediaThumbGlass
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    tintColor: ThemeBackend.surface1
+                                    tintAmount: 0.3
+                                }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "󰎈"
+                                    font.family: ThemeBackend.fontFamily
+                                    font.pixelSize: barWindow ? barWindow.cs(root.isCompact ? 13 : 14) : (root.isCompact ? 13 : 14)
+                                    color: root.isCompact ? ThemeBackend.text : ThemeBackend.subtext0
+                                    visible: !root.hasArt
+                                }
+
+                                Image {
+                                    id: mediaArtImg
+                                    anchors.fill: parent
+                                    source: root.hasArt ? (MprisController.artUrl.startsWith("file://") || MprisController.artUrl.startsWith("http") ? MprisController.artUrl : "file://" + MprisController.artUrl) : ""
+                                    fillMode: Image.PreserveAspectCrop
+                                    visible: false
+                                }
+
+                                MultiEffect {
+                                    anchors.fill: mediaArtImg
+                                    source: mediaArtImg
+                                    maskEnabled: true
+                                    maskSource: mediaArtMask
+                                    visible: root.hasArt && mediaArtImg.status === Image.Ready
+                                }
+
+                                Item {
+                                    id: mediaArtMask
+                                    anchors.fill: parent
+                                    layer.enabled: true
+                                    visible: false
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: mediaThumbBox.radius
+                                        color: "black"
+                                    }
+                                }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    color: ThemeBackend.surface0
+                                    opacity: 0.15
+                                    visible: root.hasArt && mediaArtImg.status === Image.Ready
+                                }
+                            }
+
+                            Column {
+                                spacing: -2
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: root.colWidth
+
+                                MarqueeText {
+                                    width: parent.width
+                                    text: root.isPreview ? I18n.t("guide.bar.media.preview.title", "Song title") : (isMediaActive ? (player ? player.trackTitle : "") : I18n.t("music.nothing_playing"))
+                                    color: ThemeBackend.text
+                                    font.family: ThemeBackend.fontFamily
+                                    font.weight: Font.Black
+                                    font.pixelSize: barWindow ? barWindow.cs(root.isCompact ? 11 : 12) : (root.isCompact ? 11 : 12)
+                                    marqueeSpacing: barWindow ? barWindow.cs(40) : 40
+                                    speed: 30
+                                    active: Boolean(root.visible && (!barWindow || barWindow.visible) && (!module || module.moduleActive) && root.isPlaying)
+                                }
+
+                                Text {
+                                    text: root.infoMode === "author"
+                                        ? (root.isPreview ? I18n.t("guide.bar.media.preview.author", "Song author") : (isMediaActive && player ? (player.trackArtist || "") : ""))
+                                        : (root.isPreview ? "01:24 / 03:42" : (isMediaActive && player ? (root.formatTime(MprisController.livePosition) + " / " + root.formatTime(player.length)) : ""))
+                                    font.family: ThemeBackend.fontFamily
+                                    font.weight: Font.Black
+                                    font.pixelSize: barWindow ? barWindow.cs(root.isCompact ? 9 : 10) : (root.isCompact ? 9 : 10)
+                                    color: root.isCompact ? ThemeBackend.overlay2 : ThemeBackend.subtext0
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                    visible: isMediaActive
+                                }
+                            }
+                        }
                     }
-                    onClicked: {
-                        root.pickerOpen = false;
-                        root.previewStyle = "";
-                        if (isCur) root.smart.reroll(); else root.smart.startStyle(modelData.id);
+
+                    Row {
+                        id: buttonRow
+                        visible: root.showControls
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: root.btnSpacing
+
+                        IconButton {
+                            id: prevMediaButton
+                            height: barWindow ? barWindow.cs(root.isCompact ? 28 : 30) : (root.isCompact ? 28 : 30)
+                            width: barWindow ? barWindow.cs(root.isCompact ? 28 : 30) : (root.isCompact ? 28 : 30)
+                            cornerRadius: barWindow ? barWindow.cs(root.isCompact ? 9 : 10) : (root.isCompact ? 9 : 10)
+                            buttonIcon: "󰒮"
+                            iconFontSize: barWindow ? barWindow.cs(root.isCompact ? 7 : 8) : (root.isCompact ? 7 : 8)
+                            accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+                            bgOpacity: ThemeBackend.liquidGlass ? 1.0 : root.barOpacity
+                            textColor: isHoveredOrHighlighted ? ThemeBackend.text : (root.isCompact ? ThemeBackend.subtext0 : ThemeBackend.overlay2)
+                            anchors.verticalCenter: parent.verticalCenter
+                            onClicked: if (player && player.canGoPrevious) player.previous()
+                        }
+
+                        IconButton {
+                            id: playMediaButton
+                            height: barWindow ? barWindow.cs(root.isCompact ? 28 : 30) : (root.isCompact ? 28 : 30)
+                            width: barWindow ? barWindow.cs(root.isCompact ? 28 : 30) : (root.isCompact ? 28 : 30)
+                            cornerRadius: barWindow ? barWindow.cs(root.isCompact ? 9 : 10) : (root.isCompact ? 9 : 10)
+                            buttonIcon: root.isPlaying ? "󰏤" : "󰐊"
+                            iconFontSize: barWindow ? barWindow.cs(root.isCompact ? 9 : 10) : (root.isCompact ? 9 : 10)
+                            accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+                            bgOpacity: ThemeBackend.liquidGlass ? 1.0 : root.barOpacity
+                            textColor: isHoveredOrHighlighted ? ThemeBackend.green : (root.isCompact ? Qt.lighter(ThemeBackend.text, 1.1) : ThemeBackend.text)
+                            anchors.verticalCenter: parent.verticalCenter
+                            onClicked: if (player && player.canTogglePlaying) player.togglePlaying()
+                        }
+
+                        IconButton {
+                            id: nextMediaButton
+                            height: barWindow ? barWindow.cs(root.isCompact ? 28 : 30) : (root.isCompact ? 28 : 30)
+                            width: barWindow ? barWindow.cs(root.isCompact ? 28 : 30) : (root.isCompact ? 28 : 30)
+                            cornerRadius: barWindow ? barWindow.cs(root.isCompact ? 9 : 10) : (root.isCompact ? 9 : 10)
+                            buttonIcon: "󰒭"
+                            iconFontSize: barWindow ? barWindow.cs(root.isCompact ? 7 : 8) : (root.isCompact ? 7 : 8)
+                            accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+                            bgOpacity: ThemeBackend.liquidGlass ? 1.0 : root.barOpacity
+                            textColor: isHoveredOrHighlighted ? ThemeBackend.text : (root.isCompact ? ThemeBackend.subtext0 : ThemeBackend.overlay2)
+                            anchors.verticalCenter: parent.verticalCenter
+                            onClicked: if (player && player.canGoNext) player.next()
+                        }
                     }
                 }
             }
         }
+    }
 
-        // "Title — Artist" with a seamless marquee and soft edges when it overflows.
+    Component {
+        id: verticalBody
+
         Item {
-            id: textBox
-            x: root.inset + root.coverSize + root.textGap
-            width: root.textW
-            height: parent.height
-            opacity: root.pickerOpen && root.controlsShown ? 0 : 1
-            visible: opacity > 0.01
-            Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
-            readonly property real lineY: Math.round(height / 2 - lineA.height / 2 - root.s(2.5))
-            readonly property real gapW: root.s(40)
-            readonly property bool overflow: lineA.width > width + 1
-            readonly property bool canMarquee: overflow && root.isPlaying && root.visible && !root.volumeFlash
-            property real offset: 0
-
-            // Text swaps happen behind a short fade so a track change never jumps.
-            property string shownTitle: root.title
-            property string shownArtist: root.artist
-            Connections {
-                target: root
-                function onTitleChanged() { textBox.queueSwap(); }
-                function onArtistChanged() { textBox.queueSwap(); }
-            }
-            function queueSwap() {
-                if (shownTitle === "" || root.title === "") { applySwap(); return; }
-                swapAnim.restart();
-            }
-            function applySwap() {
-                shownTitle = root.title;
-                shownArtist = root.artist;
-                restartMarquee();
-            }
-            function restartMarquee() {
-                marqueeAnim.stop();
-                offset = 0;
-                if (canMarquee) marqueeAnim.start();
-            }
-            onCanMarqueeChanged: restartMarquee()
-            onWidthChanged: if (!marqueeAnim.running) restartMarquee()
-
-            SequentialAnimation {
-                id: swapAnim
-                NumberAnimation { target: textContent; property: "opacity"; to: 0; duration: 110; easing.type: Easing.OutQuad }
-                ScriptAction { script: textBox.applySwap() }
-                NumberAnimation { target: textContent; property: "opacity"; to: 1; duration: 200; easing.type: Easing.OutCubic }
-            }
-
-            SequentialAnimation {
-                id: marqueeAnim
-                loops: Animation.Infinite
-                PauseAnimation { duration: 2400 }
-                NumberAnimation {
-                    target: textBox
-                    property: "offset"
-                    from: 0
-                    to: lineA.width + textBox.gapW
-                    duration: Math.max(1200, (lineA.width + textBox.gapW) * 1000 / root.s(30))
-                    easing.type: Easing.Linear
-                }
-                PropertyAction { target: textBox; property: "offset"; value: 0 }
-            }
-
-            Item {
-                id: textViewport
+            MouseArea {
+                id: widgetMouse
                 anchors.fill: parent
-                clip: !textBox.overflow
-                layer.enabled: textBox.overflow
-                layer.effect: MultiEffect {
-                    maskEnabled: true
-                    maskSource: fadeMask
-                    maskThresholdMin: 0.5
-                    maskSpreadAtMin: 1.0
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: {
+                    let targetItem = module ? module : root;
+                    let pt = targetItem.mapToItem(null, 0, 0);
+                    let globX = root.isRightBar ? pt.x : (pt.x + targetItem.width);
+                    let globY = pt.y + (targetItem.height / 2);
+                    SideMusicController.itemEntered(barWindow ? barWindow.screen : null, globX, globY, root.isRightBar, false, true);
                 }
+                onExited: {
+                    SideMusicController.itemExited();
+                }
+                onClicked: {
+                    let targetItem = module ? module : root;
+                    let pt = targetItem.mapToItem(null, 0, 0);
+                    let globX = root.isRightBar ? pt.x : (pt.x + targetItem.width);
+                    let globY = pt.y + (targetItem.height / 2);
+                    SideMusicController.toggle(barWindow ? barWindow.screen : null, globX, globY, root.isRightBar, false, true);
+                }
+            }
 
-                Item {
-                    anchors.fill: parent
-                    opacity: root.volumeFlash ? 0 : 1
-                    Behavior on opacity { NumberAnimation { duration: 180 } }
+            Column {
+                id: baseCol
+                anchors.centerIn: parent
+                spacing: barWindow ? barWindow.cs(root.isCompact ? 4 : 5) : (root.isCompact ? 4 : 5)
+
+                Rectangle {
+                    id: thumbBox
+                    visible: root.showIcon
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: barWindow ? barWindow.cs(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
+                    height: barWindow ? barWindow.cs(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
+                    radius: barWindow ? barWindow.cs(root.isCompact ? 7 : 8) : (root.isCompact ? 7 : 8)
+                    color: sideThumbGlass.active ? "transparent" : (root.isCompact ? Qt.lighter(ThemeBackend.surface1, 1.1) : ThemeBackend.surface1)
+                    border.width: sideThumbGlass.active && !(isMediaActive && isPlaying) ? 0 : 1
+                    border.color: (isMediaActive && isPlaying) ? ThemeBackend.mauve : (root.isCompact ? ThemeBackend.surface2 : ThemeBackend.surface1)
+                    clip: !sideThumbGlass.active
+
+                    GlassFill {
+                        id: sideThumbGlass
+                        anchors.fill: parent
+                        radius: parent.radius
+                        tintColor: ThemeBackend.surface1
+                        tintAmount: 0.3
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "󰎈"
+                        font.family: ThemeBackend.fontFamily
+                        font.pixelSize: barWindow ? barWindow.cs(root.isCompact ? 12 : 13) : (root.isCompact ? 12 : 13)
+                        color: root.isCompact ? ThemeBackend.text : ThemeBackend.subtext0
+                        visible: !isMediaActive || root.activeArtUrl === ""
+                    }
+
+                    Image {
+                        id: sideArtImg
+                        anchors.fill: parent
+                        source: isMediaActive ? root.activeArtUrl : ""
+                        fillMode: Image.PreserveAspectCrop
+                        visible: false
+                    }
+
+                    MultiEffect {
+                        anchors.fill: sideArtImg
+                        source: sideArtImg
+                        maskEnabled: true
+                        maskSource: sideArtMask
+                        visible: isMediaActive && root.activeArtUrl !== "" && sideArtImg.status === Image.Ready
+                    }
 
                     Item {
-                        id: textContent
-                        x: -Math.round(textBox.offset)
-                        y: textBox.lineY
-                        height: lineA.height
+                        id: sideArtMask
+                        anchors.fill: parent
+                        layer.enabled: true
+                        visible: false
 
-                        Row {
-                            id: lineA
-                            Text {
-                                text: textBox.shownTitle
-                                font.family: ThemeBackend.fontFamily
-                                font.pixelSize: root.fontSize
-                                font.weight: Font.DemiBold
-                                color: root.titleColor
-                                opacity: root.isPlaying ? 1 : 0.72
-                                Behavior on opacity { NumberAnimation { duration: 300 } }
-                            }
-                            Text {
-                                visible: textBox.shownArtist !== ""
-                                text: "  —  " + textBox.shownArtist
-                                font.family: ThemeBackend.fontFamily
-                                font.pixelSize: root.fontSize
-                                font.weight: Font.Medium
-                                color: root.dimColor
-                            }
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: thumbBox.radius
+                            color: "black"
                         }
-                        Row {
-                            x: lineA.width + textBox.gapW
-                            visible: textBox.overflow
-                            Text {
-                                text: textBox.shownTitle
-                                font.family: ThemeBackend.fontFamily
-                                font.pixelSize: root.fontSize
-                                font.weight: Font.DemiBold
-                                color: root.titleColor
-                                opacity: root.isPlaying ? 1 : 0.72
-                            }
-                            Text {
-                                visible: textBox.shownArtist !== ""
-                                text: "  —  " + textBox.shownArtist
-                                font.family: ThemeBackend.fontFamily
-                                font.pixelSize: root.fontSize
-                                font.weight: Font.Medium
-                                color: root.dimColor
+                    }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: ThemeBackend.surface0
+                        opacity: 0.15
+                        visible: isMediaActive && root.activeArtUrl !== "" && sideArtImg.status === Image.Ready
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (Caching.serpantinumDir) {
+                                Quickshell.execDetached(["bash", "-c", Caching.serpantinumDir + "/scripts/qs_manager.sh toggle music"]);
                             }
                         }
                     }
                 }
 
-                // Volume readout replaces the text while the wheel is used.
-                Text {
-                    x: 0
-                    y: textBox.lineY
-                    text: "Volume  " + (root.player ? Math.round(root.player.volume * 100) : 0) + "%"
-                    font.family: ThemeBackend.fontFamily
-                    font.pixelSize: root.fontSize
-                    font.weight: Font.DemiBold
-                    font.features: { "tnum": 1 }
-                    color: root.titleColor
-                    opacity: root.volumeFlash ? 1 : 0
-                    visible: opacity > 0.01
-                    Behavior on opacity { NumberAnimation { duration: 180 } }
-                }
-            }
+                Column {
+                    visible: root.showControls
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: barWindow ? barWindow.cs(root.isCompact ? 3 : 4) : (root.isCompact ? 3 : 4)
 
-            Item {
-                id: fadeMask
-                anchors.fill: parent
-                visible: false
-                layer.enabled: true
-                Rectangle {
-                    anchors.fill: parent
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: "transparent" }
-                        // Left edge fades only while the text scrolls, so the first letter is crisp at rest.
-                        GradientStop { position: textBox.offset > 0.5 ? Math.min(0.12, root.s(10) / Math.max(1, textBox.width)) : 0.0001; color: "black" }
-                        GradientStop { position: 1.0 - Math.min(0.12, root.s(14) / Math.max(1, textBox.width)); color: "black" }
-                        GradientStop { position: 1.0; color: "transparent" }
+                    IconButton {
+                        width: barWindow ? barWindow.cs(root.isCompact ? 24 : 26) : (root.isCompact ? 24 : 26)
+                        height: barWindow ? barWindow.cs(root.isCompact ? 24 : 26) : (root.isCompact ? 24 : 26)
+                        cornerRadius: barWindow ? barWindow.cs(root.isCompact ? 7 : 8) : (root.isCompact ? 7 : 8)
+                        buttonIcon: "󰒮"
+                        iconFontSize: barWindow ? barWindow.cs(root.isCompact ? 6 : 7) : (root.isCompact ? 6 : 7)
+                        accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+                        bgOpacity: ThemeBackend.liquidGlass ? 1.0 : root.barOpacity
+                        textColor: isHoveredOrHighlighted ? ThemeBackend.text : (root.isCompact ? ThemeBackend.subtext0 : ThemeBackend.overlay2)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        onClicked: if (targetPlayer && targetPlayer.canGoPrevious) targetPlayer.previous()
+                    }
+
+                    IconButton {
+                        width: barWindow ? barWindow.cs(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
+                        height: barWindow ? barWindow.cs(root.isCompact ? 26 : 28) : (root.isCompact ? 26 : 28)
+                        cornerRadius: barWindow ? barWindow.cs(root.isCompact ? 7 : 8) : (root.isCompact ? 7 : 8)
+                        buttonIcon: (isMediaActive && isPlaying) ? "󰏤" : "󰐊"
+                        iconFontSize: barWindow ? barWindow.cs(root.isCompact ? 8 : 9) : (root.isCompact ? 8 : 9)
+                        accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+                        bgOpacity: ThemeBackend.liquidGlass ? 1.0 : root.barOpacity
+                        textColor: isHoveredOrHighlighted ? ThemeBackend.green : (root.isCompact ? Qt.lighter(ThemeBackend.text, 1.1) : ThemeBackend.text)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        onClicked: if (targetPlayer && targetPlayer.canTogglePlaying) targetPlayer.togglePlaying()
+                    }
+
+                    IconButton {
+                        width: barWindow ? barWindow.cs(root.isCompact ? 24 : 26) : (root.isCompact ? 24 : 26)
+                        height: barWindow ? barWindow.cs(root.isCompact ? 24 : 26) : (root.isCompact ? 24 : 26)
+                        cornerRadius: barWindow ? barWindow.cs(root.isCompact ? 7 : 8) : (root.isCompact ? 7 : 8)
+                        buttonIcon: "󰒭"
+                        iconFontSize: barWindow ? barWindow.cs(root.isCompact ? 6 : 7) : (root.isCompact ? 6 : 7)
+                        accentColor: root.isCompact ? Qt.lighter(ThemeBackend.surface0, 1.18) : ThemeBackend.surface0
+                        bgOpacity: ThemeBackend.liquidGlass ? 1.0 : root.barOpacity
+                        textColor: isHoveredOrHighlighted ? ThemeBackend.text : (root.isCompact ? ThemeBackend.subtext0 : ThemeBackend.overlay2)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        onClicked: if (targetPlayer && targetPlayer.canGoNext) targetPlayer.next()
                     }
                 }
-            }
-
-            // Thin progress line; it shows the volume level while the wheel is used.
-            // Normal one-second ticks move it in place; only big jumps glide.
-            Item {
-                id: progressTrack
-                y: Math.round(textBox.height / 2 + root.s(root.isCompact ? 7 : 8))
-                width: parent.width
-                height: root.s(2)
-
-                readonly property real targetFrac: root.volumeFlash ? (root.player ? root.player.volume : 0) : root.progress
-                property real shownFrac: 0
-                onTargetFracChanged: {
-                    if (Math.abs(targetFrac - shownFrac) * width > root.s(6)) {
-                        fracAnim.stop();
-                        fracAnim.from = shownFrac;
-                        fracAnim.to = targetFrac;
-                        fracAnim.start();
-                    } else if (!fracAnim.running) {
-                        shownFrac = targetFrac;
-                    } else {
-                        fracAnim.to = targetFrac;
-                    }
-                }
-                Component.onCompleted: shownFrac = targetFrac
-                NumberAnimation { id: fracAnim; target: progressTrack; property: "shownFrac"; duration: 340; easing.type: Easing.OutCubic }
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: height / 2
-                    color: Qt.alpha(ThemeBackend.text, root.glass ? 0.16 : 0.12)
-                }
-                Rectangle {
-                    height: parent.height
-                    radius: height / 2
-                    width: Math.max(height, parent.width * progressTrack.shownFrac)
-                    color: root.volumeFlash ? ThemeBackend.text : (root.isPlaying ? ThemeBackend.mauve : Qt.alpha(ThemeBackend.text, 0.45))
-                    Behavior on color { ColorAnimation { duration: 250 } }
-                }
-            }
-        }
-
-        // Transport buttons, revealed on hover.
-        Row {
-            id: controls
-            x: root.inset + root.coverSize + root.textGap + (root.pickerOpen && root.controlsShown ? root.pickerW : root.textW) + root.s(8) + (root.controlsShown ? 0 : root.s(10))
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: root.btnGap
-            opacity: root.controlsShown ? 1 : 0
-            visible: opacity > 0.01
-            enabled: root.controlsShown
-            Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-            Behavior on x { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
-
-            VibeChip { face: root }
-            // Favourite (☆ / ★) for the playing library track.
-            IconButton {
-                visible: root.favShown
-                width: root.btnSize
-                height: root.btnSize
-                cornerRadius: Math.round(root.btnSize / 2)
-                buttonIcon: root.smart.fav ? "󰓎" : "󰓒"
-                iconFontSize: root.s(root.isCompact ? 11 : 13)
-                accentColor: root.smart.fav ? Qt.alpha(ThemeBackend.mauve, isHoveredOrHighlighted ? 0.34 : 0.22)
-                                            : (isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor)
-                textColor: root.smart.fav ? ThemeBackend.mauve : (isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor)
-                onClicked: root.smart.toggleFav()
-            }
-            IconButton {
-                visible: !root.pickerOpen
-                width: root.btnSize
-                height: root.btnSize
-                cornerRadius: Math.round(root.btnSize / 2)
-                buttonIcon: "󰒮"
-                iconFontSize: root.s(root.isCompact ? 9 : 10)
-                accentColor: isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor
-                textColor: isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor
-                enabled: root.player !== null && root.player.canGoPrevious
-                onClicked: root.player.previous()
-            }
-            IconButton {
-                visible: !root.pickerOpen
-                width: root.btnSize
-                height: root.btnSize
-                cornerRadius: Math.round(root.btnSize / 2)
-                buttonIcon: root.isPlaying ? "󰏤" : "󰐊"
-                iconFontSize: root.s(root.isCompact ? 11 : 12)
-                accentColor: isHoveredOrHighlighted ? Qt.alpha(ThemeBackend.mauve, 0.34) : Qt.alpha(ThemeBackend.mauve, 0.22)
-                textColor: ThemeBackend.text
-                enabled: root.player !== null && root.player.canTogglePlaying
-                onClicked: root.player.togglePlaying()
-            }
-            IconButton {
-                visible: !root.pickerOpen
-                width: root.btnSize
-                height: root.btnSize
-                cornerRadius: Math.round(root.btnSize / 2)
-                buttonIcon: "󰒭"
-                iconFontSize: root.s(root.isCompact ? 9 : 10)
-                accentColor: isHoveredOrHighlighted ? root.chipHoverColor : root.chipColor
-                textColor: isHoveredOrHighlighted ? ThemeBackend.text : root.dimColor
-                enabled: root.player !== null && root.player.canGoNext
-                onClicked: root.player.next()
             }
         }
     }

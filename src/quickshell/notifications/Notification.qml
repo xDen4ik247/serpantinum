@@ -23,6 +23,8 @@ Rectangle {
     }
 
     property bool showIcon: true
+    readonly property color mutedText: ThemeBackend.liquidGlass ? ThemeBackend.text : ThemeBackend.subtext1
+    readonly property color bodyText: ThemeBackend.liquidGlass ? ThemeBackend.text : ThemeBackend.subtext0
     property int urgency: model && typeof model.urgency !== "undefined" ? model.urgency : 1
 
     readonly property bool isDragging: cardHover.draggingH || cardHover.draggingV
@@ -136,9 +138,22 @@ Rectangle {
     }
 
     onTimestampChanged: updateTimeText()
+    property real arrive: 0.0
+
+    NumberAnimation {
+        id: arriveAnim
+        target: typeRoot
+        property: "arrive"
+        from: 1.0
+        to: 0.0
+        duration: 900
+        easing.type: Easing.OutCubic
+    }
+
     Component.onCompleted: {
         updateTimeText();
         Qt.callLater(playPopupSound);
+        if (ThemeBackend.liquidGlass) arriveAnim.start();
     }
 
     function s(val) { return root && typeof root.s === "function" ? root.s(val) : val; }
@@ -210,6 +225,7 @@ Rectangle {
         id: cardHover
         anchors.fill: parent
         hoverEnabled: true
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: Qt.PointingHandCursor
         property real startRootX: 0
         property real startRootY: 0
@@ -223,6 +239,7 @@ Rectangle {
         }
 
         onPressed: (mouse) => {
+            if (mouse.button === Qt.RightButton) return;
             let r = getTrackingRoot();
             let pt = mapToItem(r, mouse.x, mouse.y);
             startRootX = pt.x;
@@ -234,7 +251,7 @@ Rectangle {
         }
 
         onPositionChanged: (mouse) => {
-            if (!pressed) return;
+            if (!pressed || pressedButtons !== Qt.LeftButton) return;
             let r = getTrackingRoot();
             let pt = mapToItem(r, mouse.x, mouse.y);
             let dx = pt.x - startRootX;
@@ -262,6 +279,14 @@ Rectangle {
         }
 
         onReleased: (mouse) => {
+            if (mouse.button === Qt.RightButton) {
+                let cfg = Config.getSetting("notifications", {});
+                if (!cfg || cfg.rightClickClose !== false) {
+                    typeRoot.isDismissing = true;
+                    typeRoot.doClose();
+                }
+                return;
+            }
             cardHover.preventStealing = false;
             if (draggingH) {
                 let threshold = typeRoot.width * 0.18;
@@ -342,6 +367,7 @@ Rectangle {
         anchors.bottomMargin: -(s(1.5) + Math.max(0, typeRoot.dragY * 0.4))
         radius: visualItem.radius
         color: Qt.rgba(0, 0, 0, 0.12 + Math.min(0.06, Math.max(0, typeRoot.dragY / s(3.5)) * 0.06))
+        visible: !ThemeBackend.glassActive
         scale: visualItem.scale
         opacity: visualItem.opacity
         transform: Translate {
@@ -412,9 +438,18 @@ Rectangle {
         property color baseColor: typeRoot.readState === false ? Qt.lighter(ThemeBackend.surface1, 1.05) : ThemeBackend.surface1
         color: typeRoot.glass
             ? ((cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? Qt.alpha(ThemeBackend.crust, 0.12) : (cardHover.containsMouse && !cardHover.draggingH && !cardHover.draggingV ? Qt.alpha(ThemeBackend.text, 0.05) : "transparent"))
-            : ((cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? Qt.darker(baseColor, 1.1) : (cardHover.containsMouse && !cardHover.draggingH && !cardHover.draggingV ? Qt.lighter(baseColor, 1.05) : baseColor))
+            : ThemeBackend.faded((cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? Qt.darker(baseColor, 1.1) : (cardHover.containsMouse && !cardHover.draggingH && !cardHover.draggingV ? Qt.lighter(baseColor, 1.05) : baseColor))
 
         scale: (cardHover.pressed && !cardHover.draggingH && !cardHover.draggingV) ? 0.98 : 1.0
+
+        WallpaperBlur {
+            z: -1
+            anchors.fill: parent
+            radius: visualItem.radius
+            standalone: true
+            screenOverride: (typeRoot.root && typeRoot.root.glassScreen) ? typeRoot.root.glassScreen : null
+            useSnapshot: !!(typeRoot.root && typeRoot.root.glassScreen)
+        }
 
         Behavior on implicitHeight {
             enabled: !cardHover.draggingV
@@ -423,10 +458,19 @@ Rectangle {
         Behavior on color { enabled: !cardHover.draggingH && !cardHover.draggingV; ColorAnimation { duration: 150 } }
         Behavior on scale { enabled: !cardHover.draggingH && !cardHover.draggingV; NumberAnimation { duration: 150; easing.type: Easing.OutQuint } }
 
-        transform: Translate {
-            x: typeRoot.dragX
-            y: typeRoot.dragY
-        }
+        readonly property real dragFraction: Math.min(1.0, Math.abs(typeRoot.dragX) / Math.max(1, typeRoot.width * 0.75))
+        transform: [
+            Scale {
+                origin.x: visualItem.width / 2
+                origin.y: visualItem.height / 2
+                xScale: ThemeBackend.liquidGlass ? 1.0 - 0.1 * visualItem.dragFraction : 1.0
+                yScale: ThemeBackend.liquidGlass ? 1.0 + 0.03 * visualItem.dragFraction : 1.0
+            },
+            Translate {
+                x: typeRoot.dragX
+                y: typeRoot.dragY
+            }
+        ]
         opacity: Math.max(0.0, 1.0 - (Math.abs(typeRoot.dragX) / (typeRoot.width * 0.75)))
 
         Item {
@@ -534,6 +578,7 @@ Rectangle {
                 Layout.fillWidth: true
                 spacing: typeRoot.showIcon ? s(10) : 0
                 Layout.alignment: Qt.AlignTop
+                layoutDirection: I18n.layoutDirection
 
                 Item {
                     Layout.alignment: Qt.AlignTop
@@ -550,7 +595,7 @@ Rectangle {
                         anchors.bottomMargin: -s(1.5)
                         radius: parent.boxRadius
                         color: Qt.rgba(0, 0, 0, 0.12)
-                        visible: !typeRoot.glass
+                        visible: !typeRoot.glass && !ThemeBackend.glassActive
                     }
 
                     Rectangle {
@@ -558,11 +603,23 @@ Rectangle {
                         radius: parent.boxRadius
                         color: typeRoot.glass
                             ? (typeRoot.urgency === 2 ? Qt.rgba(urgencyGlow.deepRed.r, urgencyGlow.deepRed.g, urgencyGlow.deepRed.b, 0.16) : Qt.alpha(ThemeBackend.text, 0.08))
-                            : (typeRoot.urgency === 2 ? Qt.tint(ThemeBackend.surface2, Qt.rgba(urgencyGlow.deepRed.r, urgencyGlow.deepRed.g, urgencyGlow.deepRed.b, 0.12)) : ThemeBackend.surface2)
+                            : (iconBoxGlass.active ? "transparent" : ThemeBackend.faded(typeRoot.urgency === 2 ? Qt.tint(ThemeBackend.surface2, Qt.rgba(urgencyGlow.deepRed.r, urgencyGlow.deepRed.g, urgencyGlow.deepRed.b, 0.12)) : ThemeBackend.surface2))
                         border.width: typeRoot.glass ? 1 : 0
                         border.color: Qt.alpha(ThemeBackend.text, 0.14)
 
                         Behavior on color { ColorAnimation { duration: 200 } }
+
+                        GlassFill {
+                            id: iconBoxGlass
+                            allowed: !typeRoot.glass
+                            anchors.fill: parent
+
+                            radius: parent.radius
+                            tintColor: typeRoot.urgency === 2 ? ThemeBackend.red : ThemeBackend.surface2
+                            tintAmount: typeRoot.urgency === 2 ? 0.3 : 0.35
+                            tintStrength: 1.0
+                            pulse: typeRoot.arrive
+                        }
                     }
 
                     Rectangle {
@@ -595,18 +652,20 @@ Rectangle {
 
                         RowLayout {
                             id: headerContentContainer
-                            anchors.left: parent.left
+                            x: I18n.rtl ? (parent.width - width) : 0
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: s(6)
+                            layoutDirection: I18n.layoutDirection
                             opacity: Math.max(0.0, (typeRoot.expandProgress - 0.25) / 0.75)
                             visible: opacity > 0.0
                         }
 
                         Text {
                             id: collapsedSummary
-                            anchors.left: parent.left
+                            x: I18n.rtl ? (parent.width - width) : 0
                             anchors.verticalCenter: parent.verticalCenter
                             width: Math.max(0, Math.min(implicitWidth, parent.width - typeRoot.expandBtnSpace - timeMetrics.width - typeRoot.dotSpace))
+                            horizontalAlignment: I18n.textAlignment
                             text: typeRoot.fullSummary
                             font.family: ThemeBackend.fontFamily
                             font.weight: Font.Bold
@@ -620,13 +679,12 @@ Rectangle {
 
                         Text {
                             id: dotLabel
-                            anchors.left: collapsedSummary.right
-                            anchors.leftMargin: s(6)
+                            x: I18n.rtl ? (collapsedSummary.x - implicitWidth - s(6)) : (collapsedSummary.x + collapsedSummary.width + s(6))
                             anchors.verticalCenter: parent.verticalCenter
                             text: "•"
                             font.family: ThemeBackend.fontFamily
                             font.pixelSize: s(10)
-                            color: ThemeBackend.subtext1
+                            color: typeRoot.mutedText
                             opacity: (!typeRoot.timeOnNextRowCollapsed) ? Math.max(0.0, 1.0 - typeRoot.expandProgress * 3.0) : 0.0
                             visible: opacity > 0.0
                         }
@@ -637,10 +695,10 @@ Rectangle {
                             text: typeRoot.timeText
                             font.family: ThemeBackend.fontFamily
                             font.pixelSize: s(11)
-                            color: ThemeBackend.subtext1
+                            color: typeRoot.mutedText
 
-                            readonly property real startX: collapsedSummary.width + s(12) + dotLabel.implicitWidth
-                            readonly property real endX: Math.max(0, topHeaderRow.width - typeRoot.expandBtnSpace - implicitWidth)
+                            readonly property real startX: I18n.rtl ? (topHeaderRow.width - collapsedSummary.width - s(12) - dotLabel.implicitWidth - implicitWidth) : (collapsedSummary.width + s(12) + dotLabel.implicitWidth)
+                            readonly property real endX: I18n.rtl ? typeRoot.expandBtnSpace : Math.max(0, topHeaderRow.width - typeRoot.expandBtnSpace - implicitWidth)
                             x: typeRoot.timeOnNextRowCollapsed ? endX : (startX + (endX - startX) * typeRoot.expandProgress)
 
                             opacity: typeRoot.timeOnNextRowCollapsed ? Math.max(0.0, (typeRoot.expandProgress - 0.25) / 0.75) : 1.0
@@ -649,9 +707,8 @@ Rectangle {
 
                         Column {
                             id: collapsedTwoLineContainer
-                            anchors.left: parent.left
-                            anchors.right: expandButton.visible ? expandButton.left : parent.right
-                            anchors.rightMargin: expandButton.visible ? s(6) : 0
+                            x: I18n.rtl ? (expandButton.visible ? expandButton.width + s(6) : 0) : 0
+                            width: parent.width - (expandButton.visible ? expandButton.width + s(6) : 0)
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: s(1)
                             opacity: typeRoot.timeOnNextRowCollapsed ? Math.max(0.0, 1.0 - typeRoot.expandProgress * 3.0) : 0.0
@@ -659,6 +716,7 @@ Rectangle {
 
                             Text {
                                 width: parent.width
+                                horizontalAlignment: I18n.textAlignment
                                 text: typeRoot.summaryPrefix
                                 font.family: ThemeBackend.fontFamily
                                 font.weight: Font.Bold
@@ -671,6 +729,7 @@ Rectangle {
                             Row {
                                 spacing: s(5)
                                 width: parent.width
+                                layoutDirection: I18n.layoutDirection
 
                                 Text {
                                     text: typeRoot.summaryLastWord
@@ -685,7 +744,7 @@ Rectangle {
                                     text: "•"
                                     font.family: ThemeBackend.fontFamily
                                     font.pixelSize: s(10)
-                                    color: ThemeBackend.subtext1
+                                    color: typeRoot.mutedText
                                     anchors.verticalCenter: parent.verticalCenter
                                     visible: typeRoot.summaryLastWord !== ""
                                 }
@@ -694,7 +753,7 @@ Rectangle {
                                     text: typeRoot.timeText
                                     font.family: ThemeBackend.fontFamily
                                     font.pixelSize: s(11)
-                                    color: ThemeBackend.subtext1
+                                    color: typeRoot.mutedText
                                     anchors.verticalCenter: parent.verticalCenter
                                     visible: typeRoot.timeText !== ""
                                 }
@@ -703,13 +762,13 @@ Rectangle {
 
                         FlipIcon {
                             id: expandButton
-                            anchors.right: parent.right
+                            x: I18n.rtl ? 0 : (parent.width - width)
                             anchors.verticalCenter: parent.verticalCenter
                             visible: typeRoot.canExpand
                             size: s(28)
                             cornerRadius: s(7)
                             accentColor: typeRoot.glass ? Qt.alpha(ThemeBackend.text, 0.10) : ThemeBackend.surface2
-                            iconColor: isHoveredOrHighlighted ? ThemeBackend.text : ThemeBackend.subtext1
+                            iconColor: isHoveredOrHighlighted ? ThemeBackend.text : typeRoot.mutedText
                             autoToggle: false
                             flipped: typeRoot.expandProgress > 0.5
                             onClicked: typeRoot.expanded = !typeRoot.expanded
@@ -730,6 +789,7 @@ Rectangle {
                             anchors.top: parent.top
                             anchors.left: parent.left
                             anchors.right: parent.right
+                            horizontalAlignment: I18n.textAlignment
                             text: typeRoot.fullSummary
                             font.family: ThemeBackend.fontFamily
                             font.weight: Font.Bold
@@ -756,11 +816,12 @@ Rectangle {
                             anchors.top: parent.top
                             anchors.left: parent.left
                             anchors.right: parent.right
+                            horizontalAlignment: I18n.textAlignment
                             text: typeRoot.fullBody
                             font.family: ThemeBackend.fontFamily
                             font.weight: Font.Normal
                             font.pixelSize: typeRoot.isPopup ? s(12) : s(11)
-                            color: typeRoot.glass ? ThemeBackend.subtext1 : ThemeBackend.subtext0
+                            color: typeRoot.glass ? ThemeBackend.subtext1 : typeRoot.bodyText
                             elide: Text.ElideRight
                             maximumLineCount: 1
                             opacity: Math.max(0.0, 1.0 - typeRoot.expandProgress * 2.5)
@@ -772,11 +833,12 @@ Rectangle {
                             anchors.top: parent.top
                             anchors.left: parent.left
                             anchors.right: parent.right
+                            horizontalAlignment: I18n.textAlignment
                             text: typeRoot.fullBody
                             font.family: ThemeBackend.fontFamily
                             font.weight: Font.Normal
                             font.pixelSize: typeRoot.isPopup ? s(12) : s(11)
-                            color: typeRoot.glass ? ThemeBackend.subtext1 : ThemeBackend.subtext0
+                            color: typeRoot.glass ? ThemeBackend.subtext1 : typeRoot.bodyText
                             wrapMode: Text.Wrap
                             textFormat: Text.StyledText
                             opacity: Math.max(0.0, (typeRoot.expandProgress - 0.2) / 0.8)
@@ -813,8 +875,10 @@ Rectangle {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.topMargin: s(10)
-                            anchors.rightMargin: s(8)
+                            anchors.leftMargin: I18n.rtl ? s(8) : 0
+                            anchors.rightMargin: I18n.rtl ? 0 : s(8)
                             spacing: s(8)
+                            layoutDirection: I18n.layoutDirection
 
                             Item {
                                 Layout.fillWidth: true
@@ -833,7 +897,7 @@ Rectangle {
                                     buttonIcon: typeRoot.getActionIcon(modelData.id, modelData.text)
                                     iconFontSize: s(11)
                                     accentColor: isPrimary ? typeRoot.accentColor : (typeRoot.glass ? Qt.alpha(ThemeBackend.text, 0.12) : ThemeBackend.surface2)
-                                    textColor: isPrimary ? ThemeBackend.crust : ThemeBackend.subtext1
+                                    textColor: isPrimary ? ThemeBackend.crust : typeRoot.mutedText
                                     onTriggered: {
                                         var n = delegateWrapper ? delegateWrapper.realNotif : null;
                                         if (n && n.actions) {

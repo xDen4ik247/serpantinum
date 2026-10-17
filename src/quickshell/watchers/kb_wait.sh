@@ -16,6 +16,9 @@ case "$COMPOSITOR" in
             READ_TIMEOUT=30
         fi
         ;;
+    mango)
+        mmsg watch keyboardlayout 2>/dev/null | { read -r _; cat; } > "$PIPE" &
+        ;;
     sway)
         swaymsg -t subscribe -m '["input"]' 2>/dev/null | jq --unbuffered -c 'select(.change == "xkb_layout" or .change == "xkb_keymap")' > "$PIPE" &
         ;;

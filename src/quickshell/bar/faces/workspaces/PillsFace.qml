@@ -7,6 +7,9 @@ Item {
     id: pillsFaceRoot
     property var widget: null
 
+    readonly property bool isVertical: widget ? widget.orientation === "vertical" : false
+    readonly property int activeIdx: widget ? Number(widget.activeIndex) : -1
+
     readonly property bool glass: !!(widget && widget.module && widget.module.glass)
     readonly property real dotGap: widget ? widget.s(widget.isCompact ? 7 : 8) : 8
     readonly property real activeW: widget ? widget.s(widget.isCompact ? 34 : 36) : 36
@@ -15,14 +18,24 @@ Item {
 
     // Each slot carries its trailing gap, so slots can grow/shrink to zero smoothly
     // (workspaces appearing/disappearing never jump); the last gap is trimmed here.
-    implicitWidth: Math.max(0, wsLayout.implicitWidth - dotGap)
-    implicitHeight: dotH
+    implicitWidth: isVertical ? dotH : Math.max(0, wsLayout.implicitWidth - dotGap)
+    implicitHeight: isVertical ? Math.max(0, wsLayout.implicitHeight - dotGap) : dotH
 
     Rectangle {
         id: activeHighlight
         z: 3
         radius: widget ? widget.s(widget.isCompact ? 7 : 8) : 8
-        color: (widget && widget.isCompact) ? Qt.lighter(ThemeBackend.mauve, 1.05) : ThemeBackend.mauve
+        color: pillsGlass.active ? "transparent" : ((widget && widget.isCompact) ? Qt.lighter(ThemeBackend.mauve, 1.05) : ThemeBackend.mauve)
+
+        GlassFill {
+            id: pillsGlass
+            allowed: !pillsFaceRoot.glass
+            anchors.fill: parent
+            radius: parent.radius
+            tintColor: ThemeBackend.mauve
+            tintAmount: 0.5
+            press: 0.3 + 0.7 * activeHighlight.lift
+        }
 
         property int prevIdx: 0
         property int curIdx: widget ? widget.activeIndex : -1
@@ -30,11 +43,11 @@ Item {
         onCurIdxChanged: {
             if (curIdx >= 0 && prevIdx >= 0) {
                 if (curIdx > prevIdx) {
-                    leftAnim.duration = 400;
-                    rightAnim.duration = 300;
+                    startAnim.duration = 400;
+                    endAnim.duration = 300;
                 } else if (curIdx < prevIdx) {
-                    leftAnim.duration = 300;
-                    rightAnim.duration = 400;
+                    startAnim.duration = 300;
+                    endAnim.duration = 400;
                 }
             }
             if (curIdx >= 0) {
@@ -42,47 +55,61 @@ Item {
             }
         }
 
-        function getX(index, activeIndex) {
+        function getPos(index, activeIndex) {
             if (index < 0 || !widget) return 0;
-            let xPos = 0;
+            let pos = 0;
             for (let i = 0; i < index; i++) {
                 if (typeof widget.isShown === "function" && !widget.isShown(i))
                     continue;
-                xPos += (i === activeIndex ? pillsFaceRoot.activeW : pillsFaceRoot.inactiveW) + pillsFaceRoot.dotGap;
+                pos += (i === activeIndex ? pillsFaceRoot.activeW : pillsFaceRoot.inactiveW) + pillsFaceRoot.dotGap;
             }
-            return xPos;
+            return pos;
         }
 
-        property real targetLeft: {
+        property real targetStart: {
             if (widget) {
                 widget.hideEmptyWorkspaces;
                 widget.activeIndex;
-                widget.workspaceCount;
                 widget.niriOccupiedMap;
                 widget.swayOccupiedMap;
+                widget.mangoOccupiedMap;
+                widget.workspaceCount;
             }
-            return (curIdx >= 0 && widget) ? getX(curIdx, curIdx) : 0;
+            return (curIdx >= 0 && widget) ? getPos(curIdx, curIdx) : 0;
         }
-        property real targetRight: (curIdx >= 0 && widget) ? targetLeft + pillsFaceRoot.activeW : 0
-        property real actualLeft: targetLeft
-        property real actualRight: targetRight
+        property real targetEnd: (curIdx >= 0 && widget) ? targetStart + pillsFaceRoot.activeW : 0
+        property real actualStart: targetStart
+        property real actualEnd: targetEnd
 
-        Behavior on actualLeft { NumberAnimation { id: leftAnim; duration: 380; easing.type: Easing.OutQuint } }
-        Behavior on actualRight { NumberAnimation { id: rightAnim; duration: 380; easing.type: Easing.OutQuint } }
+        Behavior on actualStart { NumberAnimation { id: startAnim; duration: 380; easing.type: Easing.OutQuint } }
+        Behavior on actualEnd { NumberAnimation { id: endAnim; duration: 380; easing.type: Easing.OutQuint } }
 
-        x: wsLayout.x + actualLeft
-        y: wsLayout.y + (wsLayout.height - height) / 2
-        width: actualRight - actualLeft
-        height: pillsFaceRoot.dotH
+        readonly property bool isMoving: Math.abs(actualStart - targetStart) > 0.5 || Math.abs(actualEnd - targetEnd) > 0.5
+        property real lift: (pillsGlass.active && isMoving) ? 1.0 : 0.0
+        Behavior on lift { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+        scale: 1.0 + 0.14 * lift
+        transformOrigin: Item.Center
+
+        readonly property real thickness: pillsFaceRoot.dotH
+
+        x: pillsFaceRoot.isVertical ? wsLayout.x + (wsLayout.width - width) / 2 : wsLayout.x + actualStart
+        y: pillsFaceRoot.isVertical ? wsLayout.y + actualStart : wsLayout.y + (wsLayout.height - height) / 2
+        width: pillsFaceRoot.isVertical ? thickness : actualEnd - actualStart
+        height: pillsFaceRoot.isVertical ? actualEnd - actualStart : thickness
         opacity: (widget && widget.workspaceCount > 0 && widget.activeIndex >= 0) ? 1.0 : 0.0
         Behavior on opacity { NumberAnimation { duration: 180 } }
     }
 
-    Row {
+    AxisFlow {
         id: wsLayout
+        vertical: pillsFaceRoot.isVertical
+        horizontalItemAlignment: Grid.AlignHCenter
+        verticalItemAlignment: Grid.AlignVCenter
         z: 2
-        anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.left: pillsFaceRoot.isVertical ? undefined : parent.left
+        anchors.verticalCenter: pillsFaceRoot.isVertical ? undefined : parent.verticalCenter
+        anchors.top: pillsFaceRoot.isVertical ? parent.top : undefined
+        anchors.horizontalCenter: pillsFaceRoot.isVertical ? parent.horizontalCenter : undefined
         spacing: 0
 
         Repeater {
@@ -93,35 +120,54 @@ Item {
                 required property int index
 
                 property bool isOccupied: widget ? widget.isOccupied(index) : false
-                property bool isActive: widget ? (index === widget.activeIndex) : false
+                property bool isActive: pillsFaceRoot ? index === pillsFaceRoot.activeIdx : false
                 property bool initAnimTrigger: false
                 property bool shown: widget && typeof widget.isShown === "function" ? widget.isShown(index) : true
-                // a slot added after startup grows in from zero width
+                // a slot added after startup grows in from zero length
                 property bool grown: false
 
                 readonly property real dotW: isActive ? pillsFaceRoot.activeW : pillsFaceRoot.inactiveW
+                readonly property real length: (shown && grown) ? (dotW + pillsFaceRoot.dotGap) : 0
+                readonly property real thickness: pillsFaceRoot.dotH
+                width: pillsFaceRoot.isVertical ? thickness : length
+                height: pillsFaceRoot.isVertical ? length : thickness
+                visible: length > 0.5
 
-                width: (shown && grown) ? (dotW + pillsFaceRoot.dotGap) : 0
-                height: pillsFaceRoot.dotH
-                anchors.verticalCenter: parent.verticalCenter
-                visible: width > 0.5
-
-                Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
+                Behavior on width {
+                    enabled: !pillsFaceRoot.isVertical
+                    NumberAnimation { duration: 400; easing.type: Easing.OutQuint }
+                }
+                Behavior on height {
+                    enabled: pillsFaceRoot.isVertical
+                    NumberAnimation { duration: 400; easing.type: Easing.OutQuint }
+                }
 
                 Rectangle {
                     id: wsVisualShape
                     x: 0
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: wsPill.dotW
-                    height: pillsFaceRoot.dotH
+                    y: 0
+                    width: pillsFaceRoot.isVertical ? pillsFaceRoot.dotH : wsPill.dotW
+                    height: pillsFaceRoot.isVertical ? wsPill.dotW : pillsFaceRoot.dotH
                     radius: widget ? widget.s(widget.isCompact ? 8 : 10) : 10
-                    color: wsPill.isActive ? "transparent"
+                    color: (wsPill.isActive || pillsShapeGlass.active) ? "transparent"
                         : (pillsFaceRoot.glass
                             ? (wsPill.isOccupied ? Qt.alpha(ThemeBackend.text, 0.42) : Qt.alpha(ThemeBackend.text, 0.14))
-                            : (wsPill.isOccupied ? ThemeBackend.surface2 : ((widget && widget.isCompact) ? ThemeBackend.surface1 : ThemeBackend.surface0)))
+                            : Qt.alpha(wsPill.isOccupied ? ThemeBackend.surface2 : ((widget && widget.isCompact) ? ThemeBackend.surface1 : ThemeBackend.surface0), ThemeBackend.elementOpacity))
                     border.width: 0
 
                     Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
+                    Behavior on height { NumberAnimation { duration: 400; easing.type: Easing.OutQuint } }
+
+                    GlassFill {
+                        id: pillsShapeGlass
+                        anchors.fill: parent
+                        radius: parent.radius
+                        allowed: !wsPill.isActive && !pillsFaceRoot.glass
+                        tintColor: wsPill.isOccupied ? ThemeBackend.surface2 : ThemeBackend.surface0
+                        tintAmount: 0.3
+                        press: wsPillMouse.pressed ? 0.8 : (wsPillMouse.containsMouse ? 0.25 : 0)
+                    }
+
                     Behavior on color { ColorAnimation { duration: 250 } }
 
                     scale: wsPillMouse.pressed ? 0.88 : (wsPillMouse.containsMouse ? 1.08 : 1.0)
@@ -140,7 +186,9 @@ Item {
 
                 opacity: (initAnimTrigger && shown) ? 1.0 : 0.0
                 transform: Translate {
-                    y: wsPill.initAnimTrigger ? 0 : (widget ? widget.s(15) : 15)
+                    x: (!pillsFaceRoot.isVertical || wsPill.initAnimTrigger) ? 0 : (widget ? widget.s(15) : 15)
+                    y: (pillsFaceRoot.isVertical || wsPill.initAnimTrigger) ? 0 : (widget ? widget.s(15) : 15)
+                    Behavior on x { NumberAnimation { duration: 650; easing.type: Easing.OutQuint } }
                     Behavior on y { NumberAnimation { duration: 650; easing.type: Easing.OutQuint } }
                 }
 

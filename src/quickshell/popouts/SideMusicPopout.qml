@@ -259,6 +259,8 @@ PanelWindow {
     Item {
         id: menuContainer
 
+        property real dynamicCornerRadius: sideMusicPopout.isSolid ? Math.max(0, Math.min(sideMusicPopout.cornerRadius, (sideMusicPopout.isSideBar ? width : height))) : 0
+
         property real animProgress: sideMusicPopout.isVisible ? 1.0 : 0.0
         Behavior on animProgress {
             NumberAnimation {
@@ -325,196 +327,58 @@ PanelWindow {
             return sideMusicPopout.alignBottom ? Item.Bottom : Item.Top;
         }
 
-        Shape {
-            visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && !sideMusicPopout.alignBottom && menuContainer.height > sideMusicPopout.cornerRadius
-            x: -sideMusicPopout.cornerRadius
-            y: 0
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: 0
-                startY: 0
-                PathLine { x: sideMusicPopout.cornerRadius; y: 0 }
-                PathLine { x: sideMusicPopout.cornerRadius; y: sideMusicPopout.cornerRadius }
-                PathArc {
-                    x: 0
-                    y: 0
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Counterclockwise
+        ShaderEffect {
+            visible: sideMusicPopout.isSolid && menuContainer.dynamicCornerRadius > 0.5
+            x: {
+                if (sideMusicPopout.isSideBar) {
+                    return sideMusicPopout.alignRight ? (parent.width - menuContainer.dynamicCornerRadius) : 0;
                 }
+                return -menuContainer.dynamicCornerRadius;
             }
+            y: {
+                if (sideMusicPopout.isSideBar) {
+                    return -menuContainer.dynamicCornerRadius;
+                }
+                return sideMusicPopout.alignBottom ? (parent.height - menuContainer.dynamicCornerRadius) : 0;
+            }
+            width: menuContainer.dynamicCornerRadius
+            height: menuContainer.dynamicCornerRadius
+            property vector2d itemSize: Qt.vector2d(width, height)
+            property real cornerIndex: {
+                if (sideMusicPopout.isSideBar) {
+                    return sideMusicPopout.alignRight ? 3.0 : 2.0;
+                }
+                return sideMusicPopout.alignBottom ? 3.0 : 1.0;
+            }
+            property color color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
+            fragmentShader: "file://" + Caching.serpantinumDir + "/assets/shaders/ui/corner_cutout.frag.qsb"
         }
 
-        Shape {
-            visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && !sideMusicPopout.alignBottom && menuContainer.height > sideMusicPopout.cornerRadius
-            x: parent.width
-            y: 0
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: sideMusicPopout.cornerRadius
-                startY: 0
-                PathLine { x: 0; y: 0 }
-                PathLine { x: 0; y: sideMusicPopout.cornerRadius }
-                PathArc {
-                    x: sideMusicPopout.cornerRadius
-                    y: 0
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Clockwise
+        ShaderEffect {
+            visible: sideMusicPopout.isSolid && menuContainer.dynamicCornerRadius > 0.5
+            x: {
+                if (sideMusicPopout.isSideBar) {
+                    return sideMusicPopout.alignRight ? (parent.width - menuContainer.dynamicCornerRadius) : 0;
                 }
+                return parent.width;
             }
-        }
-
-        Shape {
-            visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && sideMusicPopout.alignBottom && menuContainer.height > sideMusicPopout.cornerRadius
-            x: -sideMusicPopout.cornerRadius
-            y: parent.height - sideMusicPopout.cornerRadius
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: 0
-                startY: sideMusicPopout.cornerRadius
-                PathLine { x: sideMusicPopout.cornerRadius; y: sideMusicPopout.cornerRadius }
-                PathLine { x: 0; y: sideMusicPopout.cornerRadius }
-                PathArc {
-                    x: 0
-                    y: sideMusicPopout.cornerRadius
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Clockwise
+            y: {
+                if (sideMusicPopout.isSideBar) {
+                    return parent.height;
                 }
+                return sideMusicPopout.alignBottom ? (parent.height - menuContainer.dynamicCornerRadius) : 0;
             }
-        }
-
-        Shape {
-            visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && sideMusicPopout.alignBottom && menuContainer.height > sideMusicPopout.cornerRadius
-            x: parent.width
-            y: parent.height - sideMusicPopout.cornerRadius
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: sideMusicPopout.cornerRadius
-                startY: sideMusicPopout.cornerRadius
-                PathLine { x: 0; y: sideMusicPopout.cornerRadius }
-                PathLine { x: 0; y: 0 }
-                PathArc {
-                    x: sideMusicPopout.cornerRadius
-                    y: sideMusicPopout.cornerRadius
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Counterclockwise
+            width: menuContainer.dynamicCornerRadius
+            height: menuContainer.dynamicCornerRadius
+            property vector2d itemSize: Qt.vector2d(width, height)
+            property real cornerIndex: {
+                if (sideMusicPopout.isSideBar) {
+                    return sideMusicPopout.alignRight ? 1.0 : 0.0;
                 }
+                return sideMusicPopout.alignBottom ? 2.0 : 0.0;
             }
-        }
-
-        Shape {
-            visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && !sideMusicPopout.alignRight && menuContainer.width > sideMusicPopout.cornerRadius
-            x: 0
-            y: -sideMusicPopout.cornerRadius
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: 0
-                startY: 0
-                PathLine { x: 0; y: sideMusicPopout.cornerRadius }
-                PathLine { x: sideMusicPopout.cornerRadius; y: sideMusicPopout.cornerRadius }
-                PathArc {
-                    x: 0
-                    y: 0
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Clockwise
-                }
-            }
-        }
-
-        Shape {
-            visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && !sideMusicPopout.alignRight && menuContainer.width > sideMusicPopout.cornerRadius
-            x: 0
-            y: parent.height
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: 0
-                startY: sideMusicPopout.cornerRadius
-                PathLine { x: 0; y: 0 }
-                PathLine { x: sideMusicPopout.cornerRadius; y: 0 }
-                PathArc {
-                    x: 0
-                    y: sideMusicPopout.cornerRadius
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Counterclockwise
-                }
-            }
-        }
-
-        Shape {
-            visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && sideMusicPopout.alignRight && menuContainer.width > sideMusicPopout.cornerRadius
-            x: parent.width - sideMusicPopout.cornerRadius
-            y: -sideMusicPopout.cornerRadius
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: sideMusicPopout.cornerRadius
-                startY: 0
-                PathLine { x: sideMusicPopout.cornerRadius; y: sideMusicPopout.cornerRadius }
-                PathLine { x: 0; y: sideMusicPopout.cornerRadius }
-                PathArc {
-                    x: sideMusicPopout.cornerRadius
-                    y: 0
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Counterclockwise
-                }
-            }
-        }
-
-        Shape {
-            visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && sideMusicPopout.alignRight && menuContainer.width > sideMusicPopout.cornerRadius
-            x: parent.width - sideMusicPopout.cornerRadius
-            y: parent.height
-            width: sideMusicPopout.cornerRadius
-            height: sideMusicPopout.cornerRadius
-            preferredRendererType: Shape.GeometryRenderer
-            ShapePath {
-                fillColor: ThemeBackend.base
-                strokeColor: "transparent"
-                startX: sideMusicPopout.cornerRadius
-                startY: sideMusicPopout.cornerRadius
-                PathLine { x: sideMusicPopout.cornerRadius; y: 0 }
-                PathLine { x: 0; y: 0 }
-                PathArc {
-                    x: sideMusicPopout.cornerRadius
-                    y: sideMusicPopout.cornerRadius
-                    radiusX: sideMusicPopout.cornerRadius
-                    radiusY: sideMusicPopout.cornerRadius
-                    direction: PathArc.Clockwise
-                }
-            }
+            property color color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
+            fragmentShader: "file://" + Caching.serpantinumDir + "/assets/shaders/ui/corner_cutout.frag.qsb"
         }
 
         RectangularShadow {
@@ -529,82 +393,92 @@ PanelWindow {
         Rectangle {
             id: menuBox
             anchors.fill: parent
-            color: sideMusicPopout.glassCard ? Qt.alpha(ThemeBackend.base, 0.5) : ThemeBackend.base
+            color: sideMusicPopout.glassCard ? Qt.alpha(ThemeBackend.base, 0.5) : Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             radius: sideMusicPopout.cornerRadius
             border.width: 0
             border.color: "transparent"
             clip: true
 
+            WallpaperBlur {
+                z: -1
+                anchors.fill: parent
+                rim: 0
+                topLeftRadius: parent.topLeftRadius
+                topRightRadius: parent.topRightRadius
+                bottomLeftRadius: parent.bottomLeftRadius
+                bottomRightRadius: parent.bottomRightRadius
+            }
+
             Rectangle {
-                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && !sideMusicPopout.alignBottom
+                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && !sideMusicPopout.alignBottom && menuContainer.dynamicCornerRadius > 0.5
                 x: 0
                 y: 0
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             Rectangle {
-                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && !sideMusicPopout.alignBottom
-                x: parent.width - sideMusicPopout.cornerRadius
+                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && !sideMusicPopout.alignBottom && menuContainer.dynamicCornerRadius > 0.5
+                x: parent.width - menuContainer.dynamicCornerRadius
                 y: 0
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             Rectangle {
-                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && sideMusicPopout.alignBottom
+                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && sideMusicPopout.alignBottom && menuContainer.dynamicCornerRadius > 0.5
                 x: 0
-                y: parent.height - sideMusicPopout.cornerRadius
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                y: parent.height - menuContainer.dynamicCornerRadius
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             Rectangle {
-                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && sideMusicPopout.alignBottom
-                x: parent.width - sideMusicPopout.cornerRadius
-                y: parent.height - sideMusicPopout.cornerRadius
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                visible: sideMusicPopout.isSolid && !sideMusicPopout.isSideBar && sideMusicPopout.alignBottom && menuContainer.dynamicCornerRadius > 0.5
+                x: parent.width - menuContainer.dynamicCornerRadius
+                y: parent.height - menuContainer.dynamicCornerRadius
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             Rectangle {
-                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && !sideMusicPopout.alignRight
+                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && !sideMusicPopout.alignRight && menuContainer.dynamicCornerRadius > 0.5
                 x: 0
                 y: 0
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             Rectangle {
-                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && !sideMusicPopout.alignRight
+                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && !sideMusicPopout.alignRight && menuContainer.dynamicCornerRadius > 0.5
                 x: 0
-                y: parent.height - sideMusicPopout.cornerRadius
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                y: parent.height - menuContainer.dynamicCornerRadius
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             Rectangle {
-                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && sideMusicPopout.alignRight
-                x: parent.width - sideMusicPopout.cornerRadius
+                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && sideMusicPopout.alignRight && menuContainer.dynamicCornerRadius > 0.5
+                x: parent.width - menuContainer.dynamicCornerRadius
                 y: 0
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             Rectangle {
-                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && sideMusicPopout.alignRight
-                x: parent.width - sideMusicPopout.cornerRadius
-                y: parent.height - sideMusicPopout.cornerRadius
-                width: sideMusicPopout.cornerRadius
-                height: sideMusicPopout.cornerRadius
-                color: ThemeBackend.base
+                visible: sideMusicPopout.isSolid && sideMusicPopout.isSideBar && sideMusicPopout.alignRight && menuContainer.dynamicCornerRadius > 0.5
+                x: parent.width - menuContainer.dynamicCornerRadius
+                y: parent.height - menuContainer.dynamicCornerRadius
+                width: menuContainer.dynamicCornerRadius
+                height: menuContainer.dynamicCornerRadius
+                color: Qt.alpha(ThemeBackend.base, ThemeBackend.elementOpacity)
             }
 
             HoverHandler {

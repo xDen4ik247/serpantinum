@@ -38,7 +38,7 @@ Notification {
                 text: "󰋽"
                 font.family: ThemeBackend.fontFamily
                 font.pixelSize: s(22)
-                color: faceRoot.glass ? faceRoot.accentColor : ThemeBackend.subtext0
+                color: faceRoot.glass ? faceRoot.accentColor : faceRoot.bodyText
             }
         }
     ]
@@ -46,11 +46,12 @@ Notification {
     headerArea: [
         Text {
             Layout.fillWidth: true
+            horizontalAlignment: I18n.textAlignment
             text: model ? (model.displayName || model.appName || "System") : "System"
             font.family: ThemeBackend.fontFamily
             font.weight: Font.Bold
             font.pixelSize: s(11)
-            color: faceRoot.glass ? ThemeBackend.subtext1 : ThemeBackend.subtext0
+            color: faceRoot.glass ? ThemeBackend.subtext1 : faceRoot.bodyText
             elide: Text.ElideRight
         }
     ]
