@@ -84,21 +84,47 @@ The full list is one keypress away (**Mod+Shift+/**). The ones added by this edi
 
 ## Install
 
-On Arch Linux (or an Arch-based distribution), as your normal user:
+### Before you start
+
+- **Arch Linux** or an Arch-based distribution (anything with `pacman`). Other distributions are not supported.
+- Log in as **your normal user**, not root. The installer asks for your sudo password once, when it needs it.
+- Run it **in a terminal**, so it can show its menu and ask for the password.
+- An internet connection. The AI models are optional and large (see [AI extras](#ai-extras)).
+- The AI features need an Intel NPU (Core Ultra). Without one they are switched off and everything else works.
+
+### Option A: one command (quickest)
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/glass/install/glass.sh)"
 ```
 
-Options go after a `_`. For example, a dry run that only shows what would change:
+This clones the `glass` branch into `~/.cache/serp-glass` (it installs `git` first if needed) and runs the
+installer from there.
+
+To see what it would change without changing anything, put the options after a `_`:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/glass/install/glass.sh)" _ --dry-run --diff
 ```
 
-From a clone of the `glass` branch, run `install/glass.sh [options]`. Run it in a terminal: upstream's installer
-asks for your sudo password once (the installer keeps it fresh for the whole run). On a fresh install a menu asks
-what to install:
+### Option B: from a clone
+
+Use this if you want to read the code first or change it:
+
+```bash
+sudo pacman -S --needed git
+git clone --branch glass https://github.com/xDen4ik247/serpantinum.git ~/serpantinum
+cd ~/serpantinum
+install/glass.sh --dry-run      # optional: show what would change
+install/glass.sh                # install
+```
+
+When you install from a clone, `serp-glass` runs that clone's installer later, so update the clone yourself
+first with `git -C ~/serpantinum pull`.
+
+### Pick what to install
+
+On a first install a menu asks what you want. Type the numbers to switch items on or off (for example `3 5`), press Enter to continue, or `q` to quit:
 
 ```text
    Apps
@@ -113,31 +139,67 @@ what to install:
     9 [x] login screen  the glass SDDM greeter (your wallpaper + colours)
 ```
 
-Every choice is remembered. Later, `serp-glass` (installed in `~/.local/bin`) re-runs the installer with them:
-plain `serp-glass` updates everything, `serp-glass --menu` changes the choices, `serp-glass --ai off` removes the
-AI features and `serp-glass --ai on` brings them back.
+You can skip the menu and pass the choices on the command line instead. For example:
 
-The installer works in these steps:
+```bash
+install/glass.sh --yes --apps all --ai on --with dictation,ocr
+```
 
-1. **Base:** installs (or updates) plain upstream Serpantinum for niri with upstream's own installer modules, at
-   the commit this edition is built on. Upstream's `serpantinum update` keeps working.
-2. **Root:** extra packages from the official repos (git, Rust and the apps' build dependencies included), the
+Every choice is saved and reused on the next run.
+
+### After installing
+
+1. Log out and pick the **niri** session on the login screen, or reboot.
+2. Press **Mod+Shift+/** to see every shortcut.
+3. Optional: run `gcal-setup` to add a Google Calendar. Its secret address stays in `~/.config/gcal-sync/`.
+4. Optional: if you picked AI extras, the downloads run during the install. The AI keys do nothing until the model
+   is there.
+
+### Update, change, remove
+
+The installer puts `serp-glass` in `~/.local/bin`. It re-runs the installer with your saved choices:
+
+```bash
+serp-glass                       # update everything
+serp-glass --menu                # change what is installed
+serp-glass --apps glass-music,jp-quiz   # pick apps (all, none)
+serp-glass --ai off              # remove the AI features (serp-glass --ai on brings them back)
+serp-glass --with llm            # add an AI extra
+serp-glass --status              # show what is installed
+serp-glass --uninstall           # remove the glass layer; plain Serpantinum stays
+serp-glass --uninstall --purge   # same, and delete the downloaded models
+```
+
+An app you drop is removed, but its data (music library, mail, quiz progress) stays. Upstream's own
+`serpantinum update` keeps working too.
+
+### What the installer does
+
+It works in these steps (`--only` runs some of them):
+
+1. **base:** installs or updates plain upstream Serpantinum for niri with upstream's own installer modules, at
+   the commit this edition is built on.
+2. **root:** extra packages from the official repos (git, Rust and the apps' build dependencies included), the
    glass login screen and, on laptops, the battery tweaks.
-3. **Dotfiles:** everything in `home/`. Files that were already there are backed up to
+3. **dotfiles:** everything in `home/`. Files that were already there are backed up to
    `~/.config/serp-glass_backup/<date>/` first. Files of a feature you switched off are left out (and removed
-   again if the installer put them there); `~/.config/niri/user/output.kdl` is only created when missing, so
-   niri picks your displays' own modes.
-4. **Shell:** applies the glass changes to Serpantinum as `serp-tweaks` patches, which are re-applied after
+   again if the installer put them there). `~/.config/niri/user/output.kdl` is only created when missing, so
+   niri uses your displays' own modes.
+4. **shell:** applies the glass changes to Serpantinum as `serp-tweaks` patches, which are re-applied after
    every upstream update.
-5. **Apps:** builds and installs the apps you picked; an app you drop later is removed, its data stays.
-6. **Extras:** the AI features' models and runtimes you picked (only while the AI features are on).
-7. **Services:** installs systemd user units for whatever was installed. The LLM, notes and greeter units start
-   on demand.
+5. **apps:** builds and installs the apps you picked.
+6. **extras:** the AI models and runtimes you picked (only while the AI features are on).
+7. **services:** systemd user units for whatever was installed. The LLM, notes and greeter units start on
+   demand.
 
-Running it again is safe, because it only fixes what differs. A file you edited is never overwritten: the new
-version is written next to it as `<file>.glass-new`, and `--force` replaces it after making a backup. Your music,
-mail, notes, calendar links and quiz progress are never touched. Every change is recorded in
+Running it again is safe: it only fixes what differs. A file you edited is never overwritten. The new version is
+written next to it as `<file>.glass-new`, and `--force` replaces it after making a backup. Your music, mail,
+notes, calendar links and quiz progress are never touched. Every change is recorded in
 `~/.local/state/serp-glass/`.
+
+### All options
+
+Run `install/glass.sh --help` (or `serp-glass --help`) for the full list.
 
 | Option | What it does |
 |---|---|
@@ -146,17 +208,19 @@ mail, notes, calendar links and quiz progress are never touched. Every change is
 | `--menu`, `--no-menu` | Show the choices menu (it shows by itself on a first install in a terminal), or never |
 | `--apps LIST` | `glass-music`, `glass-mail`, `jp-quiz`, `all` or `none` (default: Glass Music + Glass Mail) |
 | `--ai on\|off` | The AI features (default: on with an Intel NPU). `off` installs nothing AI: no scripts, services, keybinds or NPU packages |
-| `--with LIST` | The AI features' heavy parts (below) |
+| `--with LIST` | The AI features' heavy parts (see below) |
 | `--no-sddm`, `--power auto\|yes\|no`, `--no-shell-rc` | Skip the login screen, the battery tweaks or the zsh files |
 | `--vault NAME` | Your Obsidian vault in `~/Obsidian` |
+| `--force` | Also replace files you edited (backed up first) |
 | `--only STEPS` | Run only some steps: `base,root,dotfiles,shell,apps,extras,services` |
 | `--skip-base`, `--reinstall-base`, `--upstream latest`, `--upstream-menu` | Control the upstream base install |
 | `--wallpapers few\|full\|none` | Upstream's wallpaper pack (default: a few) |
 | `--status` | Show what is installed |
 | `--uninstall [--purge]` | Remove the glass layer (upstream stays); `--purge` also deletes downloaded models |
 
-**AI extras.** The default install downloads no models. The desktop works without them; with the AI features on,
-their keys just do nothing until the model is there.
+### AI extras
+
+The default install downloads no models. The desktop works without them. Add them with `--with` (or in the menu):
 
 | Extra | What you get | Cost |
 |---|---|---|
@@ -167,11 +231,15 @@ their keys just do nothing until the model is there.
 | `all` | All of the above | |
 
 All downloads are pinned to exact upstream revisions and checked against their sha256. With `--ai off` the
-downloaded models stay on disk (listed at the end of the run) so `--ai on` doesn't fetch them again;
+downloaded models stay on disk (listed at the end of the run), so `--ai on` doesn't fetch them again.
 `--uninstall --purge` deletes them.
 
-After the first install, log out and pick the niri session (or reboot). Press **Mod+Shift+/** to see every
-shortcut, and run `gcal-setup` to add a Google Calendar. Its secret address stays in `~/.config/gcal-sync/`.
+### Troubleshooting
+
+- **"run this as your normal user, not root"**: don't use `sudo` for the installer itself.
+- **"this installer is for Arch Linux…"**: `pacman` was not found; other distributions are not supported.
+- **A file ends in `.glass-new`**: you had edited it. Merge the two by hand, or re-run with `--force`.
+- **An app still looks old after an update**: close it and open it again; a running app keeps the old code.
 
 ## Repository layout
 
