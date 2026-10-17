@@ -58,7 +58,10 @@ local model. [apps/glass-mail](apps/glass-mail/)
 
 **JP Quiz** (Mod+J) is an endless adaptive Japanese quiz from N5 to N3. It covers particles, conjugation,
 grammar, word order, kanji and vocabulary, all built from real example sentences, and picks each next
-question so you get about 75 % right. Answers are explained with JMdict glosses. [apps/jp-quiz](apps/jp-quiz/)
+question so you get about 75 % right. Answers are explained with JMdict glosses. It also teaches about 6 000
+everyday words beyond the JLPT lists (slang, tech, brands, cars, food), and a **Rank** tab (R) shows how
+much of real Japanese you know, from N5 to N1 and the 常用漢字, measured against the full lists, with a quick
+placement test and an automatic daily goal. [apps/jp-quiz](apps/jp-quiz/)
 
 ## Shortcuts
 
@@ -93,54 +96,79 @@ Options go after a `_`. For example, a dry run that only shows what would change
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/glass/install/glass.sh)" _ --dry-run --diff
 ```
 
-From a clone of the `glass` branch, run `install/glass.sh [options]`. The installer works in these steps:
+From a clone of the `glass` branch, run `install/glass.sh [options]`. Run it in a terminal: upstream's installer
+asks for your sudo password once (the installer keeps it fresh for the whole run). On a fresh install a menu asks
+what to install:
+
+```text
+   Apps
+    1 [x] Glass Music   music library player: synced lyrics, My Vibe, Yandex Music (Mod+Shift+M)
+    2 [x] Glass Mail    mail for any IMAP account, HTML mails in a WebKitGTK view (Mod+I)
+    3 [ ] JP Quiz       adaptive Japanese trainer; builds its question bank: ~80 MB download, 5–10 min (Mod+J)
+   AI features (local, on the Intel NPU/GPU; Intel NPU found)
+    4 [x] AI features   assistant, dictation, OCR, notes: keys, scripts, services. Off = nothing AI is installed
+    5   [ ] dictation   Whisper speech-to-text, Mod+Z: ~1.2 GB
+    …
+   Desktop
+    9 [x] login screen  the glass SDDM greeter (your wallpaper + colours)
+```
+
+Every choice is remembered. Later, `serp-glass` (installed in `~/.local/bin`) re-runs the installer with them:
+plain `serp-glass` updates everything, `serp-glass --menu` changes the choices, `serp-glass --ai off` removes the
+AI features and `serp-glass --ai on` brings them back.
+
+The installer works in these steps:
 
 1. **Base:** installs (or updates) plain upstream Serpantinum for niri with upstream's own installer modules, at
    the commit this edition is built on. Upstream's `serpantinum update` keeps working.
-2. **Root (one password prompt):** extra packages from the official repos, the glass login screen and, on
-   laptops, the battery tweaks.
+2. **Root:** extra packages from the official repos (git, Rust and the apps' build dependencies included), the
+   glass login screen and, on laptops, the battery tweaks.
 3. **Dotfiles:** everything in `home/`. Files that were already there are backed up to
-   `~/.config/serp-glass_backup/<date>/` first.
+   `~/.config/serp-glass_backup/<date>/` first. Files of a feature you switched off are left out (and removed
+   again if the installer put them there); `~/.config/niri/user/output.kdl` is only created when missing, so
+   niri picks your displays' own modes.
 4. **Shell:** applies the glass changes to Serpantinum as `serp-tweaks` patches, which are re-applied after
    every upstream update.
-5. **Apps and helpers:** installs Glass Music (plus JP Quiz with `--with jpquiz`) and the Rust helpers. Without
-   cargo, the Python/bash originals are used instead.
-6. **Services:** installs systemd user units for whatever was installed. The LLM, notes and greeter units start
+5. **Apps:** builds and installs the apps you picked; an app you drop later is removed, its data stays.
+6. **Extras:** the AI features' models and runtimes you picked (only while the AI features are on).
+7. **Services:** installs systemd user units for whatever was installed. The LLM, notes and greeter units start
    on demand.
 
 Running it again is safe, because it only fixes what differs. A file you edited is never overwritten: the new
 version is written next to it as `<file>.glass-new`, and `--force` replaces it after making a backup. Your music,
-notes, calendar links and quiz progress are never touched. Every change is recorded in
+mail, notes, calendar links and quiz progress are never touched. Every change is recorded in
 `~/.local/state/serp-glass/`.
 
 | Option | What it does |
 |---|---|
 | `--dry-run` (`-n`), `--diff` | Show what would change (with diffs) and change nothing |
-| `--yes` (`-y`) | Don't ask questions |
-| `--with LIST` | Opt-in extras (below); remembered for later runs |
+| `--yes` (`-y`) | Don't ask questions (saved choices, else the defaults) |
+| `--menu`, `--no-menu` | Show the choices menu (it shows by itself on a first install in a terminal), or never |
+| `--apps LIST` | `glass-music`, `glass-mail`, `jp-quiz`, `all` or `none` (default: Glass Music + Glass Mail) |
+| `--ai on\|off` | The AI features (default: on with an Intel NPU). `off` installs nothing AI: no scripts, services, keybinds or NPU packages |
+| `--with LIST` | The AI features' heavy parts (below) |
 | `--no-sddm`, `--power auto\|yes\|no`, `--no-shell-rc` | Skip the login screen, the battery tweaks or the zsh files |
 | `--vault NAME` | Your Obsidian vault in `~/Obsidian` |
+| `--only STEPS` | Run only some steps: `base,root,dotfiles,shell,apps,extras,services` |
 | `--skip-base`, `--reinstall-base`, `--upstream latest`, `--upstream-menu` | Control the upstream base install |
 | `--wallpapers few\|full\|none` | Upstream's wallpaper pack (default: a few) |
 | `--status` | Show what is installed |
 | `--uninstall [--purge]` | Remove the glass layer (upstream stays); `--purge` also deletes downloaded models |
 
-**Extras.** The default install downloads no models. The desktop works without them, and the AI keys just do
-nothing.
+**AI extras.** The default install downloads no models. The desktop works without them; with the AI features on,
+their keys just do nothing until the model is there.
 
 | Extra | What you get | Cost |
 |---|---|---|
+| `dictation` | Whisper dictation (Mod+Z) on the NPU | ~1.2 GB |
+| `ocr` | Japanese OCR (Mod+X) on the NPU, with the JMdict popup | ~1 GB kept, ~2.5 GB temporary |
 | `llm` | Local LLM on the Intel Arc GPU (assistant, calendar capture, OCR translation): OpenVINO + llama.cpp built locally + Qwen3.5-4B | ~3.2 GB download, 10–20 min build, ~9 GB RAM while running |
 | `notes` | Obsidian AI notes (Mod+N); needs `llm` | 640 MB |
-| `dictation` | Whisper dictation (Mod+Z) on the NPU | ~1.2 GB |
-| `ocr` | Japanese OCR (Mod+X) on the NPU; includes `jmdict` | ~1 GB kept, ~2.5 GB temporary |
-| `jmdict` | JMdict dictionary for OCR and Anki cards | 22 MB |
-| `jpquiz` | JP Quiz (Mod+J); the question bank is built locally | ~80 MB download, a few minutes |
 | `all` | All of the above | |
 
-All downloads are pinned to exact upstream revisions and checked against their sha256.
-
-Glass Mail is not part of the installer yet. Install it from a clone with `apps/glass-mail/install.sh`.
+All downloads are pinned to exact upstream revisions and checked against their sha256. With `--ai off` the
+downloaded models stay on disk (listed at the end of the run) so `--ai on` doesn't fetch them again;
+`--uninstall --purge` deletes them.
 
 After the first install, log out and pick the niri session (or reboot). Press **Mod+Shift+/** to see every
 shortcut, and run `gcal-setup` to add a Google Calendar. Its secret address stays in `~/.config/gcal-sync/`.
@@ -165,12 +193,12 @@ The niri config keeps upstream's copies in `~/.config/niri/config/` (never edite
 ## Development
 
 ```bash
-git fetch upstream && git rebase upstream/master        # on branch glass
+git fetch upstream && git merge upstream/master         # on branch glass
 tools/sync-from-system.sh && tools/check-secrets.sh && git add -p
 ```
 
-After a rebase, set `G_UPSTREAM_BASE` in `install/glass.sh` to the new upstream commit, so the installer builds
-its patches against it. Each app has its own tests, including differential tests between the Rust backends and
+After merging upstream, set `G_UPSTREAM_BASE` in `install/glass.sh` to the upstream commit you merged, so the
+installer builds its patches against it. Each app has its own tests, including differential tests between the Rust backends and
 the original Python ones (see `apps/*/tests/` and `rust/tests/`).
 
 ## Credits and license

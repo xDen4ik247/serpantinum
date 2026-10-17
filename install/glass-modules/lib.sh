@@ -103,14 +103,26 @@ g_backup() {
 
 # ---------------------------------------------------------------- templating
 # The repo stores paths as /home/user and the Obsidian vault as "Vault" (anonymised). Render them for this user.
+# @GLASS_OUTPUT@ becomes this machine's main display (the built-in panel if there is one, e.g. eDP-1).
 g_sed_esc() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
 
+g_primary_output() {
+    local c n
+    for c in /sys/class/drm/card*-eDP-* /sys/class/drm/card*-*; do
+        [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+        n="${c##*/}"; printf '%s\n' "${n#card*-}"; return 0
+    done
+    echo eDP-1
+}
+
 g_render() {   # src -> stdout
-    local v h
+    local v h o
     v=$(g_sed_esc "${G_VAULT:-Vault}")
     h=$(g_sed_esc "$HOME")
+    [ -n "${G_OUTPUT:-}" ] || G_OUTPUT=$(g_primary_output)
+    o=$(g_sed_esc "$G_OUTPUT")
     if grep -qI . "$1" 2>/dev/null || [ ! -s "$1" ]; then
-        sed -e "s|/home/user/|$h/|g" -e "s|/home/user\b|$h|g" \
+        sed -e "s|/home/user/|$h/|g" -e "s|/home/user\b|$h|g" -e "s|@GLASS_OUTPUT@|$o|g" \
             -e "s|Obsidian/Vault\b|Obsidian/$v|g" -e "s|vault=Vault&|vault=$v\&|g" "$1"
     else
         cat "$1"   # binary (compiled shaders): as is

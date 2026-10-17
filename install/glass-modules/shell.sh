@@ -156,9 +156,12 @@ g_shell_sync() {
 }
 
 # Remove a file we installed, if it's still exactly what we wrote. Restores the pre-glass original if we backed one up.
+#   g_remove_owned <rel> [adopted-too]   adopted-too: also remove a file that was there (identical) before glass
+#                                        (a feature you switched off: its files go even if you had copied them in)
 g_remove_owned() {
     local rel="$1" dst="$HOME/$1" bak="${G_MAN_BAK[$1]:--}"
     if [ ! -e "$dst" ]; then g_manifest_del "$rel"; return 0; fi
+    [ "$bak" = adopted ] && [ -n "${2:-}" ] && bak=-
     if [ "$bak" = adopted ]; then   # it was there (identical) before glass ran: not ours to remove
         G_COUNT[left]=$((G_COUNT[left] + 1))
         g_detail "left      ~/$rel (was there before the installer)"

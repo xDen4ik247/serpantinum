@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Extras: the heavy, opt-in parts. Nothing here runs unless asked for with --with (the choice is remembered,
-# so a later plain re-run keeps them up to date). Without them the desktop works and the features that need
-# them stay quiet: their units are never enabled, their keys do nothing.
+# Extras: the heavy, opt-in parts of the AI features (local, on the Intel NPU/GPU). Nothing here runs unless
+# asked for with --with or in the menu (the choice is remembered, so a later plain re-run keeps them up to
+# date), and only while the AI features are on (--ai on|off). Without them the desktop works and the
+# features that need them stay quiet: their units are never enabled.
+#
+# AI off (--ai off) installs nothing AI at all: no scripts, units, keybinds or NPU packages, and removes
+# what glass installed for them before (downloaded models stay, see --uninstall --purge). Your extras choice
+# is kept, so --ai on later brings everything back.
 #
 # Every download is pinned (exact upstream revision; sha256 for every large file) and resumable.
 # Builds and downloads are cached in ~/.cache/serp-glass-build (safe to delete afterwards).
 
-G_EXTRAS=(llm notes dictation ocr jmdict jpquiz)
+G_EXTRAS=(llm notes dictation ocr jmdict)
 declare -A G_EXTRA_INFO=(
     [llm]="local LLM on the Intel Arc GPU: OpenVINO 2026.4.1 runtime + llama.cpp built here + Qwen3.5-4B (Q4_K_M) — download ~3.2 GB, disk ~3.5 GB, build ~10–20 min; needs ~9 GB free RAM while it runs"
     [notes]="Obsidian AI notes (Mod+N): Qwen3-Embedding-0.6B — download 640 MB (needs llm)"
     [dictation]="Whisper dictation (Mod+Z): Python env ~/.venvs/npu (~700 MB) + Whisper small for OpenVINO (480 MB)"
     [ocr]="Japanese OCR (Mod+X): ~/.venvs/npu (~700 MB) + PP-OCRv6 (30 MB) + manga-ocr exported here (temporary ~2.5 GB of tools and weights, 215 MB kept) + JMdict"
-    [jmdict]="JMdict dictionary for OCR and Anki cards — download 22 MB, 55 MB on disk"
-    [jpquiz]="JP Quiz app (Mod+J): builds its question bank from Tatoeba/JMdict — download ~80 MB, ~5–10 min"
+    [jmdict]="JMdict dictionary for the OCR popup — download 22 MB, 55 MB on disk"
 )
 declare -A G_EXTRA_NEEDS=([notes]=llm [ocr]=jmdict)
 
@@ -45,6 +49,9 @@ G_OCR_PIP=(opencv-python-headless pyclipper fugashi unidic-lite pyyaml pillow)
 G_FETCH="$G_ROOT/install/glass-tools/fetch.py"
 
 g_vault_dir() { printf '%s/Obsidian/%s' "$HOME" "${G_VAULT:-Vault}"; }
+
+# The AI features as a whole (scripts, units, keybinds, extras). G_AI=on|off, remembered as AI in the state.
+g_ai_on() { [ "${G_AI:-on}" = on ]; }
 g_has_intel_gpu() { lspci -nn 2>/dev/null | grep -iE 'VGA|Display|3D' | grep -qi 'Intel'; }
 
 g_npu_venv_has() {   # python modules (directories or single-file modules) present in ~/.venvs/npu
@@ -65,7 +72,6 @@ g_extra_ready() {
                    [ -f "$G_OCR_DIR/ppocrv6_det_small/inference.onnx" ] && [ -f "$G_OCR_DIR/ppocrv6_rec_small/inference.onnx" ] &&
                    [ -f "$G_OCR_DIR/manga_ocr_base/ov/encoder.xml" ] && [ -f "$G_OCR_DIR/manga_ocr_base/ov/decoder_step_b1_t128.xml" ] ;;
         jmdict)    [ -s "$G_JMDICT_DB" ] ;;
-        jpquiz)    [ -s "$HOME/.local/share/jp-quiz/content.db" ] && [ -d "$HOME/.local/share/jp-quiz/app" ] ;;
         *) return 1 ;;
     esac
 }
@@ -74,6 +80,7 @@ g_extra_ready() {
 g_extras_resolve() {
     local e changed=1
     if [ "${G_WITH[all]:-0}" = 1 ]; then for e in "${G_EXTRAS[@]}"; do G_WITH[$e]=1; done; unset 'G_WITH[all]'; fi
+    unset 'G_WITH[jpquiz]'   # an app now (--apps); glass.sh maps --with jpquiz there
     while [ $changed = 1 ]; do
         changed=0
         for e in "${!G_WITH[@]}"; do
@@ -84,16 +91,19 @@ g_extras_resolve() {
     done
 }
 
-g_extras_selected() { local e; for e in "${G_EXTRAS[@]}"; do [ "${G_WITH[$e]:-0}" = 1 ] && printf '%s ' "$e"; done; }
+# Extras to install in this run (none while the AI features are off).
+g_extras_selected() { g_ai_on || return 0; g_extras_chosen; }
+# Extras chosen (remembered even while the AI features are off).
+g_extras_chosen() { local e; for e in "${G_EXTRAS[@]}"; do [ "${G_WITH[$e]:-0}" = 1 ] && printf '%s ' "$e"; done; return 0; }
 
 # Packages the selected extras need (added to the one root step).
 g_extras_pkgs() {
+    g_ai_on || return 0
     [ "${G_WITH[llm]:-0}" = 1 ] && ! g_extra_ready llm &&
         printf '%s\n' cmake ninja gcc git opencl-headers opencl-clhpp ocl-icd intel-compute-runtime
     if [ "${G_WITH[dictation]:-0}" = 1 ] || [ "${G_WITH[ocr]:-0}" = 1 ]; then
         g_has_npu && printf '%s\n' intel-npu-driver level-zero-loader
     fi
-    [ "${G_WITH[jpquiz]:-0}" = 1 ] && printf '%s\n' unzip
     return 0
 }
 
@@ -101,6 +111,11 @@ g_fetch() { python3 -I "$G_FETCH" "$@"; }
 
 g_extras_install() {
     local e any=0
+    if ! g_ai_on; then
+        g_info "AI features are off (--ai on brings them back$( [ -n "$(g_extras_chosen)" ] && echo ", with: $(g_extras_chosen | xargs)"))"
+        g_extras_kept_note
+        return 0
+    fi
     for e in llm notes dictation jmdict ocr; do
         [ "${G_WITH[$e]:-0}" = 1 ] || continue
         any=1
@@ -258,6 +273,17 @@ g_extras_uninstall() {
         g_note "kept the AI models/builds (delete by hand, or re-run with --uninstall --purge for the ones glass created):"
         for p in "${list[@]}"; do g_note "    $p"; done
     fi
+}
+
+# AI off: the downloaded models/builds stay (they are big and --ai on reuses them); say where they are.
+g_extras_kept_note() {
+    local p list=()
+    while IFS= read -r p; do
+        [ -e "$p" ] && [ "$p" != "$G_BUILD" ] && [ "$p" != "$HOME/.venvs/jp-quiz" ] && list+=("$(du -sh "$p" 2>/dev/null | cut -f1)	${p/#$HOME/\~}")
+    done < <(g_extras_paths)
+    [ ${#list[@]} -gt 0 ] || return 0
+    g_note "AI models/builds kept for --ai on (or delete them: glass.sh --uninstall --purge removes everything glass downloaded):"
+    for p in "${list[@]}"; do g_note "    $p"; done
 }
 
 # Remember what the extras created (so --purge never deletes something that was there before glass).

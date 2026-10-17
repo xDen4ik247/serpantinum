@@ -36,15 +36,19 @@ g_venvs_install() {
 # Prints "unit<TAB>reason" for every unit glass wants enabled on this machine right now.
 g_units_wanted() {
     printf '%s\t%s\n' fcitx5.service "input method (EN/RU/JP)"
+    printf '%s\t%s\n' fcitx-jp-gate.service "Alt+Shift: EN <-> RU, the third quick switch = JP"
     printf '%s\t%s\n' mpd.service "music daemon" mpd-mpris.service "music: media keys + bar player"
     printf '%s\t%s\n' music-smart.service "music: smart shuffle + history"
     printf '%s\t%s\n' gcal-sync.timer "agenda refresh (Google Calendar + Obsidian; idle without a calendar)"
     printf '%s\t%s\n' anki-queue-flush.timer "sends queued Anki notes (no-op when empty)"
     g_has_battery && printf '%s\t%s\n' power-mode.service "battery-aware power switch (laptop)"
+    g_has_battery && [ -e /sys/class/power_supply/BAT0/charge_control_end_threshold ] &&
+        printf '%s\t%s\n' glass-smart-charge.service "smart charging: holds 80 % on AC, 100 % when you'll need it"
     g_unit_shipped sleep-guard.service &&
         printf '%s\t%s\n' sleep-guard.service "locks before sleep, wakes the screens after resume"
     [ -d /var/lib/serp-greeter ] && [ -w /var/lib/serp-greeter ] &&
         printf '%s\t%s\n' greeter-sync.path "copies wallpaper + palette to the login screen"
+    g_ai_on || return 0         # AI off: none of its units (an earlier run's are disabled below)
     g_extra_ready llm       && printf '%s\t%s\n' npu-llm.socket "local LLM, started on the first request"
     g_extra_ready dictation && printf '%s\t%s\n' aidict.service "Whisper dictation daemon (Mod+Z)"
     g_extra_ready ocr       && printf '%s\t%s\n' npu-ocr.service "Japanese OCR daemon (Mod+X)"
@@ -58,16 +62,18 @@ g_unit_shipped() { [ -f "$G_ROOT/home/.config/systemd/user/$1" ]; }
 
 # Units that belong to the graphical session: enabled now, started by the next login (starting them over
 # ssh or a tty would fail).
-G_UNITS_SESSION=" fcitx5.service power-mode.service sleep-guard.service "
+G_UNITS_SESSION=" fcitx5.service fcitx-jp-gate.service power-mode.service sleep-guard.service "
 
 # Units we may have enabled in an earlier run (for --uninstall and for features that went away).
-G_UNITS_ALL=(fcitx5.service mpd.service mpd-mpris.service music-smart.service gcal-sync.timer anki-queue-flush.timer
-             power-mode.service sleep-guard.service greeter-sync.path npu-llm.socket aidict.service npu-ocr.service ai-notes-watch.service)
+G_UNITS_ALL=(fcitx5.service fcitx-jp-gate.service mpd.service mpd-mpris.service music-smart.service gcal-sync.timer anki-queue-flush.timer
+             power-mode.service glass-smart-charge.service sleep-guard.service greeter-sync.path npu-llm.socket aidict.service npu-ocr.service ai-notes-watch.service)
 
 # Scripts whose running daemon must restart when they change.
 declare -A G_UNIT_OF=(
+    [.local/bin/fcitx-jp-gate]=fcitx-jp-gate.service
     [.local/bin/music-smart]=music-smart.service
     [.local/bin/power-mode]=power-mode.service
+    [.local/bin/glass-smart-charge]=glass-smart-charge.service
     [.local/bin/sleep-guard]=sleep-guard.service
     [.local/share/aifeat/dictd.py]=aidict.service
     [.local/share/npu-ocr/jocr/server.py]=npu-ocr.service

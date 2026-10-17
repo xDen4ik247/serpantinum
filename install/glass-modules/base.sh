@@ -18,6 +18,29 @@ G_UP_VERSION_FILE="$HOME/.local/state/serpantinum/version"
 
 g_installed_commit() { sed -n 's/^SERPANTINUM_COMMIT="\(.*\)"$/\1/p' "$G_UP_VERSION_FILE" 2>/dev/null; }
 
+# Upstream's bootstrap builds the AUR helper with `makepkg -si`, and makepkg installs with `sudo -k`, which
+# ignores the sudo session this run already has and asks for the password again in the middle of the base
+# step. So build yay-bin here (makepkg without -i) and install it with that session; upstream then finds yay.
+g_aur_helper() {
+    g_have yay || g_have paru && return 0
+    local d="$G_TMP/yay-bin" log="$G_TMP/yay-build.log" pkg
+    g_info "building the AUR helper yay (upstream installs a few packages from the AUR)"
+    pacman -T base-devel git >/dev/null 2>&1 || sudo pacman -S --needed --noconfirm base-devel git >/dev/null || return 1
+    git clone -q --depth 1 https://aur.archlinux.org/yay-bin.git "$d" 2>"$log" ||
+        { g_warn "can't reach the AUR (aur.archlinux.org): upstream's AUR packages will be missing; re-run later"; return 1; }
+    (cd "$d" && makepkg --noconfirm >>"$log" 2>&1) || { tail -n 10 "$log" | sed 's/^/         /'; g_warn "yay didn't build (log above)"; return 1; }
+    pkg=$(ls "$d"/yay-bin-[0-9]*.pkg.tar.* 2>/dev/null | head -n1)
+    [ -n "$pkg" ] && sudo pacman -U --needed --noconfirm "$pkg" >/dev/null && g_ok "yay installed" || { g_warn "can't install $pkg"; return 1; }
+}
+
+# True when upstream's bootstrap_installer_deps has work to do: multilib still commented out, no AUR
+# helper, or one of its packages missing.
+g_upstream_bootstrap_needed() {
+    grep -q '^#\[multilib\]' /etc/pacman.conf 2>/dev/null && return 0
+    g_have yay || g_have paru || return 0
+    ! pacman -T fzf jq curl git pciutils unzip fontconfig base-devel >/dev/null 2>&1
+}
+
 # Make sure the upstream clone exists and contains $1 (fetches if needed). Never moves it in dry-run.
 g_upstream_cache() {
     local want="$1"
@@ -88,7 +111,7 @@ g_base_plan() {
 g_base_describe() {
     local short="${G_UPSTREAM_BASE:0:7}"
     case "$G_BASE_ACTION" in
-        skip)      echo "skipped (--skip-base)" ;;
+        skip)      echo "skipped ($( [ "${G_SKIP_BASE:-0}" = 1 ] && echo "--skip-base" || echo "--only"))" ;;
         keep)      echo "keep the installed upstream Serpantinum (${G_BASE_CURRENT:-?}; glass base is $short)" ;;
         install)   echo "install upstream Serpantinum at $short with upstream's installer modules (state: $G_BASE_STATE)" ;;
         update)    echo "update upstream Serpantinum ${G_BASE_CURRENT:-?} -> ${G_BASE_TARGET:0:7} (upstream update path)" ;;
@@ -108,6 +131,7 @@ g_base_run() {
     # Point the clone at the target exactly like upstream's own `git reset --hard origin/HEAD` does.
     git -C "$G_UP_CACHE" reset -q --hard "$target" || { g_err "can't check out $target in $G_UP_CACHE"; return 1; }
     g_info "upstream clone at $(git -C "$G_UP_CACHE" log --oneline -1)"
+    g_aur_helper || true
 
     (
         set -e
@@ -119,12 +143,16 @@ g_base_run() {
         export SERPANTINUM_DIR="$PROJECT_ROOT/src"
         export I18N_DIR="$PROJECT_ROOT/src/assets/languages"
         source "$PROJECT_ROOT/src/scripts/i18n.sh"
+        # pm.sh (package-manager layer, upstream v2.2.10+) must come before deps.sh; older bases don't have it
+        [ -f "$MODULES_DIR/pm.sh" ] && source "$MODULES_DIR/pm.sh"
         for m in deps state migrate deploy version config service ui; do source "$MODULES_DIR/$m.sh"; done
 
         G_TEL_ID=$(get_telemetry_id)   # upstream keeps its anonymous install id in the version file
         ENABLE_TELEMETRY="${G_TELEMETRY:-false}"
         check_supported_os
-        bootstrap_installer_deps
+        # Upstream's bootstrap runs `sudo pacman -Sy` for base-devel/pciutils/fontconfig on every run (it
+        # looks for them as commands): skip it when everything it would set up is already there.
+        if g_upstream_bootstrap_needed; then bootstrap_installer_deps; else suppress_tty_sleep 2>/dev/null || true; fi
 
         INSTALL_STATE="$G_BASE_STATE"   # decided before upstream's scripts could create the version file (see g_base_plan)
         OLD_VERSION=$(get_installed_version)
@@ -141,7 +169,7 @@ g_base_run() {
             SELECTED_COMPOSITORS=(niri)
             OPT_SDDM="${G_SDDM:-true}"
             REPLACE_DM="${G_REPLACE_DM:-false}"
-            SDDM_WAYLAND=false
+            SDDM_WAYLAND="${PM_SDDM_WAYLAND_DEFAULT:-false}"
             INSTALL_FULL_WALLPAPERS=$([ "${G_WALLPAPERS:-few}" = full ] && echo true || echo false)
             IS_REINSTALL=$([ "$G_BASE_ACTION" = reinstall ] && echo true || echo false)
         fi

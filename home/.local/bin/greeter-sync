@@ -14,14 +14,25 @@
 # Machine-local greeter options (never in the repo) go in
 # ~/.config/serp-glass/greeter.conf as KEY=VALUE lines; supported:
 #   deviceLabel=My Laptop     top-right label instead of the hostname
+#   resolution=2560x1600      size of the greeter images (default: the main display's own mode)
 set -euo pipefail
 
 OUT="${GREETER_SYNC_DIR:-/var/lib/serp-greeter}"
-W=2880 H=1800                       # panel resolution (X11 greeter renders 1:1)
 CACHE="$HOME/.cache/serpantinum/wallpaper"
 STATE="$HOME/.local/state/serpantinum"
 SETTINGS="$HOME/.config/serpantinum/settings.json"
 LOCAL="${XDG_CONFIG_HOME:-$HOME/.config}/serp-glass/greeter.conf"
+
+# Main display (built-in panel first) and its preferred mode: the X11 greeter renders 1:1 at that size.
+OUTPUT="" W=1920 H=1080
+for c in /sys/class/drm/card*-eDP-* /sys/class/drm/card*-*; do
+    [[ "$(cat "$c/status" 2>/dev/null)" == connected ]] || continue
+    [[ "$(head -n1 "$c/modes" 2>/dev/null)" =~ ^([0-9]+)x([0-9]+) ]] || continue
+    W="${BASH_REMATCH[1]}" H="${BASH_REMATCH[2]}" OUTPUT="${c##*/}"; OUTPUT="${OUTPUT#card*-}"
+    break
+done
+res="$(sed -n 's/^[[:space:]]*resolution[[:space:]]*=[[:space:]]*\([0-9]\{3,5\}x[0-9]\{3,5\}\).*/\1/p' "$LOCAL" 2>/dev/null | tail -n1)"
+[[ -n "$res" ]] && W="${res%x*}" H="${res#*x}"
 FORCE=0; [[ "${1:-}" == "--force" ]] && FORCE=1
 
 if [[ ! -d "$OUT" || ! -w "$OUT" ]]; then
@@ -31,7 +42,7 @@ fi
 
 # ---- wallpaper -------------------------------------------------------------
 wp=""
-for f in "$CACHE"/current_eDP-1 "$CACHE"/current_*; do
+for f in ${OUTPUT:+"$CACHE/current_$OUTPUT"} "$CACHE"/current_*; do
     [[ -f "$f" && "$f" != *_name && "$f" != *.json && "$f" != *.png && "$f" != *session* ]] || continue
     wp="$(head -n1 "$f")"; break
 done
@@ -39,7 +50,7 @@ case "${wp,,}" in
     *.png|*.jpg|*.jpeg|*.webp|*.bmp|*.gif) ;;
     *) # video / unknown: use the shell's poster snapshot
        wp=""
-       for s in "$CACHE"/current_wallpaper_eDP-1.png "$CACHE"/current_wallpaper.png; do
+       for s in ${OUTPUT:+"$CACHE/current_wallpaper_$OUTPUT.png"} "$CACHE"/current_wallpaper.png; do
            [[ -f "$s" ]] && { wp="$s"; break; }
        done ;;
 esac

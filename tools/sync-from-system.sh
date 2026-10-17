@@ -27,7 +27,8 @@ echo ":: Serpantinum source (installed tree -> src/)"
 
 echo ":: dotfiles -> home/"
 copy .config/niri/config.kdl
-copy .config/niri/user
+# output.kdl is this machine's displays; the repo keeps a neutral starting point the installer seeds once
+"${RS[@]}" --exclude=output.kdl "$H/.config/niri/user/" "$R/home/.config/niri/user/"
 rm -f "$R"/home/.config/niri/user/*.png   # screenshots/stickers kept next to the config, never published
 copy .config/kitty/user.conf
 copy .config/fcitx5/profile
@@ -69,13 +70,15 @@ mkdir -p "$R/home/.config/systemd/user"
 for u in "$H"/.config/systemd/user/*.service "$H"/.config/systemd/user/*.timer "$H"/.config/systemd/user/*.path "$H"/.config/systemd/user/*.socket; do
     [ -f "$u" ] && "${RS[@]}" "$u" "$R/home/.config/systemd/user/"
 done
+# the installer fills in each machine's main display; keep the placeholder in the repo
+sed -i 's|^\(PathChanged=%h/.cache/serpantinum/wallpaper/current_\).*$|\1@GLASS_OUTPUT@|' "$R/home/.config/systemd/user/greeter-sync.path"
 copy .config/systemd/user/mpd.service.d
 copy .config/systemd/user/mpd-mpris.service.d
 
 echo ":: scripts (~/.local/bin, our own only)"
 # niri-autofit, niri-dwt-toggle, sleep-guard, power-mode and the serp-* helpers are Rust binaries now:
 # their sources live in rust/ (the old Python/bash versions in rust/reference/), nothing to copy.
-for s in fcitx-layout ime-fix ime-mode serp-tweaks niri-keys \
+for s in fcitx-layout fcitx-jp-gate ime-fix ime-mode serp-tweaks serp-glass glass-smart-charge niri-keys \
          music-ctl music-player music-smart \
          gcal-setup gcal-sync \
          ai ai-chat aidict aipanel ai-notes ai-notes-panel anki-add jocr \

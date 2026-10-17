@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# serp-glass — update the glass edition, or change what it installs, by re-running its installer
+# (install/glass.sh) with the choices you made last time.
+#
+#   serp-glass                  update everything (same apps / AI features / options as last time)
+#   serp-glass --menu           pick apps, AI features and options again
+#   serp-glass --ai off|on      AI features (local, on the Intel NPU/GPU) off, or back on
+#   serp-glass --apps LIST      glass-music,glass-mail,jp-quiz (all, none)
+#   serp-glass --status         what is installed
+#   serp-glass --help           every installer option (--dry-run, --only, --uninstall, …)
+#
+# Installed from a clone of the repo: that clone's installer runs as it is (pull it yourself). Installed
+# with the curl one-liner: the installer's own clone (~/.cache/serp-glass) is brought up to date first.
+set -uo pipefail
+state="${XDG_STATE_HOME:-$HOME/.local/state}/serp-glass/state"
+get() { sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$state" 2>/dev/null | tail -n1; }
+
+clone="${XDG_CACHE_HOME:-$HOME/.cache}/serp-glass"
+src="$(get SOURCE)"
+url="$(get REPO_URL)"; url="${url:-https://github.com/xDen4ik247/serpantinum.git}"
+ref="$(get REF)"; ref="${ref:-glass}"
+
+if [ -z "$src" ] || [ "$src" = "$clone" ] || [ ! -f "$src/install/glass.sh" ]; then
+    if [ -d "$clone/.git" ]; then
+        git -C "$clone" fetch -q --depth 1 origin "$ref" && git -C "$clone" reset -q --hard FETCH_HEAD ||
+            echo "serp-glass: can't update $clone from $url ($ref); using the version that is there" >&2
+    else
+        git clone -q --depth 1 --branch "$ref" "$url" "$clone" || { echo "serp-glass: can't clone $url ($ref)" >&2; exit 1; }
+    fi
+    src="$clone"
+fi
+GLASS_REPO_URL="$url" GLASS_REF="$ref" exec bash "$src/install/glass.sh" "$@"

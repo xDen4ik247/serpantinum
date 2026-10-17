@@ -9,8 +9,8 @@ G_PKGS_BASE=(
     starship zoxide eza bat fzf pkgfile ttf-jetbrains-mono-nerd
     # tools the scripts call
     rsync patch diffutils jq curl inotify-tools libnotify imagemagick uv
-    # the Rust helpers (rust/: shell pollers, niri daemons, sleep-guard, power-mode)
-    rust
+    # the Rust helpers (rust/: shell pollers, niri daemons, sleep-guard, power-mode) and the apps' Rust backends
+    rust base-devel sqlite
     # python for the helpers (system site-packages; ~/.venvs/default reuses them)
     python python-gobject python-numpy python-rich python-yaml python-pillow
     # music
@@ -25,7 +25,7 @@ G_PKGS_SDDM=(sddm qt6-declarative qt6-svg qt6-5compat)
 
 G_SDDM_THEME_DST=/usr/share/sddm/themes/serp-glass
 G_SDDM_CONF=/etc/sddm.conf.d/20-serp-glass.conf
-G_POWER_FILES=(/etc/udev/rules.d/60-battery-pci-runtime-pm.rules /etc/sysctl.d/60-battery.conf)
+G_POWER_FILES=(/etc/udev/rules.d/60-battery-pci-runtime-pm.rules /etc/udev/rules.d/61-glass-smart-charge.rules /etc/sysctl.d/60-battery.conf)
 
 g_has_npu() { lspci -nn 2>/dev/null | grep -qiE 'Intel.*(NPU|Neural|AI Boost)' || [ -e /dev/accel/accel0 ]; }
 g_has_battery() { compgen -G '/sys/class/power_supply/BAT*' >/dev/null; }
@@ -35,7 +35,9 @@ g_pkg_list() {
     g_gcal_venv_ok || p+=("${G_PKGS_GCAL[@]}")
     [ "${G_SDDM:-true}" = true ] && p+=("${G_PKGS_SDDM[@]}")
     printf '%s\n' "${p[@]}"
+    g_apps_pkgs
     g_extras_pkgs
+    return 0
 }
 
 # Packages still missing (pacman -T prints the unsatisfied ones).
@@ -91,18 +93,22 @@ g_root_plan() {
             done
             echo 'sysctl -q --system >/dev/null 2>&1 || true'
             echo 'udevadm control --reload 2>/dev/null || true'
-            G_ROOT_ACTIONS+=("battery tweaks: PCI runtime PM udev rule + NMI watchdog off (${G_POWER_FILES[*]})")
+            echo 'udevadm trigger --action=change --subsystem-match=power_supply 2>/dev/null || true'
+            G_ROOT_ACTIONS+=("battery tweaks: PCI runtime PM udev rule + charge-limit access for smart charging + NMI watchdog off (${G_POWER_FILES[*]})")
         fi
         echo 'exit $rc'
     } > "$G_TMP/root.sh"
     chmod 755 "$G_TMP/root.sh"
 }
 
-# Run the root script with ONE prompt (sudo on a terminal, pkexec in a graphical session).
+# Run the root script with ONE prompt (sudo on a terminal, pkexec in a graphical session); after
+# g_sudo_begin on a terminal there is no further prompt.
 g_root_run() {
     local script="$1" why="$2"
     if [ "$(id -u)" = 0 ]; then bash "$script"; return; fi
-    if g_have sudo && { [ -t 0 ] || sudo -n true 2>/dev/null; }; then
+    if g_have sudo && sudo -n true 2>/dev/null; then
+        sudo -n env SUDO_USER="$USER" bash "$script"
+    elif g_have sudo && [ -t 0 ]; then
         sudo -p "[serp-glass] root is needed once for: $why. Password for %u: " env SUDO_USER="$USER" bash "$script"
     elif g_have pkexec && [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
         g_info "a password dialog will ask for root once ($why)"
@@ -155,4 +161,37 @@ g_system_uninstall() {
     if g_is_dry; then for a in "${s[@]}"; do g_dry "root: $a"; done; return 0; fi
     g_root_run "$G_TMP/root-uninstall.sh" "$(IFS=';'; echo "${s[*]}")" && g_ok "root parts removed"
     g_note "packages installed for glass were kept (remove by hand if you like: $(g_pkg_list | tr '\n' ' '))"
+}
+
+# ---------------------------------------------------------------- root for the whole run
+# Upstream's installer modules call sudo many times (packages, AUR helper, SDDM, PAM), so whenever the
+# base step runs, the installer needs a terminal: one sudo password prompt up front, kept fresh in the
+# background while upstream builds AUR packages. Without the base step (a glass-only update started from
+# the desktop) the root step alone asks once through pkexec (g_root_run).
+g_sudo_begin() {
+    G_SUDO_KEEPALIVE=""
+    [ "$(id -u)" = 0 ] && return 0
+    case "${G_BASE_ACTION:-keep}" in install|update|reinstall) ;; *) return 0 ;; esac
+    if [ ! -t 0 ]; then
+        g_err "this run installs/updates upstream Serpantinum, whose installer uses sudo: run it in a terminal"
+        return 1
+    fi
+    if ! g_have sudo; then
+        g_err "sudo is missing. As root: pacman -S sudo; usermod -aG wheel $USER; EDITOR=nano visudo (uncomment %wheel ALL=(ALL:ALL) ALL); log in again"
+        return 1
+    fi
+    if ! sudo -n true 2>/dev/null; then
+        g_info "root is needed for packages and system files: sudo asks for your password once"
+        sudo -v -p "[serp-glass] password for %u: " ||
+            { g_err "sudo refused: is $USER in the wheel group, with %wheel enabled in visudo?"; return 1; }
+    fi
+    # keep the sudo timestamp fresh while upstream builds AUR packages
+    ( while kill -0 $$ 2>/dev/null; do sleep 50; sudo -n -v 2>/dev/null || exit 0; done ) &
+    G_SUDO_KEEPALIVE=$!
+}
+
+g_sudo_end() {
+    [ -n "${G_SUDO_KEEPALIVE:-}" ] && kill "$G_SUDO_KEEPALIVE" 2>/dev/null
+    G_SUDO_KEEPALIVE=""
+    return 0
 }

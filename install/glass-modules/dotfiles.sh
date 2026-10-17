@@ -1,12 +1,45 @@
 #!/usr/bin/env bash
 # Dotfiles: everything under home/ goes to $HOME (paths rendered for this user), with backups,
 # a manifest and pacnew-style handling of files you edited (see g_put in lib.sh).
+#
+# Optional parts follow the options: files of a switched-off feature (AI, or an app you didn't pick) are
+# not installed and are removed again if glass installed them earlier. niri's bind files of such a feature
+# become a comment-only stub instead, because config.kdl includes every bind file. Files an app's own
+# install.sh puts in place (launcher, desktop entry, units) are left to the apps step.
 
 G_SETTINGS_REL=".config/serpantinum/settings.json"
 G_SETTINGS_KEY="$G_SETTINGS_REL#glass-template"   # pseudo manifest entry: the glass settings last merged
 # Settings that belong to the machine / the person / the session, never taken from the template.
 G_SETTINGS_STRIP='del(.wallpaperDir, .general.language, .general.avatarPath, .general.location, .display,
                      .syspanel, .idle.manualInhibit, .notifications.dnd, .dock.editing)'
+
+# Installed only when missing, never updated or removed: machine-specific files the repo has a neutral
+# starting point for (your displays: niri picks each one's preferred mode until you set one).
+G_SEED_FILES=" .config/niri/user/output.kdl "
+
+# The optional feature a home/ file belongs to: ai, app:<name>, or nothing (always installed).
+g_dotfile_feature() {
+    case "$1" in
+        .local/bin/ai|.local/bin/ai-chat|.local/bin/aidict|.local/bin/ai-notes|.local/bin/ai-notes-panel|\
+        .local/bin/aipanel|.local/bin/jocr|.local/share/aifeat/*|.local/share/ai-notes/*|.local/share/npu-ocr/*|\
+        .config/systemd/user/aidict.service|.config/systemd/user/ai-notes-*|.config/systemd/user/npu-llm*|\
+        .config/systemd/user/npu-ocr.service|.config/niri/user/binds-ai.kdl|.config/niri/user/binds-notes.kdl)
+            echo ai ;;
+        .config/niri/user/binds-mail.kdl) echo app:glass-mail ;;
+        .config/niri/user/binds-quiz.kdl) echo app:jp-quiz ;;
+    esac
+}
+
+g_feature_on() {
+    case "$1" in
+        "") return 0 ;;
+        ai) g_ai_on ;;
+        app:*) g_app_selected "${1#app:}" ;;
+    esac
+}
+
+# A niri bind file whose feature is off: installed as a stub (config.kdl includes it unconditionally).
+g_dotfile_stub() { [[ "$1" == .config/niri/user/binds-*.kdl ]] && ! g_feature_on "$(g_dotfile_feature "$1")"; }
 
 # Which home/ files to install (relative paths), honouring the options.
 g_dotfile_list() {
@@ -15,27 +48,71 @@ g_dotfile_list() {
             "$G_SETTINGS_REL") continue ;;                                  # merged, not copied
             .zshrc|.zshenv|.zprofile|.config/starship.toml)
                 [ "${G_SHELL_RC:-1}" = 1 ] || continue ;;
-            .local/bin/jp-quiz|.local/share/applications/jp-quiz.desktop)
-                g_want_jpquiz || continue ;;                               # the app installs these itself
         esac
+        [[ "$G_SEED_FILES" == *" $rel "* ]] && continue                     # g_dotfile_seeds
+        g_app_owned "$rel" && continue                                     # the app's install.sh installs it
+        g_dotfile_stub "$rel" || g_feature_on "$(g_dotfile_feature "$rel")" || continue
         printf '%s\n' "$rel"
     done
 }
 
-g_want_jpquiz() { [ "${G_WITH[jpquiz]:-0}" = 1 ] || [ -d "$HOME/.local/share/jp-quiz/app" ]; }
+g_dotfile_seeds() {
+    local rel tmp="$G_TMP/render"
+    for rel in $G_SEED_FILES; do
+        [ -e "$HOME/$rel" ] || [ -L "$HOME/$rel" ] && continue
+        if g_is_dry; then g_dry "create    ~/$rel (starting point, yours from then on)"; continue; fi
+        mkdir -p "$(dirname "$HOME/$rel")" "$(dirname "$tmp/$rel")"
+        g_render "$G_ROOT/home/$rel" > "$tmp/$rel" && install -m 644 "$tmp/$rel" "$HOME/$rel" && G_COUNT[created]=$((G_COUNT[created] + 1))
+    done
+}
+
+# Files glass installed earlier that this run no longer wants: a feature was switched off (removed, units
+# stopped first; pre-glass originals come back from the backup) or an app's install.sh owns them now
+# (they stay; only the manifest forgets them).
+g_dotfiles_prune() {
+    local -n wanted="$1"
+    local rel u
+    for rel in "${!G_MAN_SHA[@]}"; do
+        case "$rel" in *"#"*|"$G_SP_DIR"/*|"$G_SF_DIR"/*) continue ;; esac
+        [ -f "$G_ROOT/home/$rel" ] || continue          # only home/ files (not the Rust helpers, not patches)
+        [ -n "${wanted[$rel]:-}" ] && continue
+        if g_app_owned "$rel" || [[ "$G_SEED_FILES" == *" $rel "* ]]; then
+            g_is_dry || g_manifest_del "$rel"
+            continue
+        fi
+        if [[ "$rel" == .config/systemd/user/* ]] && ! g_is_dry && g_have systemctl && g_user_systemd; then
+            u="${rel##*/}"
+            systemctl --user disable --now "$u" >/dev/null 2>&1 && g_info "stopped $u ($(g_dotfile_feature "$rel") is off)"
+        fi
+        g_remove_owned "$rel" adopted-too || true
+    done
+}
 
 g_dotfiles_install() {
-    local rel mode tmp="$G_TMP/render" n=0
+    local rel mode feat tmp="$G_TMP/render" n=0
+    declare -A want=()
     mkdir -p "$tmp"
     while IFS= read -r rel; do
+        want[$rel]=1
         mkdir -p "$(dirname "$tmp/$rel")"
-        g_render "$G_ROOT/home/$rel" > "$tmp/$rel"
+        if g_dotfile_stub "$rel"; then
+            feat=$(g_dotfile_feature "$rel")
+            if [ "$feat" = ai ]; then
+                printf '// Keybinds of the AI features, which are off on this machine (glass installer).\n// Turn them on with: serp-glass --ai on\n'
+            else
+                printf '// Keybinds of %s, which is not installed on this machine (glass installer).\n// Pick it with: serp-glass --menu\n' "${G_APP_NAME[${feat#app:}]}"
+            fi > "$tmp/$rel"
+        else
+            g_render "$G_ROOT/home/$rel" > "$tmp/$rel"
+        fi
         mode=$(stat -c %a "$G_ROOT/home/$rel")
         [ "$mode" = 755 ] || [ "$mode" = 775 ] && mode=755 || mode=644
         g_put "$rel" "$tmp/$rel" "$mode"
         n=$((n + 1))
     done < <(g_dotfile_list)
-    g_info "$n dotfiles checked (created ${G_COUNT[created]}, updated ${G_COUNT[updated]}, unchanged ${G_COUNT[unchanged]}, kept ${G_COUNT[kept]})"
+    g_dotfile_seeds
+    g_dotfiles_prune want
+    g_info "$n dotfiles checked (created ${G_COUNT[created]}, updated ${G_COUNT[updated]}, unchanged ${G_COUNT[unchanged]}, kept ${G_COUNT[kept]}, removed ${G_COUNT[removed]})"
     g_settings_merge
     g_kitty_include
     g_user_dirs

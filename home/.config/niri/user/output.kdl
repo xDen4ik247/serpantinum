@@ -1,8 +1,13 @@
-// 2880x1800 panel at 1.5 → a 1920x1200 workspace.
+// Your displays. Without a block here niri gives each display its preferred mode and a fitting scale.
+// To pin one, uncomment and adapt (names and modes: `niri msg outputs`), e.g. a 2880x1800 panel at 1.5,
+// which makes a 1920x1200 workspace:
+//
+// output "eDP-1" {
+//     mode "2880x1800@120.000"
+//     scale 1.5
+//     // VRR only kicks in for windows with `variable-refresh-rate true` (see rules.kdl).
+//     variable-refresh-rate on-demand=true
+// }
+//
 // Keep Serpantinum's Settings → Display scale at the same value (it re-applies its own at login).
-output "eDP-1" {
-    mode "2880x1800@120.000"
-    scale 1.5
-    // VRR only kicks in for windows with `variable-refresh-rate true` (see rules.kdl).
-    variable-refresh-rate on-demand=true
-}
+// The glass installer writes this file only when it is missing and never changes it afterwards.
