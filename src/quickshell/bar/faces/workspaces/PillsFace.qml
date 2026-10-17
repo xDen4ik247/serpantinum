@@ -150,7 +150,8 @@ Item {
                     height: pillsFaceRoot.isVertical ? wsPill.dotW : pillsFaceRoot.dotH
                     radius: widget ? widget.s(widget.isCompact ? 8 : 10) : 10
                     color: (wsPill.isActive || pillsShapeGlass.active) ? "transparent"
-                        : (pillsFaceRoot.glass
+                        : ((pillsFaceRoot && pillsFaceRoot.glass)
+
                             ? (wsPill.isOccupied ? Qt.alpha(ThemeBackend.text, 0.42) : Qt.alpha(ThemeBackend.text, 0.14))
                             : Qt.alpha(wsPill.isOccupied ? ThemeBackend.surface2 : ((widget && widget.isCompact) ? ThemeBackend.surface1 : ThemeBackend.surface0), ThemeBackend.elementOpacity))
                     border.width: 0
@@ -162,7 +163,7 @@ Item {
                         id: pillsShapeGlass
                         anchors.fill: parent
                         radius: parent.radius
-                        allowed: !wsPill.isActive && !pillsFaceRoot.glass
+                        allowed: !wsPill.isActive && !(pillsFaceRoot && pillsFaceRoot.glass)
                         tintColor: wsPill.isOccupied ? ThemeBackend.surface2 : ThemeBackend.surface0
                         tintAmount: 0.3
                         press: wsPillMouse.pressed ? 0.8 : (wsPillMouse.containsMouse ? 0.25 : 0)
