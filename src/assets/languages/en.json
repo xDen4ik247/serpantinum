@@ -1237,6 +1237,22 @@
       "system_name": "System",
       "hibernate_error_title": "Hibernation unavailable",
       "hibernate_error_body": "Hibernation is unavailable on this system. Please check your swap configuration."
+    },
+    "charge": {
+      "title": "Smart charging",
+      "smart": "Smart",
+      "reason": {
+        "manual80": "Always stops at 80% (manual)",
+        "manual100": "Always charges to 100% (manual)",
+        "learning": "Learning your routine ({days}/{need} days), charging to 100%",
+        "newplace": "Unfamiliar place, charging to 100%",
+        "calendar": "Charging to 100% for {title} at {time}",
+        "topup": "Finishing the charge, you usually unplug around {time}",
+        "holduntil": "Holding at 80%, full by {full}",
+        "enough": "Holding at 80%, enough for your usual {use}% after {time}",
+        "hold": "Holding at 80% to slow battery wear",
+        "denied": "Can't set the charge limit (permission)"
+      }
     }
   },
   "volumepopup": {

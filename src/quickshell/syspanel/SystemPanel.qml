@@ -115,6 +115,31 @@ Item {
 
     property bool canHibernate: false
 
+    // Smart charging (~/.local/bin/glass-smart-charge): status written by the daemon, mode set from the row below
+    property var chargeStatus: ({})
+    property string chargeMode: "smart"
+    readonly property bool chargeSupported: chargeStatus.supported === true
+
+    FileView {
+        id: chargeStatusFile
+        path: Quickshell.env("HOME") + "/.local/state/glass-smart-charge/status.json"
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                let st = JSON.parse(chargeStatusFile.text());
+                root.chargeStatus = st;
+                if (st.mode) root.chargeMode = st.mode;
+            } catch (e) {}
+        }
+    }
+
+    function setChargeMode(m) {
+        root.chargeMode = m;
+        Quickshell.execDetached([Quickshell.env("HOME") + "/.local/bin/glass-smart-charge", "mode", m]);
+    }
+
     readonly property color batColorFlat: {
         if (!UPower.displayDevice.ready) return ThemeBackend.blue;
         if (isCharging) return ThemeBackend.green;
@@ -703,6 +728,73 @@ Item {
                                     else PowerProfiles.profile = PowerProfile.Balanced;
                                 }
                             }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: chargeBox
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: root.s(56)
+                    Layout.maximumHeight: Layout.preferredHeight
+                    visible: !root.isDesktop && root.chargeSupported
+                    radius: root.boxRadius
+                    color: Qt.darker(ThemeBackend.surface0, 1.04)
+                    opacity: root.introCore
+                    transform: Translate { x: (root.isLeftAnchored ? -root.rowSlideDistance : root.rowSlideDistance) * (1.0 - root.introCore) }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: root.s(14)
+                        anchors.rightMargin: root.s(10)
+                        spacing: root.s(10)
+
+                        Text {
+                            text: root.chargeStatus.limit === 100 ? "󰂅" : "󱊣"
+                            font.family: ThemeBackend.iconFont
+                            font.pixelSize: root.s(20)
+                            color: root.chargeStatus.limit === 100 ? ThemeBackend.green : root.profileColor
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+
+                            Text {
+                                text: I18n.t("syspanel.charge.title")
+                                font.family: ThemeBackend.fontFamily
+                                font.weight: Font.Black
+                                font.pixelSize: root.s(13)
+                                color: ThemeBackend.text
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: root.chargeStatus.writable === false
+                                    ? I18n.t("syspanel.charge.reason.denied")
+                                    : I18n.t("syspanel.charge.reason." + (root.chargeStatus.code || "hold"), root.chargeStatus.args || {})
+                                font.family: ThemeBackend.fontFamily
+                                font.weight: Font.Medium
+                                font.pixelSize: root.s(10)
+                                color: ThemeBackend.subtext0
+                                elide: Text.ElideRight
+                                maximumLineCount: 2
+                                wrapMode: Text.Wrap
+                            }
+                        }
+
+                        Switch {
+                            Layout.preferredWidth: root.s(150)
+                            Layout.preferredHeight: root.s(34)
+                            cornerRadius: root.s(12)
+                            fontPixelSize: root.s(12)
+                            options: [I18n.t("syspanel.charge.smart"), "80%", "100%"]
+                            accentColor: root.profileColor
+                            baseColor: ThemeBackend.surface1
+                            textColor: ThemeBackend.text
+                            activeTextColor: ThemeBackend.crust
+                            currentIndex: root.chargeMode === "80" ? 1 : (root.chargeMode === "100" ? 2 : 0)
+                            onValueChanged: (idx, val) => root.setChargeMode(["smart", "80", "100"][idx])
                         }
                     }
                 }

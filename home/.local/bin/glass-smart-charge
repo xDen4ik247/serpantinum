@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+"""glass-smart-charge: optimized battery charging, like iPhone's "Optimized Charging".
+
+While on AC it holds the battery at 80 % and only charges to 100 % when you are likely to need it:
+  * learning      - the first days (not enough history yet): charge fully, like before
+  * new place     - plugged in somewhere you rarely charge (Wi-Fi/wired network as the location): charge fully
+  * calendar      - an in-person event (one with a location) is coming up: be full ~45 min before it starts
+  * routine       - you usually unplug around this time on this kind of day here, and the battery use after that
+                    unplug is usually more than 80 % can cover: finish charging just before that time
+  * otherwise     - hold at 80 % (less time at 100 % = slower battery wear)
+
+The decision is a few dozen arithmetic operations every 5 minutes on AC, so it runs on the CPU: waking the NPU
+would cost more energy than the calculation itself.
+
+Manual override (the switch in the system panel, or this CLI): smart | 80 | 100
+  glass-smart-charge                show the status
+  glass-smart-charge mode smart|80|100
+  glass-smart-charge daemon         run (glass-smart-charge.service)
+
+Files (~/.local/state/glass-smart-charge/):
+  mode           smart | 80 | 100 (missing = smart)
+  status.json    what the panel shows (code + args, translated in the panel)
+  history.jsonl  plug/unplug events: time, battery %, hashed network id
+  learned.json   learned charge speed above 80 %
+The battery limit is /sys/class/power_supply/BAT0/charge_control_end_threshold (asus-wmi); it is made
+writable for the wheel group by /etc/udev/rules.d/61-glass-smart-charge.rules.
+"""
+import hashlib
+import json
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+
+BAT = "/sys/class/power_supply/BAT0"
+AC = "/sys/class/power_supply/AC0/online"
+THRESH = BAT + "/charge_control_end_threshold"
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "glass-smart-charge")
+MODE_F, STATUS_F = os.path.join(STATE, "mode"), os.path.join(STATE, "status.json")
+HIST_F, LEARN_F = os.path.join(STATE, "history.jsonl"), os.path.join(STATE, "learned.json")
+CAL_F = os.path.expanduser("~/.cache/gcal-sync/events.json")
+
+LIMIT = 80                 # hold level
+RESERVE = 20               # % that should be left at the end of a typical battery session
+LEARN_DAYS = 5             # distinct days of history before "smart" starts holding
+LEARN_UNPLUGS = 4          # ... and this many real unplugs (>= MIN_SESSION)
+PLACE_DAYS = 3             # days with a charge at a network before it counts as a usual place
+MIN_SESSION = 20 * 60      # unplugs shorter than this are cable jiggles, not "leaving"
+HALF_LIFE = 14             # days; older habits weigh less
+P_UNPLUG = 0.5             # probability that counts as "you usually unplug around now"
+LOOKAHEAD = 16 * 3600      # how far ahead the routine is checked
+MARGIN = 20 * 60           # be full this long before the predicted unplug
+CAL_LEAD = 45 * 60         # ... and this long before a calendar event
+RATE_HIGH = 0.6            # default %/min above 80 % (learned)
+RATE_LOW = 1.0             # %/min below 80 %
+TICK_AC, TICK_BAT = 300, 3600
+
+
+def rd(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def on_ac():
+    return rd(AC, "0") == "1"
+
+
+def capacity():
+    return int(rd(BAT + "/capacity", "0") or 0)
+
+
+def mode():
+    m = rd(MODE_F, "smart")
+    return m if m in ("smart", "80", "100") else "smart"
+
+
+def location():
+    """(id, name): the active network as a stand-in for the place. id is hashed in the history."""
+    try:
+        out = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    for line in out.splitlines():
+        name, _, typ = line.rpartition(":")
+        if typ.endswith("wireless") or typ.endswith("ethernet"):
+            name = name.replace("\\:", ":")
+            return hashlib.sha1(f"{typ}:{name}".encode()).hexdigest()[:12], name
+    return "offline", ""
+
+
+def load_history():
+    ev = []
+    try:
+        with open(HIST_F) as f:
+            for line in f:
+                try:
+                    ev.append(json.loads(line))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    return ev
+
+
+def log_event(kind, cap, loc):
+    os.makedirs(STATE, exist_ok=True)
+    with open(HIST_F, "a") as f:
+        f.write(json.dumps({"ev": kind, "ts": int(time.time()), "cap": cap, "loc": loc}) + "\n")
+
+
+def load_learned():
+    try:
+        with open(LEARN_F) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_json(path, obj):
+    # written in place (not tmp + rename): the panel's FileView watches this path with inotify
+    os.makedirs(STATE, exist_ok=True)
+    data = json.dumps(obj, ensure_ascii=False)
+    if rd(path) != data:
+        with open(path, "w") as f:
+            f.write(data)
+
+
+def sessions(ev):
+    """Battery sessions: unplug -> next plug. Returns dicts with start ts, loc, duration, drain."""
+    out, open_u = [], None
+    for e in ev:
+        if e["ev"] == "unplug":
+            open_u = e
+        elif e["ev"] == "plug" and open_u:
+            dur = e["ts"] - open_u["ts"]
+            out.append({"ts": open_u["ts"], "loc": open_u["loc"], "dur": dur,
+                        "drain": max(0, open_u["cap"] - e["cap"])})
+            open_u = None
+    return [s for s in out if s["dur"] >= MIN_SESSION]
+
+
+def day(ts):
+    return datetime.fromtimestamp(ts).date()
+
+
+def tod(ts):
+    d = datetime.fromtimestamp(ts)
+    return d.hour * 60 + d.minute
+
+
+def tod_dist(a, b):
+    d = abs(a - b) % 1440
+    return min(d, 1440 - d)
+
+
+def weekend(dt):
+    return dt.weekday() >= 5
+
+
+def weight(ts, now):
+    return 0.5 ** ((now - ts) / 86400 / HALF_LIFE)
+
+
+def predict_unplug(ev, sess, loc, now):
+    """First time in the next LOOKAHEAD when you usually unplug here (P >= P_UNPLUG), or None."""
+    days = {}
+    for e in ev:
+        if e["loc"] == loc and day(e["ts"]) != day(now):
+            days[day(e["ts"])] = e["ts"]
+    if len(days) < 2:
+        return None
+    hits = {}
+    for s in sess:
+        if s["loc"] == loc:
+            hits.setdefault(day(s["ts"]), []).append(tod(s["ts"]))
+    t = now
+    while t <= now + LOOKAHEAD:
+        dt = datetime.fromtimestamp(t)
+        pool = [d for d in days if weekend(datetime.combine(d, datetime.min.time())) == weekend(dt)]
+        if len(pool) < 3:
+            pool = list(days)
+        x = tod(t)
+        tot = sum(weight(days[d], now) for d in pool)
+        hit = sum(weight(days[d], now) for d in pool if any(tod_dist(u, x) <= 30 for u in hits.get(d, [])))
+        if tot and hit / tot >= P_UNPLUG:
+            return t
+        t += 900
+    return None
+
+
+def usual_drain(sess, loc, at, now):
+    """Weighted ~80th percentile of battery used after unplugs around this time of day, or None."""
+    x = tod(at)
+    pts = sorted(((s["drain"], weight(s["ts"], now)) for s in sess
+                  if s["loc"] == loc and tod_dist(tod(s["ts"]), x) <= 90))
+    if len(pts) < 2:
+        return None
+    total, acc = sum(w for _, w in pts), 0.0
+    for d, w in pts:
+        acc += w
+        if acc >= 0.8 * total:
+            return d
+    return pts[-1][0]
+
+
+def next_event(now):
+    """Next in-person calendar event (has a location) within LOOKAHEAD: (start ts, title) or None."""
+    try:
+        with open(CAL_F) as f:
+            evs = json.load(f).get("events", [])
+    except (OSError, ValueError, AttributeError):
+        return None
+    best = None
+    for e in evs:
+        if not (e.get("location") or "").strip():
+            continue
+        start = (e.get("startMs") or 0) / 1000
+        if e.get("allDay"):
+            start = datetime.fromisoformat(e["startDate"]).replace(hour=8).timestamp()
+            end = (e.get("endMs") or 0) / 1000
+            if start <= now < end:
+                start = now
+        if now - 60 <= start <= now + LOOKAHEAD and (best is None or start < best[0]):
+            best = (start, e.get("title") or "")
+    return best
+
+
+def minutes_to_full(cap, rate_high):
+    m = 0.0
+    if cap < LIMIT:
+        m += (LIMIT - cap) / RATE_LOW
+    m += (100 - max(cap, LIMIT)) / rate_high
+    return m
+
+
+def hhmm(ts):
+    return datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
+def decide(now, cap, loc):
+    """-> (limit, code, args). code is translated in the panel (syspanel.charge.reason.<code>)."""
+    m = mode()
+    if m == "80":
+        return 80, "manual80", {}
+    if m == "100":
+        return 100, "manual100", {}
+    ev = load_history()
+    sess = sessions(ev)
+    ndays = len({day(e["ts"]) for e in ev})
+    if ndays < LEARN_DAYS or len(sess) < LEARN_UNPLUGS:
+        return 100, "learning", {"days": min(ndays, LEARN_DAYS), "need": LEARN_DAYS}
+    place_days = len({day(e["ts"]) for e in ev if e["ev"] == "plug" and e["loc"] == loc})
+    if place_days < PLACE_DAYS:
+        return 100, "newplace", {}
+    rate = load_learned().get("rate_high", RATE_HIGH)
+    lead = minutes_to_full(cap, rate) * 60
+    cal = next_event(now)
+    if cal and now >= cal[0] - CAL_LEAD - lead - MARGIN:
+        return 100, "calendar", {"time": hhmm(cal[0]), "title": cal[1][:40]}
+    t = predict_unplug(ev, sess, loc, now)
+    if t is not None:
+        need = usual_drain(sess, loc, t, now)
+        if need is None or need > LIMIT - RESERVE:
+            if now >= t - lead - MARGIN:
+                return 100, "topup", {"time": hhmm(t)}
+            return LIMIT, "holduntil", {"full": hhmm(t - MARGIN), "time": hhmm(t)}
+        return LIMIT, "enough", {"time": hhmm(t), "use": need}
+    if cal:
+        return LIMIT, "holduntil", {"full": hhmm(cal[0] - CAL_LEAD), "time": hhmm(cal[0])}
+    return LIMIT, "hold", {}
+
+
+def set_limit(limit):
+    if rd(THRESH) == str(limit):
+        return True
+    try:
+        with open(THRESH, "w") as f:
+            f.write(str(limit))
+        return True
+    except OSError as e:
+        print(f"cannot set {THRESH}: {e}", file=sys.stderr)
+        return False
+
+
+class Daemon:
+    def __init__(self):
+        ev = load_history()   # a plug/unplug while the daemon was not running is logged on the first tick
+        self.ac = (ev[-1]["ev"] == "plug") if ev else None
+        self.last = None   # (ts, cap) while charging above LIMIT, to learn the charge speed
+
+    def learn_rate(self, now, cap):
+        if not (self.ac and rd(BAT + "/status") == "Charging" and LIMIT <= cap < 100):
+            self.last = None
+            return
+        if self.last and cap > self.last[1] and now - self.last[0] < 2 * TICK_AC:
+            r = (cap - self.last[1]) / ((now - self.last[0]) / 60)
+            if 0.05 < r < 5:
+                lr = load_learned()
+                lr["rate_high"] = round(0.7 * lr.get("rate_high", RATE_HIGH) + 0.3 * r, 3)
+                save_json(LEARN_F, lr)
+        if not self.last or cap != self.last[1]:
+            self.last = (now, cap)
+
+    def tick(self):
+        now, cap, ac = time.time(), capacity(), on_ac()
+        loc, name = location()
+        if ac != self.ac:
+            if self.ac is not None:
+                log_event("plug" if ac else "unplug", cap, loc)
+            self.ac = ac
+        self.learn_rate(now, cap)
+        if not os.path.exists(THRESH):
+            save_json(STATUS_F, {"supported": False})
+            return
+        limit, code, args = decide(now, cap, loc)
+        ok = set_limit(limit) if ac else True   # on battery the limit is irrelevant; leave the last one
+        save_json(STATUS_F, {"supported": True, "writable": ok, "mode": mode(), "ac": ac, "limit": limit,
+                             "applied": rd(THRESH), "code": code, "args": args, "place": name,
+                             "updated": int(now)})
+
+    def run(self):
+        r, w = os.pipe()
+        os.set_blocking(w, False)
+        signal.set_wakeup_fd(w)
+        signal.signal(signal.SIGUSR1, lambda *_: None)   # "mode changed": the panel pokes us
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        mon = None
+        self.tick()
+        while True:
+            if mon is None or mon.poll() is not None:
+                mon = subprocess.Popen(["gdbus", "monitor", "--system", "--dest", "org.freedesktop.UPower",
+                                        "--object-path", "/org/freedesktop/UPower"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            ready, _, _ = select.select([r, mon.stdout], [], [], TICK_AC if self.ac else TICK_BAT)
+            if r in ready:
+                os.read(r, 64)
+            if mon.stdout in ready:
+                chunk = os.read(mon.stdout.fileno(), 65536)
+                if not chunk:
+                    mon.wait()
+                    time.sleep(5)
+                    continue
+                if b"OnBattery" not in chunk:
+                    continue
+                time.sleep(2)   # let a cable jiggle settle
+            self.tick()
+
+def show():
+    try:
+        with open(STATUS_F) as f:
+            s = json.load(f)
+    except (OSError, ValueError):
+        s = {}
+    ev = load_history()
+    print(f"mode       {mode()}  (glass-smart-charge mode smart|80|100)")
+    print(f"limit      {rd(THRESH, '?')} %   battery {capacity()} %  {'AC' if on_ac() else 'battery'}")
+    print(f"decision   {s.get('code', '?')} {s.get('args', '')}")
+    print(f"place      {s.get('place') or '(no network)'}")
+    print(f"history    {len(ev)} events, {len({day(e['ts']) for e in ev})} days, "
+          f"{len(sessions(ev))} real unplugs; charge speed >80 %: "
+          f"{load_learned().get('rate_high', RATE_HIGH)} %/min")
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        show()
+    elif a[0] == "daemon":
+        Daemon().run()
+    elif a[0] == "mode" and len(a) == 2 and a[1] in ("smart", "80", "100"):
+        os.makedirs(STATE, exist_ok=True)
+        with open(MODE_F, "w") as f:
+            f.write(a[1] + "\n")
+        subprocess.run(["systemctl", "--user", "kill", "-s", "USR1", "glass-smart-charge.service"],
+                       stderr=subprocess.DEVNULL)
+    else:
+        print("usage: glass-smart-charge [daemon | mode smart|80|100]", file=sys.stderr)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,4 @@
+# glass-smart-charge 2026-10-15: let the wheel group set the battery charge limit (asus-wmi), so the
+# user daemon ~/.local/bin/glass-smart-charge can hold at 80 % / charge to 100 % without root.
+# Revert: delete this file (the limit then stays root-only).
+SUBSYSTEM=="power_supply", KERNEL=="BAT0", ACTION=="add|change", TEST=="charge_control_end_threshold", RUN+="/bin/sh -c 'chgrp wheel /sys%p/charge_control_end_threshold && chmod 664 /sys%p/charge_control_end_threshold'"
