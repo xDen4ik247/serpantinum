@@ -1,4 +1,4 @@
-// JP Quiz — endless adaptive Japanese quiz (quickshell window + Python engine).
+// JP Quiz — endless adaptive Japanese quiz (quickshell window + Rust engine).
 // Run: quickshell -p <this dir>   (the jp-quiz launcher does this)
 import QtQuick
 import Quickshell
@@ -60,11 +60,9 @@ ShellRoot {
 
     Process {
         id: engine
-        // the Rust engine (bin/jp-quiz-engine, built by install.sh); the Python one when it isn't there
-        // or JPQUIZ_PYTHON asks for it. Both speak the same JSON lines.
-        command: ["sh", "-c", "[ -z \"$JPQUIZ_PYTHON\" ] && [ -x \"$0/bin/jp-quiz-engine\" ] && exec \"$0/bin/jp-quiz-engine\"; exec \"${JPQUIZ_PYTHON:-python3}\" -m jpquiz.server", shell.appDir]
+        // the Rust engine (bin/jp-quiz-engine, built by install.sh), JSON lines over stdin/stdout
+        command: [shell.appDir + "/bin/jp-quiz-engine"]
         workingDirectory: shell.appDir
-        environment: ({ "PYTHONPATH": shell.appDir, "PYTHONUNBUFFERED": "1" })
         stdinEnabled: true
         running: true
         stdout: SplitParser {
@@ -85,10 +83,10 @@ ShellRoot {
     // ------------------------------------------------------------------ app state
     QtObject {
         id: app
-        property string state: "loading"      // loading welcome question waiting feedback intro | views: stats details grammar
+        property string state: "loading"      // loading welcome question waiting feedback intro | views: stats rank details grammar| views: stats details grammar
         property string prevState: "question"
         property var hello: ({})
-        property var settings: ({ lang: "en", furigana: false, sound: true, auto_advance: true, target: 0.75, daily_goal: 30 })
+        property var settings: ({ lang: "en", furigana: false, sound: true, auto_advance: true, target: 0.75, daily_goal: 30, anki_reviews: false })
         property var q: null
         property var res: null
         property var card: null               // intro / placement card
@@ -96,8 +94,13 @@ ShellRoot {
         property var grammar: null             // grammar tab: {points, focus}
         property int grammarSel: 0
         property var grammarEx: null
-        readonly property var views: ["stats", "details", "grammar"]
-        function inView() { return views.indexOf(state) >= 0 }
+        property var rankData: null            // rank tab: tiers, what is left, study plan
+        property string rankPane: "words"      // words | kanji | grammar
+        property var rankBrief: null           // HUD: last tier reached, next one, progress
+        property var calibQ: null              // placement test: current question
+        property var calibDone: null           // placement test: result
+        readonly property var views: ["stats", "rank", "details", "grammar"]
+        function inView() { return views.indexOf(state) >= 0 || state === "calib" }
         // question clock: pauses while a view (stats/grammar) is open, so looking things up costs no time
         property double qElapsed: 0
         property bool qRunning: false
@@ -134,7 +137,7 @@ ShellRoot {
             let m;
             try { m = JSON.parse(line); } catch (e) { console.warn("bad line", line); return; }
             if (m.type === "hello") {
-                hello = m; settings = m.settings; rating = m.rating; rank = m.rank;
+                hello = m; settings = m.settings; rating = m.rating; rank = m.rank; rankBrief = m.rank_brief;
                 level = m.level_progress; today = m.today; streak = m.streak;
                 state = m.placement ? "welcome" : "loading";
                 if (!m.placement) next();
@@ -149,15 +152,20 @@ ShellRoot {
                 ratingDelta = m.rating.after - rating;
                 rating = m.rating.after;
                 level = m.level_progress; today = m.today; streak = m.streak; combo = m.combo;
+                if (m.rank_brief) rankBrief = m.rank_brief;
                 state = "feedback";
                 shell.play(m.correct ? "correct" : "wrong");
                 const bands = [];
                 for (const ev of m.events) {
                     if (ev.type === "placement") { pending.push(ev); rank = ev.rank; }
-                    else if (ev.type === "rank") { rank = ev.rank; toasts.show("trophy", ru() ? "Новый ранг: " + ev.rank : "Rank up: " + ev.rank, theme.gold); shell.play("levelup"); }
+                    else if (ev.type === "rank") rank = ev.rank;    // rating band: not shown any more (the Rank tier is)
                     else if (ev.type === "levelup") { toasts.show("star", (ru() ? "Уровень " : "Level ") + ev.level + "!", theme.gold); shell.play("levelup"); }
+                    else if (ev.type === "tier") tierToast(ev);
                     else if (ev.type === "unlock" && ev.what === "band") bands.push(ev);
                     else if (ev.type === "anki") ankiToast(ev);
+                    else if (ev.type === "anki_review" && ev.status === "offline")
+                        toasts.show("warn", (ru() ? "Anki закрыт — повторы на паузе" : "Anki is closed — reviews paused") +
+                                    (ev.pending ? " · " + ev.pending + (ru() ? " ждут отправки" : " waiting to sync") : ""), theme.gold);
                     else if (ev.type === "unlock" && ev.what === "grammar" && !ev.bulk) toasts.show("book", (ru() ? "Новая грамматика: " : "New grammar: ") + ev.items.map(i => i.name).join(", "), theme.accent2);
                 }
                 if (bands.length) {
@@ -165,8 +173,8 @@ ShellRoot {
                     toasts.show("unlock", (ru() ? "Открыто N" : "Unlocked N") + lv + ": " + bands.filter(b => b.level === lv).map(b => tr(b.cat_name)).join(", "), theme.accent);
                 }
                 if (m.correct && settings.auto_advance && pending.length === 0) advanceTimer.restart();
-                // keep the last answer reachable for "add to Anki" during the next question
-                lastRes = m;
+                // keep the last answer reachable for "add to Anki" during the next question (an Anki review already is)
+                lastRes = m.anki ? null : m;
             } else if (m.type === "stats") {
                 stats = m;
                 if (wantView === "stats" || wantView === "details") enterView(wantView);
@@ -175,6 +183,16 @@ ShellRoot {
                 if (grammarSel >= m.points.length) grammarSel = 0;
                 if (wantView === "grammar") enterView("grammar");
                 if (m.points.length) send({ cmd: "grammar_example", id: m.points[grammarSel].id });
+            } else if (m.type === "rank") {
+                rankData = m;
+                if (wantView === "rank") enterView("rank");
+            } else if (m.type === "calib_q") {
+                calibQ = m; calibDone = null; shownAt = Date.now();
+                if (state !== "calib") { if (!inView()) { prevState = state; pauseClock(); } state = "calib"; }
+            } else if (m.type === "calib_done") {
+                calibDone = m; calibQ = null;
+                if (m.rank) rankBrief = m.rank;
+                send({ cmd: "rank" });
             } else if (m.type === "grammar_example") {
                 grammarEx = m;
             } else if (m.type === "peek") {
@@ -190,13 +208,50 @@ ShellRoot {
                 toasts.show(m.ok ? "cards" : "warn", (ru() ? "Anki: " : "Anki: ") + m.message, m.ok ? theme.good : theme.gold);
                 if (m.ok) send({ cmd: "stats" });
             } else if (m.type === "settings") {
+                if (!!m.settings.anki_reviews !== !!settings.anki_reviews)
+                    toasts.show("cards", m.settings.anki_reviews
+                                ? (ru() ? "Повторы Anki: вкл — каждый 3-й вопрос, пока Anki открыт" : "Anki reviews on — every 3rd question while Anki is open")
+                                : (ru() ? "Повторы Anki: выкл" : "Anki reviews off"), theme.accent);
                 settings = m.settings;
+            } else if (m.type === "ignored") {
+                // the engine refused an answer that came too fast (a held or bumped key): same question again
+                if (state === "waiting" && q && q.qid === m.qid) { state = "question"; resumeClock(); }
+            } else if (m.type === "undone") {
+                if (m.ok) {
+                    rating = m.rating; ratingDelta = 0; level = m.level_progress; today = m.today; streak = m.streak;
+                    if (m.rank_brief) rankBrief = m.rank_brief;
+                    toasts.show("warn", (ru() ? "Ответ отменён" : "Answer undone") + (m.left ? " · " + m.left + (ru() ? " ещё можно" : " more possible") : ""), theme.accent);
+                    lastRes = null;
+                    next();
+                } else toasts.show("warn", ru() ? "Нечего отменять" : "Nothing to undo", theme.gold);
             } else if (m.type === "error") {
                 console.warn("engine error:", m.error, m.trace || "");
                 if (state === "waiting") next();
             }
         }
 
+        // a tier reached: one quiet toast
+        function tierToast(ev) {
+            const reached = ev.reached === "常用" ? "常用漢字" : (ev.reached || "");
+            toasts.show("trophy", (ru() ? "Уровень пройден: " : "Tier reached: ") + reached + " ✓", theme.gold);
+            shell.play("levelup");
+            if (state === "rank") send({ cmd: "rank" });
+        }
+        // placement test
+        function startCalib() {
+            advanceTimer.stop();
+            calibDone = null;
+            send({ cmd: "calib_start" });
+        }
+        function calibAnswer(i) {
+            if (state !== "calib" || !calibQ) return;
+            send({ cmd: "calib_answer", choice: i });
+        }
+        function leaveCalib() {
+            if (calibQ) send({ cmd: "calib_cancel" });
+            calibQ = null; calibDone = null;
+            openView("rank");
+        }
         function ankiToast(m) {
             const w = m.word ? "「" + m.word + "」 " : "";
             if (m.status === "duplicate")
@@ -241,6 +296,7 @@ ShellRoot {
         function ankiAdd(key) {
             advanceTimer.stop();
             if (key) send({ cmd: "anki_add", key: key });
+            else if (state === "feedback" && res && res.anki) toasts.show("cards", ru() ? "Эта карточка уже в Anki" : "This card is already in Anki", theme.accent);
             else if (state === "feedback" && res) send({ cmd: "anki_add", key: res.key });
             else if (lastRes) send({ cmd: "anki_add", key: lastRes.key });
             else toasts.show("warn", ru() ? "Сначала ответьте на вопрос" : "Answer a question first", theme.gold);
@@ -254,11 +310,11 @@ ShellRoot {
         function undoTile() {
             if (orderPicked.length) orderPicked = orderPicked.slice(0, -1);
         }
-        // views: Tab cycles Stats -> Details -> Grammar -> back to the quiz; G jumps to Grammar
+        // views: Tab cycles Stats -> Rank -> Details -> Grammar -> back to the quiz; R jumps to Rank, G to Grammar
         function openView(name) {
             advanceTimer.stop();
             wantView = name;
-            send({ cmd: name === "grammar" ? "grammar" : "stats" });
+            send({ cmd: name === "grammar" ? "grammar" : (name === "rank" ? "rank" : "stats") });
         }
         function enterView(name) {
             if (!inView()) { prevState = state; pauseClock(); }
@@ -328,6 +384,22 @@ ShellRoot {
             Keys.onPressed: event => {
                 const k = event.key;
                 const st = app.state;
+                // safety net: a held key repeats; never let the repeats answer, skip or move on
+                const acting = k === Qt.Key_Space || k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Right
+                               || k === Qt.Key_0 || (k >= Qt.Key_1 && k <= Qt.Key_9) || k === Qt.Key_U;
+                if (event.isAutoRepeat && acting) { event.accepted = true; return; }
+                // …and a question can't be answered or skipped in its first moment (a key still down from before)
+                if (acting && (st === "question" || st === "calib") && Date.now() - app.shownAt < 450) { event.accepted = true; return; }
+                if (k === Qt.Key_U && (st === "question" || st === "feedback")) { advanceTimer.stop(); app.send({ cmd: "undo" }); event.accepted = true; return; }
+                if (st === "calib") {
+                    // placement test: 1–4 answer, Space / 0 don't know, Esc back to Rank (the result: Enter)
+                    const n = k - Qt.Key_1;
+                    if (app.calibDone) { if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Escape || k === Qt.Key_Space) app.leaveCalib(); }
+                    else if (k === Qt.Key_Escape) app.leaveCalib();
+                    else if (n >= 0 && n < 4) app.calibAnswer(n);
+                    else if (k === Qt.Key_Space || k === Qt.Key_0) app.calibAnswer(null);
+                    event.accepted = true; return;
+                }
                 if (k === Qt.Key_Escape) {
                     // a normal app window now: Esc only leaves the views; close with Mod+Q like any window
                     if (app.inView()) app.closeStats();
@@ -335,6 +407,17 @@ ShellRoot {
                 }
                 if (k === Qt.Key_Tab) { app.cycleView(); event.accepted = true; return; }
                 if (k === Qt.Key_G && st !== "welcome" && st !== "grammar") { app.openView("grammar"); event.accepted = true; return; }
+                if (k === Qt.Key_R && st !== "welcome" && st !== "rank") { app.openView("rank"); event.accepted = true; return; }
+                if (st === "rank") {
+                    const panes = ["words", "kanji", "grammar"];
+                    const i = panes.indexOf(app.rankPane);
+                    if (k === Qt.Key_Right) app.rankPane = panes[(i + 1) % 3];
+                    else if (k === Qt.Key_Left) app.rankPane = panes[(i + 2) % 3];
+                    else if (k === Qt.Key_T) app.startCalib();
+                    else if (k === Qt.Key_R) app.closeStats();
+                    else if (k === Qt.Key_L) app.setSetting("lang", app.settings.lang === "ru" ? "en" : "ru");
+                    event.accepted = true; return;
+                }
                 if (st === "grammar") {
                     const pts = app.grammar ? app.grammar.points : [];
                     const pick = i => { app.grammarSel = Math.max(0, Math.min(pts.length - 1, i)); app.grammarEx = null;
@@ -364,6 +447,7 @@ ShellRoot {
                     else if (k === Qt.Key_A) app.setSetting("auto_advance", !app.settings.auto_advance);
                     else if (k === Qt.Key_S) app.send({ cmd: "anki_sync" });
                     else if (k === Qt.Key_K) app.setSetting("anki_auto", !app.settings.anki_auto);
+                    else if (k === Qt.Key_V) { app.setSetting("anki_reviews", !app.settings.anki_reviews); app.send({ cmd: "stats" }); }
                     event.accepted = true; return;
                 }
                 if (k === Qt.Key_F && st !== "welcome") { app.setSetting("furigana", !app.settings.furigana); event.accepted = true; return; }
@@ -433,7 +517,7 @@ ShellRoot {
             visible: opacity > 0
             Behavior on opacity { NumberAnimation { duration: 220 } }
             Repeater {
-                model: [["stats", "Stats", "Статистика"], ["details", "Details", "Подробно"], ["grammar", "Grammar", "Грамматика"],
+                model: [["stats", "Stats", "Статистика"], ["rank", "Rank", "Ранг"], ["details", "Details", "Подробно"], ["grammar", "Grammar", "Грамматика"],
                         ["quiz", "Back to quiz", "К вопросам"]]
                 delegate: Rectangle {
                     readonly property bool on: app.state === modelData[0]
@@ -472,6 +556,28 @@ ShellRoot {
             Behavior on scale { NumberAnimation { duration: 380; easing.type: Easing.OutQuint } }
         }
 
+        Rank {
+            id: rankView
+            theme: theme
+            app: app
+            anchors { top: viewTabs.bottom; left: parent.left; right: parent.right; bottom: footer.top; margins: 18; topMargin: 12 }
+            visible: opacity > 0
+            opacity: app.state === "rank" ? 1 : 0
+            scale: app.state === "rank" ? 1 : 0.985
+            Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+            Behavior on scale { NumberAnimation { duration: 380; easing.type: Easing.OutQuint } }
+        }
+
+        Calib {
+            id: calibView
+            theme: theme
+            app: app
+            anchors { top: viewTabs.bottom; left: parent.left; right: parent.right; bottom: footer.top; margins: 18; topMargin: 12 }
+            visible: opacity > 0
+            opacity: app.state === "calib" ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+        }
+
         Details {
             theme: theme
             app: app
@@ -498,13 +604,15 @@ ShellRoot {
             font.pixelSize: 13
             text: {
                 const ru = app.ru();
-                if (app.state === "stats") return ru ? "Tab дальше · Esc назад · ←→ цель · L язык · F фуригана · M звук · A автопереход · S синхр. с Anki · K авто-Anki" : "Tab next · Esc back · ←→ target · L language · F furigana · M sound · A auto-advance · S sync with Anki · K auto-add to Anki";
+                if (app.state === "rank") return ru ? "←→ слова / кандзи / грамматика · T тест уровня · L язык · Tab дальше · Esc назад" : "←→ words / kanji / grammar · T placement test · L language · Tab next · Esc back";
+                if (app.state === "calib") return app.calibDone ? (ru ? "Enter — к рангу" : "Enter back to Rank") : (ru ? "1–4 ответ · Space не знаю · Esc прервать" : "1–4 answer · Space don't know · Esc stop the test");
+                if (app.state === "stats") return ru ? "Tab дальше · Esc назад · ←→ цель · L язык · F фуригана · M звук · A автопереход · S синхр. с Anki · K авто-Anki · V повторы Anki" : "Tab next · Esc back · ←→ target · L language · F furigana · M sound · A auto-advance · S sync with Anki · K auto-add to Anki · V Anki reviews";
                 if (app.state === "details") return ru ? "Tab дальше · Esc назад · + у недавних — в Anki" : "Tab next · Esc back · click + on a recent question to add it to Anki";
                 if (app.state === "grammar") return ru ? "↑↓ выбор · Enter тренировать / стоп · X выключить тренировку · Esc назад" : "↑↓ choose · Enter drill this point / stop · X drill off · Esc back";
-                if (app.state === "feedback") return ru ? "Enter — дальше · A в Anki · W задержать · G грамматика · Tab статистика" : "Enter next · A add to Anki · W hold · G grammar · Tab stats";
+                if (app.state === "feedback") return ru ? "Enter — дальше · U отменить ответ · A в Anki · W задержать · G грамматика · Tab статистика" : "Enter next · U undo answer · A add to Anki · W hold · G grammar · Tab stats";
                 const prev = app.lastRes ? (ru ? " · A прошлый → Anki" : " · A add previous to Anki") : "";
                 if (app.q && app.q.kind === "order" && app.state === "question") return (ru ? "Цифры — по порядку · Backspace отмена · Space пропуск" : "Press the numbers in order · Backspace undo · Space skip") + prev;
-                return (ru ? "1–4 ответ · Space пропуск · F фуригана · L язык · G грамматика · Tab статистика" : "1–4 answer · Space skip · F furigana · L language · G grammar · Tab stats") + prev;
+                return (ru ? "1–4 ответ · Space пропуск · U отменить прошлый · F фуригана · L язык · R ранг · G грамматика · Tab статистика" : "1–4 answer · Space skip · U undo last · F furigana · L language · R rank · G grammar · Tab stats") + prev;
             }
         }
 
@@ -534,13 +642,22 @@ ShellRoot {
             else if (name === "back") app.closeStats();
             else if (name === "anki") app.ankiAdd();
             else if (name === "grammar") app.openView("grammar");
+            else if (name === "rank") app.openView("rank");
+            else if (name === "test") app.startCalib();
+            else if (/^calib:/.test(name)) { const v = name.slice(6); if (v === "done") app.leaveCalib(); else app.calibAnswer(v === "x" ? null : parseInt(v)); }
+            else if (/^pane:/.test(name)) app.rankPane = name.slice(5);
             else if (name === "tab") app.cycleView();
             else if (name === "sync") app.send({ cmd: "anki_sync" });
+            else if (name === "reviews") app.setSetting("anki_reviews", !app.settings.anki_reviews);
             else if (/^[1-9]$/.test(name)) { if (app.q && app.q.kind === "order") app.pickTile(parseInt(name) - 1); else app.answer(parseInt(name) - 1); }
         }
         function quit(): void { app.close() }
         function cheat(): void { app.peekMode = "right"; app.send({ cmd: "peek" }) }
         function miss(): void { app.peekMode = "wrong"; app.send({ cmd: "peek" }) }
         function state(): string { return app.state + (app.q ? " " + app.q.kind : "") }
+        // render the Rank view to a PNG (works offscreen too, so checks need no window on screen)
+        function shot(path: string): void { (app.state === "calib" ? calibView : rankView).grabToImage(r => r.saveToFile(path)) }
+        // the question / feedback view, same idea
+        function shotQuiz(path: string): void { quiz.grabToImage(r => r.saveToFile(path)) }
     }
 }

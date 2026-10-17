@@ -1,0 +1,446 @@
+# level	pattern	quiz links	en	ru
+# The JLPT has published no official grammar list since 2010; this is the grammar commonly taught for each
+# level, written for this project. "quiz links" name the quiz's own knowledge components that teach the point:
+# gp:<id> = a grammar point, pt:<particle> = every usage of that particle, pt:<particle>:<usage> = one usage.
+# A point without links is not in the quiz yet (it can still count as known through a synced Anki card).
+5	〜は	pt:は	topic marker	тема (は)
+5	〜が	pt:が:gen,pt:が:qword	subject marker	подлежащее (が)
+5	〜を	pt:を:gen	object marker	прямое дополнение (を)
+5	〜に (time)	pt:に:time	at (a time)	в (время)
+5	〜に / 〜へ (destination)	pt:に:dest,pt:へ	to (a place)	в, к (направление)
+5	〜に (location of existence)	pt:に:exist	in, at (where something is)	в, на (где находится)
+5	〜に (recipient)	pt:に:recip	to (someone)	кому (адресат)
+5	〜で (place of action)	pt:で:place	at, in (where it happens)	в, на (место действия)
+5	〜で (means)	pt:で:means	by, with (means)	на, с помощью
+5	〜と (and)	pt:と:and	and (full list)	и (полный список)
+5	〜と (together with)	pt:と:with	with (someone)	с (кем-то)
+5	〜も	pt:も	also, too	тоже
+5	〜の	pt:の	possessive / linking nouns	притяжательное の
+5	〜から 〜まで	pt:まで	from … until	от … до
+5	〜や 〜など	pt:や	and so on (partial list)	и т. п. (неполный список)
+5	〜か (question)		question particle	вопросительная か
+5	〜か 〜か		or	или
+5	〜ね / 〜よ		isn't it / I tell you	не так ли / ведь
+5	〜だけ	pt:だけ	only	только
+5	〜しか〜ない		nothing but	только (с отрицанием)
+5	〜より 〜のほうが	pt:より	… is more than …	… больше, чем …
+5	〜の中で〜がいちばん		the most among	самый среди
+5	〜です / 〜だ		copula: is	связка «есть»
+5	〜ではありません / 〜じゃない		is not	не является
+5	〜ます / 〜ません / 〜ました	gp:polite	polite verb endings	вежливые формы глагола
+5	〜た / 〜ない / 〜なかった	gp:plain-past-neg	plain past & negative	простые прошедшее и отрицание
+5	〜かった / 〜くない	gp:adj-forms	い-adjective tense & negation	прошедшее и отрицание い-прилагательных
+5	〜だった / 〜じゃなかった		な-adjective & noun past	прошедшее な-прилагательных и сущ.
+5	〜て (sequence, linking)		and then; linking clauses	и (связь действий)
+5	〜ている	gp:te-iru	is doing / state	длится / состояние
+5	〜てください	gp:te-kudasai	please do	пожалуйста, сделайте
+5	〜ないでください	gp:naide-kudasai	please don't	пожалуйста, не делайте
+5	〜をください		please give me	дайте, пожалуйста
+5	〜たい	gp:tai	want to	хотеть сделать
+5	〜がほしい		want (a thing)	хотеть (что-то)
+5	〜ましょう	gp:mashou	let's	давайте
+5	〜ましょうか		shall I / shall we	может, мне …? / давайте?
+5	〜ませんか		won't you (invitation)	не хотите ли
+5	〜に行く / 〜に来る (purpose)	gp:ni-iku	go / come to do	идти (прийти), чтобы
+5	〜前に	gp:mae-ni	before doing	перед тем как
+5	〜た後で	gp:ato-de	after doing	после того как
+5	〜てから	gp:te-kara	after doing / since	после того как
+5	〜から (reason)	gp:kara-reason	because	потому что
+5	〜が / 〜けど (but)	gp:kedo	but	но
+5	〜とき		when	когда
+5	〜たり〜たりする		do things like … and …	то … то …
+5	〜でしょう / 〜だろう		probably; right?	наверное; не так ли?
+5	〜がある / 〜がいる	pt:が:exist	there is	есть, имеется
+5	〜が好き / 〜が上手 / 〜が分かる	pt:が:stative	likes / is good at / understands	нравится / хорошо умеет / понимает
+5	〜くなる / 〜になる	pt:に:become	become	становиться
+5	〜くする / 〜にする		make (something) …	делать каким-то
+5	〜にする (decide)		decide on	выбрать, решить
+5	もう〜た / まだ〜ていない		already / not yet	уже / ещё не
+5	あまり〜ない / ぜんぜん〜ない		not very / not at all	не очень / совсем не
+5	何か / 何も〜ない		something / nothing	что-то / ничего
+5	どうして / なぜ		why	почему
+5	これ / それ / あれ / どれ		this / that / that over there / which	это / то / вон то / какое
+5	この / その / あの / どの		this … / that … / which …	этот / тот / вон тот / который
+5	ここ / そこ / あそこ / どこ		here / there / over there / where	здесь / там / вон там / где
+5	〜ぐらい / 〜ごろ		about (amount / time)	примерно (кол-во / время)
+5	〜中 (じゅう / ちゅう)		throughout / during	весь, в течение / в процессе
+5	〜たち		plural for people	множественное число (люди)
+5	〜つ / 〜人 / 〜本 (counters)		counters	счётные суффиксы
+5	〜でも (… or something)		… or something	… или что-нибудь
+4	〜てもいい	gp:te-mo-ii	may / it's OK to	можно
+4	〜てはいけない	gp:te-wa-ikenai	must not	нельзя
+4	〜なければならない / 〜なくてはいけない	gp:nakereba	must / have to	должен
+4	〜なくてもいい	gp:nakute-mo-ii	don't have to	не обязательно
+4	〜たことがある	gp:ta-koto-ga-aru	have done (experience)	доводилось
+4	〜ことができる	gp:koto-ga-dekiru	can (ability)	мочь, уметь
+4	〜たほうがいい	gp:hou-ga-ii	had better / should	лучше бы
+4	〜つもり	gp:tsumori	intend to	собираться
+4	〜ながら	gp:nagara	while doing	одновременно с
+4	〜すぎる	gp:sugiru	too much	слишком
+4	〜やすい / 〜にくい	gp:yasui-nikui	easy / hard to do	легко / трудно делать
+4	〜てしまう	gp:te-shimau	end up / completely	в итоге / до конца
+4	〜ちゃう / 〜じゃう		casual てしまう	разговорное てしまう
+4	〜ておく	gp:te-oku	do in advance	сделать заранее
+4	〜てある	gp:te-aru	has been done (on purpose)	сделано (и так оставлено)
+4	〜てみる	gp:te-miru	try doing	попробовать
+4	〜てあげる / 〜てくれる / 〜てもらう	gp:te-give	doing favours	делать одолжение
+4	あげる / くれる / もらう		giving and receiving	давать и получать
+4	〜ていく / 〜てくる	gp:te-iku-kuru	go / come doing	уходить / приходить, делая
+4	〜てほしい	gp:te-hoshii	want someone to	хотеть, чтобы кто-то
+4	〜よう / 〜おう (volitional)	gp:volitional	let's / I'll (plain)	давай / сделаю-ка
+4	〜(よ)うと思う		I'm thinking of doing	думаю сделать
+4	可能形 (〜える / 〜られる)	gp:potential	can do (potential form)	потенциальная форма
+4	〜たら	gp:tara	if / when	если / когда
+4	〜ば	gp:ba	if (conditional)	если (условие)
+4	〜と (conditional)	gp:to-cond	whenever / if (natural result)	если / всякий раз, когда
+4	〜なら		if it's the case that	если уж
+4	〜ので	gp:node	because (softer)	так как
+4	〜のに	gp:noni	although / despite	хотя / несмотря на
+4	〜ても	gp:temo	even if	даже если
+4	〜そうだ (looks like)	gp:sou-looks	looks like	похоже, выглядит
+4	〜そうだ (hearsay)	gp:sou-hearsay	I hear that	говорят, что
+4	〜はずだ	gp:hazu	should be (expected)	должно быть
+4	〜かもしれない	gp:kamoshirenai	might	может быть
+4	〜なさい	gp:nasai	do it! (command)	сделай! (указание)
+4	受身 (〜れる / 〜られる)	gp:passive	passive	страдательный залог
+4	命令形 (〜ろ / 〜え)		imperative	повелительная форма
+4	〜な (prohibition)		don't!	не делай! (запрет)
+4	〜を (path through)	pt:を:path	through, along	по, через
+4	〜で (scope)	pt:で:scope	within (a scope)	в пределах
+4	〜が (in modifying clauses)	pt:が:relcl	subject inside a modifying clause	подлежащее в определении
+4	〜と言う / 〜と思う		say / think that	говорить / думать, что
+4	〜という		called, named	под названием
+4	〜かどうか		whether or not	ли … или нет
+4	〜か (embedded question)		embedded question	косвенный вопрос
+4	〜し		and what's more (listing reasons)	и к тому же
+4	〜ようだ / 〜みたいだ		seems / looks like	кажется, похоже
+4	〜らしい		apparently	похоже, говорят
+4	〜たがる / 〜がる		(someone else) wants / shows signs of	(другой) хочет / проявляет
+4	〜ようにする		make sure to	стараться
+4	〜ように (so that)		so that	чтобы
+4	〜ことにする		decide to	решить сделать
+4	〜ことになる		it's been decided that	получается, решено что
+4	〜ところだ		about to / in the middle of / just did	как раз собираюсь / делаю / сделал
+4	〜たばかり		just did	только что
+4	〜はじめる / 〜だす		start doing	начинать
+4	〜おわる / 〜つづける		finish / keep doing	заканчивать / продолжать
+4	〜方 (かた)		way of doing	способ делать
+4	〜までに		by (a deadline)	к (сроку)
+4	〜間 / 〜間に		while / during	пока / в течение
+4	〜ないで		without doing	не делая
+4	〜なくて		because not	так как не
+4	〜ばよかった		I wish I had	надо было бы
+4	〜たらどう		why don't you	почему бы не
+4	〜ないと / 〜なきゃ		have to (casual)	надо (разг.)
+4	〜の / 〜こと (nominalizers)		turning verbs into nouns	номинализаторы の / こと
+4	〜んです / 〜のです		explanatory の	объясняющее の
+4	〜かな / 〜かしら		I wonder	интересно, …?
+4	〜ずつ		each, at a time	по (сколько-то)
+4	〜ほど〜ない		not as … as	не так …, как
+4	〜と同じ / 〜と違う		same as / different from	такой же / отличается
+4	〜について		about, concerning	о, насчёт
+4	〜がする (smell, sound)		smell / sound of	чувствуется запах / звук
+4	〜とか〜とか		things like … and …	например … и …
+4	お〜になる / 尊敬語		honorific speech	почтительная речь
+4	お〜する / 謙譲語		humble speech	скромная речь
+4	〜ていただけませんか / 〜てくださいませんか		could you please	не могли бы вы
+4	〜予定		plan to	планируется
+4	〜ることがある		sometimes does	бывает, что
+3	使役 (〜せる / 〜させる)	gp:causative	make / let someone do	побудительный залог
+3	使役受身 (〜させられる)	gp:caus-passive	be made to do	быть вынужденным
+3	〜ようになる	gp:you-ni-naru	come to / become able	начать (делать), научиться
+3	〜ために (purpose)	gp:tame-ni	in order to	для того чтобы
+3	〜ため (cause)		because of	из-за
+3	〜させてください / 〜させていただく		let me do	позвольте мне
+3	〜うちに / 〜ないうちに		while still / before it stops being	пока / пока не
+3	〜おかげで		thanks to	благодаря
+3	〜せいで		because of (blame)	по вине
+3	〜ば〜ほど		the more …, the more	чем …, тем …
+3	〜ほど / 〜くらい (extent)		to the extent that	настолько, что
+3	〜ほど〜はない		nothing is as … as	нет ничего более …
+3	〜ことになっている / 〜ことにしている		it's the rule / I make it a rule	принято / взял за правило
+3	〜ように言う / 〜ように頼む		tell / ask someone to	сказать / попросить, чтобы
+3	〜まるで〜ようだ / 〜みたいに		just like	словно, будто
+3	〜らしい (typical of)		typical of	типичный, настоящий
+3	〜っぽい		-ish, tends to	-ватый, похожий на
+3	〜わけだ		no wonder / that means	вот почему / значит
+3	〜わけではない		it's not that	не то чтобы
+3	〜わけがない		there's no way	не может быть, чтобы
+3	〜わけにはいかない		can't afford to	никак нельзя
+3	〜はずがない		can't possibly	не может быть
+3	〜はずだった		was supposed to	должно было
+3	〜べきだ / 〜べきではない		should / shouldn't	следует / не следует
+3	〜ずに / 〜ず		without doing	не делая (книжн.)
+3	〜まま		as it is, unchanged	так и, оставаясь
+3	〜っぱなし		leaving something on	оставить как есть
+3	〜ところだった		almost did	чуть не
+3	〜たとたん(に)		just as, the moment	как только
+3	〜最中に		in the middle of	в самый разгар
+3	〜ついでに		while you're at it	заодно
+3	〜てからでないと		not until	только после того, как
+3	〜たびに		every time	каждый раз, когда
+3	〜につれて / 〜にしたがって		as … , (changes with)	по мере того как
+3	〜とおり(に)		as, just like	как, в точности как
+3	〜によって / 〜による		by, depending on	в зависимости от, посредством
+3	〜によると / 〜によれば		according to	согласно, по словам
+3	〜に対して		toward, in contrast to	по отношению к, в отличие от
+3	〜にとって		for, to (someone)	для (кого-то)
+3	〜として		as (in the role of)	в качестве
+3	〜に関して		regarding	относительно
+3	〜をはじめ		starting with	начиная с
+3	〜を中心に		centred on	с центром в
+3	〜をこめて		with (feeling)	вкладывая (чувство)
+3	〜を通して / 〜を通じて		through, via	через, посредством
+3	〜に代わって / 〜の代わりに		instead of	вместо
+3	〜に比べて		compared with	по сравнению с
+3	〜に加えて		in addition to	в дополнение к
+3	〜に違いない		must be, no doubt	несомненно
+3	〜ばかり		only, nothing but	одни только
+3	〜てばかりいる		do nothing but	только и делает, что
+3	〜ばかりでなく / 〜だけでなく		not only … but also	не только … но и
+3	〜さえ / 〜さえ〜ば		even / if only	даже / стоит только
+3	〜こそ		precisely, the very	именно
+3	〜なんか / 〜なんて		things like (dismissive)	какие-то там
+3	〜てしょうがない / 〜てたまらない		unbearably, can't help	ужасно, невыносимо
+3	〜てもらいたい		want someone to (for me)	хотел бы, чтобы
+3	〜てもかまわない		don't mind if	ничего, если
+3	〜ようとする / 〜ようとしない		try to / won't even try	пытаться / даже не пытаться
+3	〜ふりをする		pretend	притворяться
+3	〜っけ		was it? (recalling)	как там было?
+3	〜って (quoting)		(they) say / called	мол, называется
+3	〜というのは / 〜ということ		what … means / the fact that	… — это / то, что
+3	〜というより		rather than	скорее, чем
+3	〜といっても		although I say	хотя и говорят
+3	〜たらいい / 〜ばいい		should, it'd be good to	стоит, достаточно
+3	〜にしても / 〜としても		even if	даже если
+3	〜かける / 〜かけの		half-done	начать и не закончить
+3	〜きる / 〜きれない		completely / can't fully	до конца / не до конца
+3	〜だらけ		full of (bad)	полно, сплошь
+3	〜がち		tend to	склонен
+3	〜気味		a bit, -ish	слегка, немного
+3	〜向き / 〜向け		suited for / aimed at	подходящий для / рассчитанный на
+3	〜ごとに / 〜おきに		every / at intervals of	каждый / через
+3	〜ぶり		for the first time in / manner	впервые за / манера
+3	〜しかない / 〜しかたがない		have no choice but	ничего не остаётся
+3	〜くせに		even though (blame)	хотя (упрёк)
+3	〜わりに		considering	для, учитывая
+3	〜ものだ		that's how it is / used to	так уж заведено / бывало
+3	〜もの / 〜もん (reason)		because (excuse)	ведь (оправдание)
+3	〜そうもない / 〜そうにない		unlikely to	вряд ли
+3	〜場合(は)		in case	в случае
+3	〜じゃないか / 〜ではないか		isn't it? / let's	разве не? / давай
+3	〜だけ (as much as)		as much as possible	сколько можно
+3	〜ように見える		looks as if	выглядит так, будто
+3	〜ところに / 〜ところへ		just when	как раз когда
+3	〜にしては		for (unexpectedly)	для (неожиданно)
+3	〜とともに		together with, as	вместе с, по мере
+2	〜あげく		in the end (after much)	в конце концов
+2	〜以上(は)		since, now that	раз уж
+2	〜一方(だ)		keeps on (worsening)	всё больше и больше
+2	〜一方で		on the other hand	с другой стороны
+2	〜上で		upon, in doing	при, после того как
+2	〜上に		besides	к тому же
+2	〜得る / 〜得ない		can / cannot (possibility)	возможно / невозможно
+2	〜おそれがある		there's a risk that	есть опасность
+2	〜かぎり / 〜かぎりでは		as long as / as far as	пока / насколько
+2	〜がたい		hard to (emotionally)	трудно (решиться)
+2	〜かと思うと / 〜かと思ったら		no sooner … than	не успел … как
+2	〜か〜ないかのうちに		the moment that	едва … как
+2	〜かねない		might (bad)	вполне может (плохое)
+2	〜かねる		can't (politely)	затрудняюсь
+2	〜かのようだ		as if	как будто
+2	〜からいうと / 〜からすると / 〜からみると		judging from	судя по
+2	〜からこそ		precisely because	именно потому что
+2	〜からといって		just because	только потому что
+2	〜からには		now that	раз уж
+2	〜くらいなら		rather than	чем … уж лучше
+2	〜げ		-looking	на вид
+2	〜ことか		how very …!	как же …!
+2	〜ことから		from the fact that	из того, что
+2	〜ことだ		you should	следует
+2	〜ことだから		since it's (someone)	раз уж это (кто-то)
+2	〜ことなく		without	не … ни разу
+2	〜ことに(は)		to my …	к моему …
+2	〜ことはない		no need to	нет нужды
+2	〜際(に)		when, on the occasion	при, во время
+2	〜ざるを得ない		can't help but	приходится
+2	〜次第 / 〜次第で / 〜次第だ		as soon as / depending on	как только / в зависимости от
+2	〜上 (じょう)		from the standpoint of	с точки зрения
+2	〜ずにはいられない		can't help doing	не могу не
+2	〜せいか		perhaps because	возможно, из-за
+2	〜だけあって / 〜だけに		as expected of / all the more	недаром / тем более
+2	〜たところ		when I did	когда сделал
+2	〜っこない		no way	ни за что не
+2	〜つつ / 〜つつある		while / in the process of	одновременно / в процессе
+2	〜て以来		ever since	с тех пор как
+2	〜てならない		can't help feeling	не могу не чувствовать
+2	〜てはじめて		only after	только после того, как
+2	〜てこそ		only by doing	лишь сделав
+2	〜て(は)いられない		can't afford to keep	не могу больше
+2	〜どころか		far from	не то что … а
+2	〜どころではない		no time for	не до
+2	〜ところを		while, in the middle of	в тот момент, когда
+2	〜としたら / 〜とすれば		if, supposing	если предположить
+2	〜とは限らない		not necessarily	не обязательно
+2	〜ないことには		unless	пока не
+2	〜ないことはない		it's not that … not	не то чтобы не
+2	〜ながら(も)		although	хотя
+2	〜にあたって		at the time of	при, по случаю
+2	〜において / 〜における		in, at	в (книжн.)
+2	〜に応じて		in response to	в соответствии с
+2	〜にかかわらず		regardless of	независимо от
+2	〜に限って / 〜に限らず		only / not only	именно / не только
+2	〜にかけては		when it comes to	что касается
+2	〜にこたえて		in response to (wishes)	в ответ на
+2	〜に沿って		along, in line with	вдоль, в соответствии
+2	〜に伴って		along with	вместе с, сопровождая
+2	〜に反して		contrary to	вопреки
+2	〜にほかならない		nothing but	не что иное, как
+2	〜にもかかわらず		despite	несмотря на
+2	〜に基づいて		based on	на основе
+2	〜にわたって		throughout, over	на протяжении
+2	〜にすぎない		merely	лишь, всего лишь
+2	〜に相違ない		without doubt	несомненно (книжн.)
+2	〜にしろ / 〜にせよ		even if / whether	хоть / так или иначе
+2	〜につき		per / due to	за / по причине
+2	〜につけ		whenever	всякий раз, когда
+2	〜ぬきで / 〜ぬきに		without	без
+2	〜ぬく		through to the end	до самого конца
+2	〜の末(に)		after, at the end of	в результате
+2	〜のみならず		not only	не только
+2	〜はともかく / 〜はさておき		leaving aside	оставим в стороне
+2	〜ばかりか		not only … but	не только … но
+2	〜ばかりに		simply because	только из-за
+2	〜はもちろん		not to mention	не говоря уже о
+2	〜反面		on the other hand	с другой стороны
+2	〜ほかない		have no choice but	остаётся только
+2	〜まい		won't / probably not	не стану / вряд ли
+2	〜もかまわず		without caring	не обращая внимания
+2	〜ものか		as if I would	ни за что
+2	〜ものがある		there is something	есть в этом что-то
+2	〜ものだから		because (excuse)	ведь, так как
+2	〜ものなら		if one could	если бы только можно
+2	〜ものの		although	хотя и
+2	〜やら〜やら		what with … and …	то … то …
+2	〜ようがない		no way to	никак не
+2	〜を問わず		regardless of	независимо от
+2	〜をきっかけに / 〜を契機に		taking … as a chance	воспользовавшись
+2	〜を除いて		except	за исключением
+2	〜をもとに		based on	на основе
+2	〜をめぐって		concerning (dispute)	вокруг (спора)
+2	〜からして		judging from / even	судя по / уже
+2	〜といえば / 〜というと		speaking of	кстати о
+2	〜というものだ / 〜というものではない		that's what … is / it's not that	это и есть / не значит
+2	〜といった		such as	такие как
+2	〜あまり		so much that	от избытка
+2	〜たて		freshly done	только что (сделанный)
+2	〜を〜として		as, regarding … as	в качестве
+1	〜あっての		only because of	благодаря лишь
+1	〜いかんで / 〜いかんによらず		depending on / regardless of	в зависимости / независимо от
+1	〜以外の何物でもない		nothing but	не что иное, как
+1	〜(よ)うが〜まいが		whether or not	будь то или нет
+1	〜(よ)うにも〜ない		can't even if one tried	хотел бы, да не могу
+1	〜かぎりだ		extremely	крайне
+1	〜がてら		while, on the way	заодно
+1	〜が早いか		as soon as	едва
+1	〜が最後 / 〜たが最後		once …, that's it	стоит только …, всё
+1	〜かたがた		while, also	заодно (книжн.)
+1	〜かたわら		while also (side job)	параллельно
+1	〜かと思いきや		contrary to expectations	казалось бы, но
+1	〜きらいがある		tend to (bad)	есть склонность
+1	〜極まる / 〜極まりない		extremely	крайне
+1	〜ごとき / 〜ごとく		like, as	подобно
+1	〜こととて		because (apology)	поскольку (извинение)
+1	〜ことなしに		without	не (книжн.)
+1	〜始末だ		ended up (badly)	дошло до того, что
+1	〜ずくめ		entirely	сплошь
+1	〜ずにはおかない / 〜ずにはすまない		will surely / must	непременно / не обойтись без
+1	〜すら		even	даже
+1	〜そばから		no sooner than	только … как сразу
+1	〜だに		even (just)	даже только
+1	〜たところで		even if	даже если
+1	〜だの〜だの		things like	то … то …
+1	〜たりとも		not even	ни единого
+1	〜たる		as, being	являющийся
+1	〜つ〜つ		back and forth	то … то (взаимно)
+1	〜であれ / 〜であれ〜であれ		whether / whatever	будь то
+1	〜てからというもの		ever since	с тех самых пор
+1	〜でなくてなんだろう		if not … what is	что это, если не
+1	〜てはばからない		not hesitate to	не стесняться
+1	〜てやまない		never cease to	не перестаю
+1	〜手前		in front of, out of face	перед, ради лица
+1	〜と相まって		coupled with	в сочетании с
+1	〜とあって / 〜とあれば		because / if it's for	поскольку / раз уж ради
+1	〜といい〜といい		both … and …	и … и …
+1	〜といったところだ		at most	самое большее
+1	〜といえども		even though	хотя и
+1	〜といったらない		extremely	невероятно
+1	〜ときたら		when it comes to (criticism)	уж этот …
+1	〜としたことが		of all people	чтобы я (и такое)
+1	〜とはいえ		although	хотя и
+1	〜とばかりに		as if to say	словно говоря
+1	〜ともなく / 〜ともなしに		without intending	невольно
+1	〜ともなると / 〜ともなれば		once it's (a level)	когда речь о
+1	〜ないではおかない		will definitely	непременно
+1	〜ないまでも		even if not	хоть и не
+1	〜ないものでもない		not impossible	не исключено
+1	〜ながらに		while, as	как есть, с самого
+1	〜なくして(は) / 〜なしに		without	без
+1	〜ならでは		unique to	присущий только
+1	〜なり		as soon as	как только
+1	〜なりに		in one's own way	по-своему
+1	〜なり〜なり		either … or	или … или
+1	〜に至って / 〜に至るまで		up to, until	вплоть до
+1	〜にあって		in, at (situation)	находясь в
+1	〜にかかわる		affect, concern	касающийся
+1	〜にかたくない		easy to (imagine)	нетрудно (представить)
+1	〜にして		only at / at the same time	лишь в / одновременно
+1	〜に即して		in line with	в соответствии с
+1	〜にたえる / 〜にたえない		worth / unbearable	стоит / невыносимо
+1	〜に足る		worthy of	достойный
+1	〜にひきかえ		in contrast	в противоположность
+1	〜にもまして		more than	более чем
+1	〜の至り / 〜の極み		utmost	верх, предел
+1	〜はおろか		let alone	не говоря уже
+1	〜ばこそ		precisely because	именно потому что
+1	〜ばそれまでだ		if …, that's the end	если …, то всё
+1	〜べからず / 〜べからざる		must not	нельзя (книжн.)
+1	〜べく		in order to	чтобы (книжн.)
+1	〜まじき		unbecoming	недопустимый
+1	〜までだ / 〜までのことだ		just, simply	просто, только и всего
+1	〜までもない		no need to	нет нужды
+1	〜まみれ		covered in	весь в
+1	〜めく		show signs of	напоминающий
+1	〜もさることながら		not only … but also	не только … но и
+1	〜ものを		if only	а ведь
+1	〜や否や / 〜や		as soon as	как только
+1	〜ゆえ(に)		because of	по причине
+1	〜をおいて		other than	кроме
+1	〜を限りに		as of, last	начиная с, последний раз
+1	〜を皮切りに		starting with	начиная с
+1	〜を禁じ得ない		can't help (feeling)	не могу сдержать
+1	〜をもって		by means of / as of	посредством / с
+1	〜をものともせず		in defiance of	невзирая на
+1	〜を余儀なくされる		be forced to	быть вынужденным
+1	〜をよそに		ignoring	не обращая внимания
+1	〜んがため(に)		in order to	дабы
+1	〜んばかり		as if about to	чуть ли не
+1	〜ずじまい		never got to	так и не
+1	〜ではあるまいし		it's not as if	ведь не
+1	〜に越したことはない		nothing better than	лучше всего
+1	〜にかこつけて		using … as an excuse	под предлогом
+1	〜にとどまらず		not limited to	не ограничиваясь
+1	〜にのっとって		in accordance with	согласно
+1	〜を踏まえて		based on	с учётом
+1	〜を境に		since, from	с (рубежа)
+1	〜からある / 〜からする		as much as	целых, не менее
+1	〜こそあれ		although	хоть и
+1	〜ずとも		even without	даже не
+1	〜てまで		even going so far as	даже ценой
+1	〜ともあろう		of all people (should)	такой как … и
+1	〜なりとも		at least	хотя бы
+1	〜にもほどがある		there are limits to	всему есть предел
+1	〜放題		as much as one likes	сколько угодно
+1	〜ぶる		act as if	строить из себя
+1	〜もなにも		no … about it	какое там
+1	〜であろう		probably (written)	вероятно (книжн.)

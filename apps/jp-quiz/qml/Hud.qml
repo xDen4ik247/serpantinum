@@ -1,6 +1,6 @@
 import QtQuick
 
-// Top bar: rank + rating (with animated delta) · combo/streak · level/XP · daily goal + day streak.
+// Top bar: Rank tier (as in the Rank tab) + rating (with animated delta) · combo/streak · level/XP · daily goal + day streak.
 Item {
     id: hud
     property var theme
@@ -24,7 +24,9 @@ Item {
             Text {
                 id: rankText
                 anchors.centerIn: parent
-                text: app.rank || "…"
+                // the Rank tier (same as the Rank tab): last tier reached → the one you work toward, and how far
+                text: { const b = app.rankBrief; if (!b) return "…"; const n = l => l === "常用" ? "常用漢字" : l;
+                        return b.step >= 7 ? "✓ All" : (b.reached ? n(b.reached) + " → " : "→ ") + (b.step >= 6 ? "100%" : n(b.target)) + " " + Math.floor(b.progress * 100) + "%"; }
                 color: theme.accent
                 font { family: theme.font; pixelSize: 16; weight: Font.Bold }
             }

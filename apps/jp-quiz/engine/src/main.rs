@@ -4,6 +4,9 @@
 //!   {"cmd": "answer", "qid": 3, "order": ["本を", "読んで", "いる"]} | {"cmd": "skip", "qid": 3}
 //!   {"cmd": "stats"} | {"cmd": "settings", "set": {"target": 0.8}} | {"cmd": "anki_add", "key": "vc:1:2"}
 //!   {"cmd": "grammar"} | {"cmd": "grammar_example", "id": "tai"} | {"cmd": "anki_sync"} | {"cmd": "peek"} | {"cmd": "quit"}
+//!   {"cmd": "rank"} (the Rank tab: tiers, what is left, study plan) | {"cmd": "undo"} (take back the last answer)
+//!   {"cmd": "replay", "item": "vc:1:2", "correct": true, "ms": 5000} (maintenance: rebuild progress after accidental input)
+//!   {"cmd": "calib_start"} | {"cmd": "calib_answer", "choice": 2 or null} | {"cmd": "calib_cancel"} (placement test)
 //! Every reply is one JSON object per line, echoing the request's "rid".
 //! Test hooks: JPQUIZ_SEED=<int> seeds the random choices like random.Random(seed);
 //! JPQUIZ_TEST_CLOCK=1 lets a request carry "_now" (unix seconds) to set the engine's clock
@@ -16,6 +19,7 @@ mod model;
 mod pyjson;
 mod pymath;
 mod pyrand;
+mod review;
 
 use serde_json::{json, Value};
 use std::cell::Cell;
@@ -86,6 +90,12 @@ fn main() {
                         other => other.to_string(),
                     }).unwrap_or_default()),
                     "anki_sync" => eng.anki_sync(),
+                    "rank" => eng.rank(),
+                    "undo" => eng.undo(),
+                    "replay" => eng.replay(r.get("item").and_then(Value::as_str).unwrap_or(""), r.get("correct").and_then(Value::as_bool).unwrap_or(false), r.get("ms").and_then(Value::as_i64).unwrap_or(5000)),
+                    "calib_start" => eng.calib_start(),
+                    "calib_answer" => eng.calib_answer(r.get("choice").and_then(Value::as_i64)),
+                    "calib_cancel" => Ok(eng.calib_cancel()),
                     "peek" => Ok(eng.peek()),
                     "quit" => break,
                     other => {

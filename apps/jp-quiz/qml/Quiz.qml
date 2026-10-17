@@ -11,7 +11,10 @@ Item {
     readonly property var ui: q ? q.ui : null
     readonly property var res: app.res
     readonly property bool answered: app.state === "feedback"
-    readonly property bool longChoices: q && (q.kind === "meaning" || q.kind === "produce" || q.kind === "odd")
+    readonly property bool longChoices: q && (q.kind === "meaning" || q.kind === "produce" || q.kind === "odd" || q.kind === "anki_mean")
+    // a due card from the user's own Anki decks (setting anki_reviews); the answer goes back to Anki
+    readonly property bool isAnki: !!(q && q.mode === "anki")
+    readonly property bool meaningKind: !!q && (q.kind === "meaning" || q.kind === "anki_mean")
     readonly property bool ru: app.ru()
 
     readonly property var prompts: ({
@@ -26,7 +29,9 @@ Item {
         kwrite: ["Which kanji spelling is right here?", "Как это пишется кандзи?"],
         vocab: ["Which word fits?", "Какое слово подходит?"],
         meaning: ["What does this mean?", "Что это значит?"],
-        produce: ["How do you say this in Japanese?", "Как сказать это по-японски?"]
+        produce: ["How do you say this in Japanese?", "Как сказать это по-японски?"],
+        anki_read: ["How is the highlighted word read?", "Как читается выделенное слово?"],
+        anki_mean: ["What does the highlighted word mean?", "Что значит выделенное слово?"]
     })
 
     function translation() {
@@ -71,7 +76,8 @@ Item {
             anchors { left: parent.left; top: parent.top; margins: 18 }
             spacing: 8
             Chip { theme: root.theme; text: root.q ? app.tr(root.q.kind_name) : ""; tint: theme.accent }
-            Chip { theme: root.theme; text: root.q ? "N" + root.q.level : ""; tint: theme.accent2 }
+            Chip { theme: root.theme; visible: !root.isAnki; text: root.q ? "N" + root.q.level : ""; tint: theme.accent2 }
+            Chip { theme: root.theme; visible: root.isAnki; text: (root.isAnki && root.ui && root.ui.deck) || ""; tint: theme.gold }
             Chip { theme: root.theme; visible: root.q && root.q.new; text: root.ru ? "НОВОЕ" : "NEW"; tint: theme.good }
             Chip { theme: root.theme; visible: root.q && (root.q.why === "due" || root.q.why === "relearn"); text: root.ru ? "ПОВТОР" : "REVIEW"; tint: theme.gold }
             Chip { theme: root.theme; visible: !!(root.q && root.q.focus); text: root.ru ? "ТРЕНИРОВКА" : "DRILL"; tint: theme.accent2 }
@@ -92,7 +98,7 @@ Item {
             id: match
             anchors { right: parent.right; top: parent.top; margins: 18 }
             width: 210; height: 30
-            visible: !!root.q
+            visible: !!root.q && !root.isAnki
             Text {
                 id: matchText
                 anchors { right: parent.right; top: parent.top }
@@ -222,7 +228,7 @@ Item {
             wrapMode: Text.WordWrap
             maximumLineCount: 2
             elide: Text.ElideRight
-            visible: root.q && root.q.kind !== "meaning" && root.q.kind !== "produce" && root.q.kind !== "odd"
+            visible: root.q && !root.meaningKind && root.q.kind !== "produce" && root.q.kind !== "odd"
             text: root.translation()
             color: theme.alpha(theme.subtext0, 0.92)
             font { family: theme.font; pixelSize: 16; italic: true }
@@ -245,7 +251,7 @@ Item {
                 height: root.longChoices ? 50 : 66
                 index_: index
                 label: modelData
-                jp: root.q && root.q.kind !== "meaning"
+                jp: root.q && !root.meaningKind
                 small: root.longChoices
                 state_: {
                     if (!root.answered) return (app.chosen === index && app.state === "waiting") ? "pressed" : "idle";
@@ -362,6 +368,7 @@ Item {
                     if (!root.res) return "";
                     const full = root.res.fixed || root.res.full || "";
                     const tr = (root.ru && root.res.ru) ? root.res.ru : (root.res.en || "");
+                    if (root.q && root.q.kind === "anki_mean") return tr ? full + "   —   " + tr : full;
                     return root.q && (root.q.kind === "meaning" || root.q.kind === "produce") ? full + "   —   " + tr : full;
                 }
                 visible: text !== ""
@@ -371,27 +378,39 @@ Item {
             }
         }
 
-        // add to Anki — right or wrong (A; during the next question A adds the one you just passed)
+        // add to Anki — right or wrong (A; during the next question A adds the one you just passed).
+        // On an Anki review it shows what went back to Anki instead: Pass / Fail / waiting for Anki.
         Rectangle {
             id: ankiBtn
             anchors { right: parent.right; rightMargin: 16; top: parent.top; topMargin: 16 }
-            readonly property bool done: !!(root.res && root.res.in_anki)
+            readonly property var review: root.res && root.res.anki ? root.res.anki : null
+            readonly property bool done: !!(root.res && root.res.in_anki) && !(review && review.status !== "sent")
+            readonly property color tint: !review ? (done ? theme.good : theme.accent)
+                                        : (review.status === "sent" ? (review.ease === 3 ? theme.good : theme.bad) : theme.gold)
             width: ankiRow.implicitWidth + 22; height: 32; radius: 16
-            color: done ? theme.alpha(theme.good, 0.16) : (ankiMouse.containsMouse ? theme.alpha(theme.accent, 0.26) : theme.alpha(theme.accent, 0.14))
-            border.color: done ? theme.alpha(theme.good, 0.45) : theme.alpha(theme.accent, 0.40)
+            color: (done || review) ? theme.alpha(tint, 0.16) : (ankiMouse.containsMouse ? theme.alpha(theme.accent, 0.26) : theme.alpha(theme.accent, 0.14))
+            border.color: theme.alpha(tint, (done || review) ? 0.45 : 0.40)
             Row {
                 id: ankiRow
                 anchors.centerIn: parent
                 spacing: 6
-                Text { text: ankiBtn.done ? "" : ""; color: ankiBtn.done ? theme.good : theme.accent; font { family: theme.icons; pixelSize: 13 } anchors.verticalCenter: parent.verticalCenter }
+                Text { text: ankiBtn.done ? "" : ""; color: ankiBtn.tint; font { family: theme.icons; pixelSize: 13 } anchors.verticalCenter: parent.verticalCenter }
                 Text {
-                    text: ankiBtn.done ? (root.ru ? "в Anki" : "in Anki") : (root.ru ? "A · в Anki" : "A · Anki")
-                    color: ankiBtn.done ? theme.good : theme.accent
+                    text: {
+                        const r = ankiBtn.review;
+                        if (r) {
+                            if (r.status === "skipped") return root.ru ? "Anki · без оценки" : "Anki · not graded";
+                            if (r.status === "queued") return root.ru ? "Anki · ждёт Anki" : "Anki · waiting for Anki";
+                            return r.ease === 3 ? (root.ru ? "Anki · зачёт" : "Anki · Pass") : (root.ru ? "Anki · незачёт" : "Anki · Fail");
+                        }
+                        return ankiBtn.done ? (root.ru ? "в Anki" : "in Anki") : (root.ru ? "A · в Anki" : "A · Anki");
+                    }
+                    color: ankiBtn.tint
                     font { family: theme.font; pixelSize: 12; weight: Font.DemiBold }
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
-            MouseArea { id: ankiMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.ankiAdd() }
+            MouseArea { id: ankiMouse; anchors.fill: parent; enabled: !ankiBtn.review; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: app.ankiAdd() }
         }
 
         // dictionary glosses of the sentence's words, each in the sense it has in *this* sentence (JMdict)
