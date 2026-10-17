@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# fcitx-jp-gate — keeps Japanese (Mozc) out of the way of the EN/RU switch.
+#
+# Alt+Shift is fcitx5's trigger key, so it only toggles EN <-> RU (keyboard-us is the "off" state,
+# keyboard-ru the default "on" one). This daemon watches the switches: the third EN/RU switch in a
+# quick row (each within FCITX_JP_GAP_MS of the last, default 1000) lands on Mozc instead. Leaving Mozc
+# puts RU back as the "on" input method, so the next switch is EN <-> RU again.
+#
+# Runs as fcitx-jp-gate.service, bound to fcitx5.service.
+set -u
+
+gap_ms=${FCITX_JP_GAP_MS:-1000}
+quiet_ms=400   # our own switches echo back as icon changes; ignore them for this long
+
+now_ms() { local t=${EPOCHREALTIME/[.,]/}; echo $(( t / 1000 )); }
+cur_im() { timeout 1 fcitx5-remote -n 2>/dev/null; }
+is_enru() { [ "$1" = keyboard-us ] || [ "$1" = keyboard-ru ]; }
+
+last=$(cur_im)
+streak=0 last_switch=0 quiet_until=0 jp_default=0
+[ "$last" = mozc ] && jp_default=1
+
+# fcitx5 announces every switch by updating its (hidden) tray icon.
+coproc MON { exec dbus-monitor --session "type='signal',interface='org.kde.StatusNotifierItem',member='NewIcon'" 2>/dev/null; }
+trap 'kill "$MON_PID" 2>/dev/null' EXIT
+trap 'exit 0' TERM INT
+
+while IFS= read -r line <&"${MON[0]}"; do
+    [[ $line == *member=NewIcon* ]] || continue
+    im=$(cur_im) || continue
+    [ -n "$im" ] && [ "$im" != "$last" ] || continue
+    now=$(now_ms)
+    if (( now < quiet_until )); then last=$im; continue; fi
+
+    if [ "$im" = mozc ]; then
+        jp_default=1 streak=0
+    elif [ "$last" = mozc ] && [ "$im" = keyboard-us ] && (( jp_default )); then
+        # Mozc is still the "on" input method; make it RU again, then go back to EN.
+        quiet_until=$(( now + quiet_ms ))
+        fcitx5-remote -s keyboard-ru && fcitx5-remote -c
+        jp_default=0 streak=0
+        im=keyboard-us
+    elif is_enru "$im" && is_enru "$last"; then
+        if (( now - last_switch <= gap_ms )); then streak=$(( streak + 1 )); else streak=1; fi
+        last_switch=$now
+        if (( streak >= 3 )); then
+            quiet_until=$(( now + quiet_ms ))
+            fcitx5-remote -s mozc
+            jp_default=1 streak=0
+            im=mozc
+        fi
+    fi
+    last=$im
+done

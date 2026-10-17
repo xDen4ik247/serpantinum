@@ -2,7 +2,7 @@
 # Bridge between fcitx5 and Serpantinum's keyboard pill (see ~/.config/serp-tweaks/patches).
 #
 #   fcitx-layout get     print EN / RU / JP for the active input method (fails if fcitx5 isn't running)
-#   fcitx-layout next    switch to the next input method, in fcitx5's profile order
+#   fcitx-layout next    toggle EN <-> RU like Alt+Shift (three quick ones = JP, see fcitx-jp-gate)
 #   fcitx-layout watch   wait until the input method changes, then print one line
 set -u
 
@@ -17,16 +17,9 @@ case "${1:-}" in
         esac
         ;;
     next)
-        mapfile -t ims < <(awk '/^\[Groups\/0\/Items\//{f=1; next} /^\[/{f=0} f && /^Name=/{sub(/^Name=/, ""); print}' \
-                               "${XDG_CONFIG_HOME:-$HOME/.config}/fcitx5/profile")
-        [ ${#ims[@]} -gt 0 ] || exit 1
-        cur=$(fcitx5-remote -n 2>/dev/null)
-        for i in "${!ims[@]}"; do
-            if [ "${ims[$i]}" = "$cur" ]; then
-                exec fcitx5-remote -s "${ims[$(( (i + 1) % ${#ims[@]} ))]}"
-            fi
-        done
-        exec fcitx5-remote -s "${ims[0]}"
+        # same as Alt+Shift: EN <-> RU, and fcitx-jp-gate turns the third quick switch into Mozc
+        fcitx5-remote >/dev/null 2>&1 || exit 1
+        exec fcitx5-remote -t
         ;;
     watch)
         # fcitx5 announces every switch by updating its (hidden) tray icon.
