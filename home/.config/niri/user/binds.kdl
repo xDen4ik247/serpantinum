@@ -6,7 +6,9 @@ binds {
     // ── Apps ──
     Mod+Return hotkey-overlay-title="Terminal" { spawn "kitty"; }
     Mod+B hotkey-overlay-title="Firefox" { spawn "focus-or-run" r#"^(firefox|org\.mozilla\.firefox)$"# "firefox"; }
-    Mod+Shift+F23 hotkey-overlay-title="Claude Code: pick a folder (Copilot key)" { spawn "claude-menu"; }
+    // Claude Code folder menu: the Copilot key, and Mod+Shift+Return on keyboards without one.
+    Mod+Shift+F23 hotkey-overlay-title="Claude Code: pick a folder" { spawn "claude-menu"; }
+    Mod+Shift+Return hotkey-overlay-title="Claude Code: pick a folder" { spawn "claude-menu"; }
     Mod+E hotkey-overlay-title="Files" { spawn "nautilus"; }
 
     // ── Serpantinum ──
