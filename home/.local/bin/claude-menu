@@ -1,0 +1,38 @@
+#!/bin/bash
+# claude-menu — Copilot key: pick the folder to start Claude Code in (liquid-glass menu).
+# Folders: ~/claude (always first) plus one path per line in ~/.config/claude-menu/folders
+# (yours, never in the repo; # comments and ~ allowed). With no extra folders it starts in ~/claude
+# straight away. A second press closes an open menu. UI: ~/.local/share/claude-menu/ui/shell.qml
+#   claude-menu            show the menu
+#   claude-menu run DIR    start Claude Code in DIR (what the menu calls)
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/claude-menu/folders"
+run() {
+    local d="${1:-$HOME/claude}"
+    [ "$d" = "$HOME/claude" ] && mkdir -p "$d"
+    cd "$d" || exit 1
+    exec kitty --class claude --title "Claude · ${d/#$HOME/\~}" zsh -ic claude
+}
+[ "$1" = run ] && run "$2"
+
+if [ ! -f "$conf" ]; then
+    mkdir -p "$(dirname "$conf")"
+    printf '%s\n' "# Folders for the Claude menu (Copilot key), one per line. ~/claude is always listed first." \
+                  "# ~/Projects/my-app" > "$conf"
+fi
+dirs=()
+while IFS= read -r l; do
+    l="${l%%#*}"; l="${l#"${l%%[![:space:]]*}"}"; l="${l%"${l##*[![:space:]]}"}"
+    [ -z "$l" ] && continue
+    l="${l/#\~/$HOME}"; l="${l%/}"
+    [ "$l" = "$HOME/claude" ] || dirs+=("$l")
+done < "$conf"
+[ ${#dirs[@]} -eq 0 ] && run
+
+dir="${XDG_RUNTIME_DIR:-/tmp}/claude-menu"
+mkdir -p "$dir"
+if [ -f "$dir/pid" ] && kill -0 "$(cat "$dir/pid")" 2>/dev/null; then
+    kill "$(cat "$dir/pid")"; rm -f "$dir/pid"; exit 0
+fi
+CM_DIRS="$(printf '%s\n' "$HOME/claude" "${dirs[@]}")" CM_CONF="$conf" \
+    qs -p "$HOME/.local/share/claude-menu/ui" >"$dir/log" 2>&1 &
+echo $! > "$dir/pid"

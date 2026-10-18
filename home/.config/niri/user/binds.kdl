@@ -6,7 +6,7 @@ binds {
     // ── Apps ──
     Mod+Return hotkey-overlay-title="Terminal" { spawn "kitty"; }
     Mod+B hotkey-overlay-title="Firefox" { spawn "focus-or-run" r#"^(firefox|org\.mozilla\.firefox)$"# "firefox"; }
-    Mod+Shift+F23 hotkey-overlay-title="Claude Code (Copilot key)" { spawn-sh "mkdir -p ~/claude && cd ~/claude && exec kitty --class claude zsh -ic claude"; }
+    Mod+Shift+F23 hotkey-overlay-title="Claude Code: pick a folder (Copilot key)" { spawn "claude-menu"; }
     Mod+E hotkey-overlay-title="Files" { spawn "nautilus"; }
 
     // ── Serpantinum ──
