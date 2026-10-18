@@ -81,6 +81,7 @@ The full list is one keypress away (**Mod+Shift+/**). The ones added by this edi
 | Mod+Shift+Z | Reading helper | Alt+K | Hiragana ↔ katakana |
 | Mod+W | Wallpaper picker | Mod+Shift+G | Show / hide widgets |
 | Mod+Alt+I | Repair the input method | Mod+Alt+R | Restart the shell |
+| Copilot / Mod+Shift+↵ | Claude Code: pick a folder (`~/.config/claude-menu/folders`) | | |
 
 ## Install
 
