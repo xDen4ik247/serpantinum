@@ -23,7 +23,7 @@ G_REPO_URL="${GLASS_REPO_URL:-https://github.com/xDen4ik247/serpantinum.git}"
 G_REF="${GLASS_REF:-glass}"
 G_CLONE="${XDG_CACHE_HOME:-$HOME/.cache}/serp-glass"
 # The upstream commit the glass branch is built on. Update it whenever the branch is rebased onto upstream.
-G_UPSTREAM_BASE=cfdd81039163feab0609cac76521ae62c85a2609
+G_UPSTREAM_BASE=ed1f0658a8b79523e18c9c450af1788da806cd82
 
 # ------------------------------------------------------------------ bootstrap (curl | bash)
 G_SELF=""

@@ -1,3 +1,132 @@
+### 2.2.14
+
+- feat(picker): preview videos in the image picker
+- fix(lock): show resize cursors in the lock editor and keep short element side handles
+- feat(lock): add orbit and liquid fingerprint looks, success shader, and block fingerprint after max attempts
+- feat(clock): redraw stretched clock digits as translucent vector glyphs
+- feat(lock): add fingerprint looks and a show text toggle in the lock editor
+- feat(clock): redesign digital and lockscreen clocks and add stretched clock variant
+- feat(lock): show the custom lock background, including video, in the lock screen editor
+- feat(lock): allow deleting the lock clock
+- feat(lock): use widget clock variants for the lock clock and add lockscreen clock widget
+- fix(lock): restore button look for keyboard and battery lock widgets
+- fix(calculator): type = to evaluate, repeat on equals, invalid paste error, copy and top/bottom sizing
+- style(calculator): use smaller key corner radius
+- fix(input): stop aligned text sliding in when the field resizes
+- fix(clipboard): grab search focus once on open to avoid repeated clipboard read timeouts
+- feat(quickactions): add calculator with normal and advanced modes, history and translations
+- fix(guide): load lock background preview reliably and play video wallpapers live
+- style(bar): use Google Sans Flex in the material time face
+- feat(clock): render the material widget clock with Google Sans Flex
+- fix(lock): render wallpaper blur in desktop widgets on the lock screen
+- perf(glass): build wallpaper blur internals only while the blur is active
+- fix(i18n): translate the dock background setting in all languages
+- perf(guide): load theme preset tiles asynchronously
+- perf(guide): load widget preset wallpapers and faces asynchronously at preview size
+- perf(glass): create the liquid glass shader item only while the fill is active
+- perf(guide): pause background tab preload during open and close animations
+- fix(lock): track scaled face size so the battery matches its redactor size
+- fix(draw): cap undo at 100 steps without dropping history so undo no longer erases older strokes
+- feat(widgets): add undo and redo to the widget redactor
+- feat(lock): add undo and redo to the lock screen redactor
+- feat(lock): use bar battery and keyboard faces as lock widgets with a new battery button style
+- feat(lock): refit default panel layout and migrate untouched legacy panels
+- feat(widgets): allow smaller weather card and flatter music widget
+- style(guide): tighten spacing in display settings groups and widget cards
+- fix(lock): enable hover on redactor drag areas so resize cursors show
+- fix(guide): hide fingerprint attempts setting when fingerprint is unavailable
+- fix(lock): hold wallpaper back until the curtain cascade covers the frozen screenshot
+- feat(lock): add lock screen background selector with follow wallpaper and custom image or video
+- feat(lock): add lock screen redactor and render the lock screen from its saved layout
+- feat(lock): add lock screen settings tab with attempt limits and fingerprint toggle
+- fix(lyrics): ignore stale position readings and guard seeks to stop jumps to the start
+- fix(media): pass player id to art_fetch.sh from the music popup
+- fix(quickactions): only switch tabs on scroll over the sidebar (#461)
+
+### 2.2.13
+
+- perf(glass): skip geometry recompute when nothing moved
+- fix(glass): fade lens distortion on large glass panels
+- fix(clipboard): stop wl-paste watcher when quickshell exits
+- feat(theme): allow element opacity down to 0
+- chore: ignore .omc
+- perf(glass): replace per-frame ancestor-tracking bindings with imperative refresh
+- fix(glass): reduce blur behind liquid glass
+- feat(glass): add fresnel, inner lens and sharper dispersion and drop flat fills
+- perf(daemon): speed up stop and kill and exit cleanly on ctrl+c
+- refactor(guide): split theme, display, general and notifications tabs into components
+- refactor(guide): split digital wellbeing tab into view components
+- refactor(guide): split bar tabs into general and modules components
+- perf(guide): preload all tabs on startup and keep preloading while hidden
+- refactor(bar,network): rename root window ids to avoid shadowing child properties
+- refactor(media): split music popup into audio, equalizer, lyrics and player state components
+- refactor(lock): split lock screen into surface, dashboard, wings, clock and backdrop components
+- refactor(dock): split dock into window, container, app button and picker components
+- refactor(guide): extract shared GuideTab component and extend it from every tab
+- refactor(guide): split bar modules tab into shared module card, preview and style card components
+- fix(bar): guard group background bindings against destroyed wrapper in modular style
+- perf(calendar): drive clock pulse and midnight rebuild from the shared datetime singleton
+- perf(timer): tick fast only while stopwatch is visible and skip unchanged exports
+- perf: drive 16ms decay and reveal timers with frame animations
+- fix(launcher): do not attach to the bar in modular style
+- fix(launcher): keep glass hover lens under the cursor while scrolling
+- fix(bar): keep group glass bindings reactive so grouped modules render liquid glass in modular style
+- fix(syspanel): use transparent liquid fill for battery box in glass mode
+- fix(glass): disable blur passes and unbind mask source when unused to silence texture provider warning
+- fix(launcher): round card size and corner radius to avoid subpixel fillet mismatch
+- fix(fillets): keep ear blur enabled once the radius has been non-zero
+- fix(glass): pad wallpaper blur and mask corners in a shader to remove edge artifacts in blur mode
+- fix: guard pills face and volume popup delegates against undefined parent during teardown
+- fix(fillets): stop double-premultiplying corner cutout color below full opacity
+- fix(volume): adapt list items and wave orb to liquid glass
+- fix(bar): widen active workspace pill in guide preview
+- fix(glass): adapt media face thumb to liquid glass when not playing
+- perf(glass): cut blur taps in flat glass interiors and cull off-screen previews in bar modules tab
+- fix(switch): avoid dark pulse on selected tab when glass activates
+- fix(glass): stop glass surfaces and icons flashing when created
+- fix(glass): align glass fill sampling with backdrop orientation so transitions follow on rotated sidebar edges
+- fix(glass): tone down rainbow fringe at rest and let it follow motion
+- fix(guide): load tabs synchronously again
+- fix(switch): track repeater item creation so the selected highlight shows in async loaded tabs
+- perf(guide): stagger async tab preload, cache search haystacks and avoid relayout when closing search
+- feat(glass): add shared GlassLens and sliding hover, lift and ripple effects across inputs, launcher, sidebar, dock, tray and notifications
+- fix(bar): drop glass rim on fill bar and its corner fillets
+- fix(launcher): keep attaching to the bar when the bar is translucent
+- docs: document wake event in idle helper
+- fix(lock): restart fingerprint auth after resuming from sleep (#455)
+- fix(dropdown): route delegate glass bindings through ListView.view so the first item gets liquid glass on hover
+- fix(glass): render fill bar outer corners and edge fillets as liquid glass
+- feat(glass): derive draggable glass type from accent color and reduce tint
+- fix(lock): apply element opacity to lock screen usage and network cards
+- fix(guide): collapse dock settings and blobs fully to zero height
+- fix(glass): keep liquid glass from sampling off-screen wallpaper and show quickactions handle pill in glass mode
+- fix(glass): render attached corner fillets as liquid glass across dock, launcher, tray, osd, clipboard and sidebar
+- fix(guide): restore glass osd preview card and use glass draggable slider
+- feat(guide): adapt screen selector and osd/notification previews to liquid glass
+- fix(launcher): render selected item as frosted glass without tint in liquid glass
+- fix(media): render playback buttons as full liquid glass with shadow
+- fix(wellbeing): guard chart bindings against teardown and whiten time difference text in liquid glass
+- feat(wellbeing): adapt month and week heatmaps to liquid glass
+- feat(wellbeing): render progress bars and bar charts as liquid glass with white text
+- feat(wellbeing): adapt cards and app rows to liquid glass
+- perf(guide): load tabs lazily and skip inactive glass bindings
+- feat(glass): add edge warp, diffraction fringe and motion-driven zoom to liquid glass
+- chore(i18n): add element opacity and wallpaper blur translations
+- chore(i18n): add menu module translations
+- feat(bar): add launcher button and style options to menu module
+- feat(network): adapt power button and core layer to liquid glass
+- fix: adapt notifications and lock panel to wallpaper blur mode
+- fix: anchor liquid fill scale to the button's left edge
+- fix(lock): adapt notification buttons, network speed and power button to liquid glass
+- feat(tray): add liquid glass hover to tray menu items
+- feat(dock): adapt app picker to liquid glass
+- fix: clamp fill button background alpha to avoid invalid setAlphaF values in liquid glass
+- feat: readable liquid glass with adaptive darkening, white text and accent glass network nodes
+- fix(launcher): render the glass selection outside the scrolling list so scroll and selection stay in sync
+- feat: use liquid fill shader for hold buttons in liquid glass
+- style: darken liquid glass surfaces
+- fix(launcher): draw the selection highlight behind item text outside liquid glass
+
 ### 2.2.12
 
 - feat: improve liquid glass

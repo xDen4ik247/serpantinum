@@ -48,6 +48,7 @@ ShellRoot {
     Lock {}
     WidgetRedactor {}
     Cheatsheet {}
+    LockRedactor {}
 
     Launcher {}
     Clipboard {}    

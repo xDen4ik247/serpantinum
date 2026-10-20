@@ -308,7 +308,8 @@ Variants {
                 "actions/DrawAction.qml",
                 "actions/SystemUsage.qml",
                 "actions/Timer.qml",
-                "actions/Notes.qml"
+                "actions/Notes.qml",
+                "actions/Calculator.qml"
             ]
 
             property int tabCount: Math.max(1, tabModules.length)
@@ -323,6 +324,8 @@ Variants {
                     return { name: I18n.t("quickactions.tabs.timer"), icon: "󰔛" };
                 } else if (mod.indexOf("Notes") !== -1) {
                     return { name: I18n.t("quickactions.tabs.notes"), icon: "󰈙" };
+                } else if (mod.indexOf("Calculator") !== -1) {
+                    return { name: I18n.t("quickactions.tabs.calculator"), icon: "󰃬" };
                 }
                 return { name: I18n.t("quickactions.tabs.tab"), icon: "󰍜" };
             }
@@ -1319,6 +1322,27 @@ Variants {
                             }
                             onReleased: { if (!containsMouse) floatingWidget.kickTimer(); }
                         }
+
+                        MouseArea {
+                            id: sidebarWheelArea
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.left: parent.left
+                            anchors.leftMargin: floatingWidget.edgeBleed
+                            width: floatingWidget.sidebarW
+                            acceptedButtons: Qt.NoButton
+                            enabled: floatingWidget.isSidebarVisible
+
+                            onWheel: wheel => {
+                                let step = 0;
+                                if (wheel.angleDelta.y > 0) step = (floatingWidget.activeEdge === "right" || floatingWidget.activeEdge === "top") ? 1 : -1;
+                                else if (wheel.angleDelta.y < 0) step = (floatingWidget.activeEdge === "right" || floatingWidget.activeEdge === "top") ? -1 : 1;
+
+                                if (step !== 0) {
+                                    floatingWidget.activeIndex = Math.max(0, Math.min(floatingWidget.tabCount - 1, floatingWidget.activeIndex + step));
+                                }
+                            }
+                        }
                     }
 
                     Item {
@@ -1398,6 +1422,7 @@ Variants {
                                 property string activeEdge: floatingWidget.activeEdge
 
                                 property bool isCurrentTarget: index === floatingWidget.activeIndex
+                                property bool isExpandedState: floatingWidget.isExpanded
                                 property real modWidth: (status === Loader.Ready && item && item.preferredWidth !== undefined) ? item.preferredWidth : floatingWidget.baseExpandedWidth
                                 property real modExt: (status === Loader.Ready && item && item.preferredExtraLength !== undefined) ? item.preferredExtraLength : floatingWidget.baseExpandedExtraLength
 
@@ -1439,15 +1464,6 @@ Variants {
 
                             onEntered: hideTimer.stop()
                             onExited: { if (!sidebarDragArea.containsMouse) floatingWidget.kickTimer(); }
-                            onWheel: wheel => {
-                                let step = 0;
-                                if (wheel.angleDelta.y > 0) step = (floatingWidget.activeEdge === "right" || floatingWidget.activeEdge === "top") ? 1 : -1;
-                                else if (wheel.angleDelta.y < 0) step = (floatingWidget.activeEdge === "right" || floatingWidget.activeEdge === "top") ? -1 : 1;
-
-                                if (step !== 0) {
-                                    floatingWidget.activeIndex = Math.max(0, Math.min(floatingWidget.tabCount - 1, floatingWidget.activeIndex + step));
-                                }
-                            }
                         }
                     }
 

@@ -845,7 +845,7 @@ Item {
                 z: -1
                 anchors.fill: parent
                 radius: parent.radius
-                surfaceEnabled: !contentWrapper.isSolid && !contentWrapper.glassActive
+                surfaceEnabled: !contentWrapper || (!contentWrapper.isSolid && !contentWrapper.glassActive)
                 standalone: true
             }
 
@@ -854,12 +854,12 @@ Item {
                 anchors.fill: parent
                 z: -1
                 radius: parent.radius
-                allowed: contentWrapper.isSolid && contentWrapper.distinctPills && !contentWrapper.glassActive
+                allowed: !!contentWrapper && contentWrapper.isSolid && contentWrapper.distinctPills && !contentWrapper.glassActive
                 tintColor: ThemeBackend.surface0
                 tintAmount: 0.3
             }
 
-            readonly property bool islandShown: contentWrapper.glassActive && visible
+            readonly property bool islandShown: !!contentWrapper && contentWrapper.glassActive && visible
             readonly property real islandRadius: radius
             readonly property real islandOffsetY: contentWrapper.hideOffsetY
             readonly property bool groupHovered: {
@@ -872,7 +872,7 @@ Item {
 
             GlassPill {
                 anchors.fill: parent
-                visible: contentWrapper.glassActive
+                visible: !!contentWrapper && contentWrapper.glassActive
                 radius: groupBgRect.radius
                 tintAlpha: contentWrapper.glassTint
                 lit: groupBgRect.groupHovered
