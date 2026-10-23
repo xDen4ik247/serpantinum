@@ -164,7 +164,7 @@ for _s in ${G_ONLY//,/ }; do
 done
 
 # ------------------------------------------------------------------ modules
-for m in lib base system dotfiles rust shell services apps extras menu; do
+for m in lib base system dotfiles rust speedtest shell services apps extras menu; do
     # shellcheck disable=SC1090
     source "$G_MODULES/$m.sh" || { echo "serp-glass: can't load $G_MODULES/$m.sh" >&2; exit 1; }
 done
@@ -473,7 +473,7 @@ fi
 g_sudo_end
 
 g_step "dotfiles"
-if g_step_on dotfiles; then g_dotfiles_install; g_rust_install; g_manifest_save; else g_info "skipped (--only)"; fi
+if g_step_on dotfiles; then g_dotfiles_install; g_rust_install; g_speedtest_install; g_manifest_save; else g_info "skipped (--only)"; fi
 
 g_step "shell: glass changes to Serpantinum"
 if g_step_on shell; then g_shell_install; g_manifest_save; else g_info "skipped (--only)"; fi

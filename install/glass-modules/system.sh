@@ -19,6 +19,8 @@ G_PKGS_BASE=(
     fcitx5 fcitx5-mozc fcitx5-qt fcitx5-gtk fcitx5-configtool noto-fonts-cjk
     # typing for dictation / clipboard actions
     wtype
+    # iPhone hotspot over the USB cable (usbmuxd pairs the phone; the ipheth kernel driver does the rest)
+    usbmuxd libimobiledevice
 )
 G_PKGS_GCAL=(python-icalendar python-recurring-ical-events python-x-wr-timezone)   # unless ~/.venvs/gcal has them
 G_PKGS_SDDM=(sddm qt6-declarative qt6-svg qt6-5compat)

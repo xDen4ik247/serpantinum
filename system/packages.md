@@ -14,10 +14,12 @@ extras add their own build tools). Installed with pacman (official repos) on top
 | Input method | `fcitx5 fcitx5-mozc fcitx5-qt fcitx5-gtk fcitx5-configtool noto-fonts-cjk` |
 | Helpers | `rsync patch jq inotify-tools imagemagick python-gobject python-numpy python-rich python-yaml python-pillow` |
 | Calendar (`~/.venvs/gcal`) | `python-icalendar python-recurring-ical-events python-x-wr-timezone` |
+| iPhone hotspot over USB cable | `usbmuxd libimobiledevice` (the `ipheth` kernel driver loads by itself; on the phone tap Trust and turn on Personal Hotspot) |
 | Login screen | `sddm qt6-declarative qt6-svg qt6-5compat` |
 | Local LLM build (`--with llm`) | `cmake ninja gcc git opencl-headers opencl-clhpp ocl-icd intel-compute-runtime` |
 
 Built or downloaded by the installer's opt-in extras, not packaged:
+- `speedtest` (crate `cloudflare-speed-cli` 1.0.10, TUI; built with cargo into `~/.local/bin/speedtest` by `install/glass-modules/speedtest.sh`)
 - OpenVINO 2026.4.1 runtime (Intel's archive) in `~/.local/opt/openvino`
 - llama.cpp with `-DGGML_OPENVINO=ON` in `~/.local/opt/llama.cpp-ov`
 - Python envs: `~/.venvs/npu` (OCR/Whisper, py3.12), `~/.venvs/gcal`, `~/.venvs/default`

@@ -186,6 +186,8 @@ It works in these steps (`--only` runs some of them):
    `~/.config/serp-glass_backup/<date>/` first. Files of a feature you switched off are left out (and removed
    again if the installer put them there). `~/.config/niri/user/output.kdl` is only created when missing, so
    niri uses your displays' own modes.
+   It also builds the Rust helpers and the `speedtest` terminal tool (`cloudflare-speed-cli`, built once with cargo
+   into `~/.local/bin/speedtest`; a failed build only warns).
 4. **shell:** applies the glass changes to Serpantinum as `serp-tweaks` patches, which are re-applied after
    every upstream update.
 5. **apps:** builds and installs the apps you picked.
