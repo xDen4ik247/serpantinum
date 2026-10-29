@@ -14,8 +14,9 @@ G_SETTINGS_STRIP='del(.wallpaperDir, .general.language, .general.avatarPath, .ge
                      .syspanel, .idle.manualInhibit, .notifications.dnd, .dock.editing)'
 
 # Installed only when missing, never updated or removed: machine-specific files the repo has a neutral
-# starting point for (your displays: niri picks each one's preferred mode until you set one).
-G_SEED_FILES=" .config/niri/user/output.kdl "
+# starting point for (your displays: niri picks each one's preferred mode until you set one; user/x11.kdl is
+# rewritten by serp-x11 from your display scale, so it is only seeded for niri to find).
+G_SEED_FILES=" .config/niri/user/output.kdl .config/niri/user/x11.kdl "
 
 # The optional feature a home/ file belongs to: ai, app:<name>, or nothing (always installed).
 g_dotfile_feature() {

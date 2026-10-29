@@ -164,7 +164,7 @@ for _s in ${G_ONLY//,/ }; do
 done
 
 # ------------------------------------------------------------------ modules
-for m in lib base system dotfiles rust speedtest shell services apps extras menu; do
+for m in lib base system dotfiles rust speedtest x11 shell services apps extras menu; do
     # shellcheck disable=SC1090
     source "$G_MODULES/$m.sh" || { echo "serp-glass: can't load $G_MODULES/$m.sh" >&2; exit 1; }
 done
@@ -421,7 +421,7 @@ if [ "$G_MODE" = uninstall ]; then
     g_step "services";  g_services_uninstall
     g_step "apps";      g_apps_uninstall
     g_step "shell";     g_shell_uninstall; g_manifest_save
-    g_step "dotfiles";  g_dotfiles_uninstall; g_manifest_save; g_services_reload
+    g_step "dotfiles";  g_x11_uninstall; g_dotfiles_uninstall; g_manifest_save; g_services_reload
     g_step "root";      if [ "$G_NO_ROOT" = 1 ]; then g_info "skipped (--no-root)"; else g_system_uninstall; fi
     g_step "extras";    g_extras_uninstall
     if ! g_is_dry; then
@@ -473,7 +473,7 @@ fi
 g_sudo_end
 
 g_step "dotfiles"
-if g_step_on dotfiles; then g_dotfiles_install; g_rust_install; g_speedtest_install; g_manifest_save; else g_info "skipped (--only)"; fi
+if g_step_on dotfiles; then g_dotfiles_install; g_rust_install; g_x11_sync; g_speedtest_install; g_manifest_save; else g_info "skipped (--only)"; fi
 
 g_step "shell: glass changes to Serpantinum"
 if g_step_on shell; then g_shell_install; g_manifest_save; else g_info "skipped (--only)"; fi

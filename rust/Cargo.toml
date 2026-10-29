@@ -46,6 +46,10 @@ path = "src/bin/sleep-guard.rs"
 name = "power-mode"
 path = "src/bin/power-mode.rs"
 
+[[bin]]
+name = "serp-x11"
+path = "src/bin/serp-x11.rs"
+
 [dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
 libc = "0.2"

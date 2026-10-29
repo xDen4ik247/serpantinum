@@ -38,6 +38,7 @@ an agenda and a set of local AI tools are added on top. Nothing is sent to the c
 | **Japanese** | Mozc that starts in hiragana, NPU OCR for any screen area, a reading helper with furigana, Anki mining and an adaptive quiz. |
 | **Local AI** | llama.cpp on the Arc GPU (OpenVINO backend), started on demand: an assistant, clipboard actions, Obsidian AI notes and Whisper dictation on the NPU. |
 | **Login** | A liquid-glass SDDM greeter that follows the wallpaper and its colours. You can type your password right away, and the screen locks before sleep. |
+| **X11 apps** | XWayland comes installed (niri starts it when an X11 app opens). `serp-x11` sizes the apps that don't follow a scaled screen by themselves: Steam, Wine/Lutris programs and apps that bundle their own old Qt5. Games that act up can run in gamescope with `serp-x11 gamescope -- %command%` in their launch options. |
 | **Power** | `power-mode auto|perf|save`, lazy widgets, an on-demand LLM and runtime power management. The panel stays at 120 Hz. |
 | **Rust** | Everything that runs all the time is written in Rust, like niri itself: the app backends and the shell helpers ([why and how](docs/rust.md)). |
 
@@ -187,7 +188,8 @@ It works in these steps (`--only` runs some of them):
    again if the installer put them there). `~/.config/niri/user/output.kdl` is only created when missing, so
    niri uses your displays' own modes.
    It also builds the Rust helpers and the `speedtest` terminal tool (`cloudflare-speed-cli`, built once with cargo
-   into `~/.local/bin/speedtest`; a failed build only warns).
+   into `~/.local/bin/speedtest`; a failed build only warns), and runs `serp-x11 sync` once so X11 apps fit the
+   display scale right away (it runs again at every login).
 4. **shell:** applies the glass changes to Serpantinum as `serp-tweaks` patches, which are re-applied after
    every upstream update.
 5. **apps:** builds and installs the apps you picked.

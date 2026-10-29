@@ -1,0 +1,8 @@
+// X11 apps (XWayland through xwayland-satellite, which niri starts when one opens).
+// Their sizing on scaled screens is serp-x11's job (user/x11.kdl); these are the window rules.
+
+// Steam draws its own notification toasts as windows: keep them in the corner instead of mid-screen.
+window-rule {
+    match app-id="steam" title=r#"^notificationtoasts_\d+_desktop$"#
+    default-floating-position x=10 y=10 relative-to="bottom-right"
+}

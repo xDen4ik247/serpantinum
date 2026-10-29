@@ -15,6 +15,7 @@ extras add their own build tools). Installed with pacman (official repos) on top
 | Helpers | `rsync patch jq inotify-tools imagemagick python-gobject python-numpy python-rich python-yaml python-pillow` |
 | Calendar (`~/.venvs/gcal`) | `python-icalendar python-recurring-ical-events python-x-wr-timezone` |
 | iPhone hotspot over USB cable | `usbmuxd libimobiledevice` (the `ipheth` kernel driver loads by itself; on the phone tap Trust and turn on Personal Hotspot) |
+| X11 apps (XWayland; niri starts it, `serp-x11` sizes Steam/Wine/old-Qt5 apps) | `xwayland-satellite gamescope xorg-xprop xorg-xrandr xorg-xdpyinfo xorg-xhost xdotool` |
 | Login screen | `sddm qt6-declarative qt6-svg qt6-5compat` |
 | Local LLM build (`--with llm`) | `cmake ninja gcc git opencl-headers opencl-clhpp ocl-icd intel-compute-runtime` |
 

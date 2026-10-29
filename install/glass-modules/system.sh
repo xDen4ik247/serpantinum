@@ -21,6 +21,9 @@ G_PKGS_BASE=(
     wtype
     # iPhone hotspot over the USB cable (usbmuxd pairs the phone; the ipheth kernel driver does the rest)
     usbmuxd libimobiledevice
+    # X11 apps: niri starts xwayland-satellite (XWayland) by itself when one opens; serp-x11 sizes them.
+    # gamescope for games that act up under XWayland; the x* tools for scripts that drive X11 windows
+    xwayland-satellite gamescope xorg-xprop xorg-xrandr xorg-xdpyinfo xorg-xhost xdotool
 )
 G_PKGS_GCAL=(python-icalendar python-recurring-ical-events python-x-wr-timezone)   # unless ~/.venvs/gcal has them
 G_PKGS_SDDM=(sddm qt6-declarative qt6-svg qt6-5compat)

@@ -5,7 +5,7 @@
 # (niri-autofit, niri-dwt-toggle, sleep-guard, power-mode) come from rust/reference/ (the Python/bash
 # versions), and the shell falls back to its own scripts for the serp-* helpers.
 
-G_RUST_BINS=(serp-niri-state serp-focus serp-wellbeing serp-sysdata serp-kblocks niri-autofit niri-dwt-toggle sleep-guard power-mode)
+G_RUST_BINS=(serp-niri-state serp-focus serp-wellbeing serp-sysdata serp-kblocks niri-autofit niri-dwt-toggle sleep-guard power-mode serp-x11)
 G_RUST_REFERENCE=(niri-autofit niri-dwt-toggle sleep-guard power-mode)
 
 g_rust_install() {
