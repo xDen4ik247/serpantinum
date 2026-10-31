@@ -1358,7 +1358,13 @@
         "holduntil": "Holding at 80%, full by {full}",
         "enough": "Holding at 80%, enough for your usual {use}% after {time}",
         "hold": "Holding at 80% to slow battery wear",
-        "denied": "Can't set the charge limit (permission)"
+        "denied": "Can't set the charge limit (permission)",
+        "drain": "Held at {cap}%: unplug for a while to drain to 80%, less wear",
+        "draining": "On battery down to 80%, then plug back in"
+      },
+      "notify": {
+        "drain": "Battery held at {cap}% on the charger. Unplug for a while to let it drain to 80%, it wears less there.",
+        "plugin": "Battery at {cap}%: plug the charger back in, it will stay at 80%."
       }
     }
   },

@@ -106,6 +106,9 @@ t_powermode() {
     diff "$OUT/pm-bash/report.txt" "$OUT/pm-rust/report.txt" && grep -q '60.001 (transient)' "$OUT/pm-rust/report.txt"
 }
 
+t_smartcharge() { "$H/run_smartcharge.sh" "$R/target/release/glass-smart-charge" "$OUT/smartcharge"; }
+t_smartcharge_daemon() { "$H/run_smartcharge_daemon.sh" "$R/target/release/glass-smart-charge" "$OUT/smartcharge-daemon"; }
+
 t_live_niri_state() {
     python3 - "$R/target/release/serp-niri-state" <<'PY'
 import json, subprocess, sys
@@ -129,6 +132,8 @@ check niri-autofit t_autofit
 check niri-dwt-toggle t_dwt
 check sleep-guard t_sleepguard
 check power-mode t_powermode
+check glass-smart-charge t_smartcharge
+check glass-smart-charge-daemon t_smartcharge_daemon
 [ "$LIVE" = 1 ] && check serp-niri-state-live t_live_niri_state
 echo "$pass passed, $fail failed  (logs: $OUT)"
 [ "$fail" = 0 ]

@@ -76,9 +76,9 @@ copy .config/systemd/user/mpd.service.d
 copy .config/systemd/user/mpd-mpris.service.d
 
 echo ":: scripts (~/.local/bin, our own only)"
-# niri-autofit, niri-dwt-toggle, sleep-guard, power-mode and the serp-* helpers are Rust binaries now:
+# niri-autofit, niri-dwt-toggle, sleep-guard, power-mode, glass-smart-charge and the serp-* helpers are Rust binaries now:
 # their sources live in rust/ (the old Python/bash versions in rust/reference/), nothing to copy.
-for s in fcitx-layout fcitx-jp-gate ime-fix ime-mode serp-tweaks serp-glass glass-smart-charge niri-keys \
+for s in fcitx-layout fcitx-jp-gate ime-fix ime-mode serp-tweaks serp-glass niri-keys \
          music-ctl music-player music-smart \
          gcal-setup gcal-sync \
          ai ai-chat aidict aipanel ai-notes ai-notes-panel anki-add jocr \

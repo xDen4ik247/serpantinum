@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Rust helpers (rust/): event-driven replacements for the bash/Python pollers of the shell and the
 # niri daemons. Built with cargo into ~/.cache and installed into ~/.local/bin through g_put (backups,
-# manifest, service restarts). Without cargo, or if the build fails, the four daemons that must exist
-# (niri-autofit, niri-dwt-toggle, sleep-guard, power-mode) come from rust/reference/ (the Python/bash
+# manifest, service restarts). Without cargo, or if the build fails, the daemons that must exist
+# (niri-autofit, niri-dwt-toggle, sleep-guard, power-mode, glass-smart-charge) come from rust/reference/ (the Python/bash
 # versions), and the shell falls back to its own scripts for the serp-* helpers.
 
 G_RUST_BINS=(serp-niri-state serp-focus serp-wellbeing serp-sysdata serp-kblocks niri-autofit niri-dwt-toggle sleep-guard power-mode serp-x11)
-G_RUST_REFERENCE=(niri-autofit niri-dwt-toggle sleep-guard power-mode)
+G_RUST_REFERENCE=(niri-autofit niri-dwt-toggle sleep-guard power-mode glass-smart-charge)
 
 g_rust_install() {
     local target="${XDG_CACHE_HOME:-$HOME/.cache}/serp-glass/rust-target" b

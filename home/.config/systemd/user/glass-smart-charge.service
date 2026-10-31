@@ -1,11 +1,11 @@
 [Unit]
 Description=glass-smart-charge: hold the battery at 80 % on AC, charge to 100 % when you'll need it (like iPhone Optimized Charging)
-Documentation=file://%h/.local/bin/glass-smart-charge
+Documentation=https://github.com/xDen4ik247/serpantinum/blob/glass/rust/src/bin/glass-smart-charge.rs
 After=default.target
 
 [Service]
 Type=simple
-# blocks in `gdbus monitor` on UPower; decides every 5 min on AC, hourly on battery, and at once on plug/unplug
+# listens to UPower's OnBattery on the system bus; decides every 5 min on AC, hourly on battery, and on plug/unplug
 ExecStart=%h/.local/bin/glass-smart-charge daemon
 Restart=on-failure
 RestartSec=10
