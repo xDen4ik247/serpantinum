@@ -436,7 +436,7 @@ Scope {
                                         Quickshell.execDetached(["sh", "-c", "sleep 0.25; niri msg action show-hotkey-overlay"]);
                                     else
                                         Quickshell.execDetached(["kitty", "--directory", (Quickshell.env("HOME") ?? "") + "/.config/niri/user",
-                                                                 "zsh", "-ic", "${EDITOR:-nano} binds.kdl; exec zsh"]);
+                                                                 "fish", "-c", "set -q EDITOR; or set EDITOR nano; $EDITOR binds.kdl; exec fish"]);
                                 }
                             }
                         }

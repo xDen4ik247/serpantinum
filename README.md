@@ -103,6 +103,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/xDen4ik247/serpantinum/g
 This clones the `glass` branch into `~/.cache/serp-glass` (it installs `git` first if needed) and runs the
 installer from there.
 
+The command works as-is in bash, zsh and fish (fish 3.4 or newer). The installer itself is bash and
+does not care which shell starts it.
+
 To see what it would change without changing anything, put the options after a `_`:
 
 ```bash
@@ -214,7 +217,7 @@ Run `install/glass.sh --help` (or `serp-glass --help`) for the full list.
 | `--apps LIST` | `glass-music`, `glass-mail`, `jp-quiz`, `all` or `none` (default: Glass Music + Glass Mail) |
 | `--ai on\|off` | The AI features (default: on with an Intel NPU). `off` installs nothing AI: no scripts, services, keybinds or NPU packages |
 | `--with LIST` | The AI features' heavy parts (see below) |
-| `--no-sddm`, `--power auto\|yes\|no`, `--no-shell-rc` | Skip the login screen, the battery tweaks or the zsh files |
+| `--no-sddm`, `--power auto\|yes\|no`, `--no-shell-rc` | Skip the login screen, the battery tweaks or the shell files (fish + zsh) |
 | `--vault NAME` | Your Obsidian vault in `~/Obsidian` |
 | `--force` | Also replace files you edited (backed up first) |
 | `--only STEPS` | Run only some steps: `base,root,dotfiles,shell,apps,extras,services` |
