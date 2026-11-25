@@ -47,8 +47,10 @@ g_dotfile_list() {
     (cd "$G_ROOT/home" && find . -type f ! -name '*.pyc' ! -path '*/__pycache__/*' | sed 's|^\./||' | sort) | while IFS= read -r rel; do
         case "$rel" in
             "$G_SETTINGS_REL") continue ;;                                  # merged, not copied
-            .zshrc|.zshenv|.zprofile|.config/starship.toml)
+            .zshrc|.zshenv|.zprofile|.config/starship.toml|.config/fish/*)
                 [ "${G_SHELL_RC:-1}" = 1 ] || continue ;;
+            .config/kitty/shell.conf)   # `shell fish`: without fish, every kitty window would close at once
+                [ "${G_SHELL_RC:-1}" = 1 ] && command -v fish >/dev/null 2>&1 || continue ;;
         esac
         [[ "$G_SEED_FILES" == *" $rel "* ]] && continue                     # g_dotfile_seeds
         g_app_owned "$rel" && continue                                     # the app's install.sh installs it

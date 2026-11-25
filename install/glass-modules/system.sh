@@ -5,7 +5,7 @@
 # Packages the glass layer uses on top of upstream Serpantinum's own list (see system/packages.md).
 G_PKGS_BASE=(
     # shell + terminal
-    zsh zsh-autosuggestions zsh-completions zsh-history-substring-search zsh-syntax-highlighting
+    fish zsh zsh-autosuggestions zsh-completions zsh-history-substring-search zsh-syntax-highlighting
     starship zoxide eza bat fzf pkgfile ttf-jetbrains-mono-nerd
     # tools the scripts call
     rsync patch diffutils jq curl inotify-tools libnotify imagemagick uv

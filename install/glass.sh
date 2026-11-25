@@ -13,7 +13,7 @@
 #   apps      the apps you pick: Glass Music, Glass Mail, JP Quiz (--apps, or the menu)
 #   extras    the AI features' heavy parts, opt-in: --with llm,notes,dictation,ocr (only while --ai on)
 #   services  systemd user units for what is installed
-# A first install on a terminal shows a menu (apps, AI features, login screen, battery, zsh); every choice is
+# A first install on a terminal shows a menu (apps, AI features, login screen, battery, shell config); every choice is
 # remembered, and `serp-glass` (installed in ~/.local/bin) re-runs this installer later: to update, or to
 # change a choice (serp-glass --menu, --ai off|on, --apps ...). Run with --help for the options.
 
@@ -84,7 +84,7 @@ Usage: glass.sh [options]
                            all        everything above
       --no-sddm          don't install the glass login screen
       --power auto|yes|no  battery tweaks (udev runtime PM, NMI watchdog off); auto = laptops only
-      --no-shell-rc      leave ~/.zshrc, ~/.zshenv, ~/.zprofile and starship.toml alone
+      --no-shell-rc      leave ~/.config/fish, ~/.zshrc, ~/.zshenv, ~/.zprofile and starship.toml alone
       --vault NAME       Obsidian vault folder in ~/Obsidian (default: the only vault there, else "Vault")
       --force            also replace files you edited (they are backed up first)
       --diff             with --dry-run: show the differences
@@ -294,7 +294,7 @@ g_print_plan() {
         acts="one password prompt: $(printf '%s; ' "${short[@]}" | sed 's/; $//')"
     fi
     printf '   %-9s %s\n' root "$acts"
-    printf '   %-9s %s\n' dotfiles "niri user layer, kitty, fcitx5, MPD, $( [ "$G_SHELL_RC" = 1 ] && echo "zsh + starship, " )scripts in ~/.local/bin, systemd units (vault: ~/Obsidian/$G_VAULT)"
+    printf '   %-9s %s\n' dotfiles "niri user layer, kitty, fcitx5, MPD, $( [ "$G_SHELL_RC" = 1 ] && echo "fish + zsh + starship, " )scripts in ~/.local/bin, systemd units (vault: ~/Obsidian/$G_VAULT)"
     printf '   %-9s %s\n' shell "glass changes to Serpantinum as serp-tweaks patches"
     local apps="" a2 dropped=""
     for a2 in "${G_APPS[@]}"; do apps+="${apps:+, }${G_APP_NAME[$a2]}"; done

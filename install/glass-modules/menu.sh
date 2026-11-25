@@ -35,7 +35,7 @@ g_menu_draw() {
     i=$((i + 1)); on=0; g_want_power && on=1
     printf '   %2d %s %-13s %s%s%s\n' "$i" "$(g_menu_box $on)" "battery" "$G_C_DIM" "laptop power saving + smart charging$(g_has_battery || echo " (no battery here)")" "$G_C_RESET"
     i=$((i + 1)); on=0; [ "${G_SHELL_RC:-1}" = 1 ] && on=1
-    printf '   %2d %s %-13s %s%s%s\n' "$i" "$(g_menu_box $on)" "zsh config" "$G_C_DIM" "~/.zshrc, ~/.zshenv, ~/.zprofile, starship prompt (yours are backed up)" "$G_C_RESET"
+    printf '   %2d %s %-13s %s%s%s\n' "$i" "$(g_menu_box $on)" "shell config" "$G_C_DIM" "fish in kitty + zsh for scripts, starship prompt (yours are backed up)" "$G_C_RESET"
 }
 
 g_menu_extra_line() {

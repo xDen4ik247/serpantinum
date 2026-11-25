@@ -13,7 +13,7 @@ set -euo pipefail
 
 R="$(cd "$(dirname "$0")/.." && pwd)"
 H="$HOME"
-RS=(rsync -a --exclude=__pycache__ --exclude='*.pyc')
+RS=(rsync -a --exclude=__pycache__ --exclude='*.pyc' --exclude=fish_variables)   # fish_variables: universal vars, machine-local
 
 copy() {   # copy <path relative to $HOME> [dest dir inside repo, default home/]
     local src="$H/$1" dst="$R/${2:-home}/$1"
@@ -40,6 +40,8 @@ copy .local/share/dbus-1/services/org.fcitx.Fcitx5.service
 copy .config/mpd/mpd.conf
 copy .config/rmpc
 copy .config/starship.toml
+copy .config/fish
+copy .config/kitty/shell.conf
 copy .zshrc
 copy .zshenv
 copy .zprofile
