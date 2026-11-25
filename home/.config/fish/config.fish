@@ -8,8 +8,8 @@
 fish_add_path --global --path --move $HOME/.local/bin $HOME/.venvs/default/bin
 set -gx EDITOR nvim
 set -gx VISUAL nvim
-# kitty sets $SHELL to the shell it runs. Tools that call `$SHELL -c '…'` (Claude Code, some installers)
-# expect POSIX syntax, so children keep seeing zsh, the login shell.
+# $SHELL stays zsh, the login shell (kitty passes it through; this is a safety net for fish started
+# elsewhere). Tools that call `$SHELL -c '…'` (Claude Code, some installers) expect POSIX syntax.
 test -x /usr/bin/zsh; and set -gx SHELL /usr/bin/zsh
 
 status is-interactive; or return
@@ -34,6 +34,7 @@ set -gx FZF_ALT_C_COMMAND 'fd --type d --hidden --exclude .git'
 # Colors are terminal palette slots, so fzf follows the wallpaper theme too.
 set -gx FZF_DEFAULT_OPTS '--height 45% --layout reverse --border rounded --info inline-right
   --color fg:7,bg:-1,hl:2,fg+:15,bg+:0,hl+:2,info:8,prompt:2,pointer:3,marker:3,spinner:3,header:8,border:8,gutter:-1'
+set -gx FZF_CTRL_R_OPTS '--with-nth=3..'   # plain history like zsh (fzf's fish list shows epoch seconds); Alt+T shows dates
 set -gx FZF_CTRL_T_OPTS "--preview 'bat -n --color=always {} 2>/dev/null' --preview-window right,55%"
 set -gx BAT_THEME ansi
 set -gx VIRTUAL_ENV_DISABLE_PROMPT 1   # the prompt shows the env itself
